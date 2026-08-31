@@ -4,8 +4,8 @@ import XCTest
 /// AD-11 / AD-19 / AD-4 — the structural claims the product rests on.
 final class AttributionTests: XCTestCase {
 
-    func testDiarizedSpansAssignedByGreatestOverlap() {
-        let spans = [
+    func testSystemSpansAssignedByGreatestOverlap() {
+        let sys = [
             DiarizedSpan(start: 0, end: 10, speakerIndex: 0),
             DiarizedSpan(start: 10, end: 20, speakerIndex: 1),
         ]
@@ -15,29 +15,71 @@ final class AttributionTests: XCTestCase {
             // Straddles the boundary but sits mostly in speaker 1's span.
             Utterance(start: 9, end: 14, text: "c", speaker: .remote(0), origin: .system),
         ]
-        let out = Pipeline.assign(spans: spans, to: utterances)
+        let out = Pipeline.assign(micSpans: [], systemSpans: sys, multipleInRoom: false, to: utterances)
         XCTAssertEqual(out[0].speaker, SpeakerLabelID.remote(0))
         XCTAssertEqual(out[1].speaker, SpeakerLabelID.remote(1))
         XCTAssertEqual(out[2].speaker, SpeakerLabelID.remote(1))
     }
 
-    /// The core structural guarantee: a Mic Stream Utterance is never reassigned
-    /// to a Remote Speaker, whatever diarization says.
-    func testMicStreamNeverReassigned() {
-        let spans = [DiarizedSpan(start: 0, end: 100, speakerIndex: 3)]
-        let utterances = [
-            Utterance(start: 1, end: 4, text: "mine", speaker: .local, origin: .mic),
+    /// A single voice on the microphone IS the user, and that inference is safe.
+    func testSingleMicVoiceStaysTheUser() {
+        let mic = [DiarizedSpan(start: 0, end: 30, speakerIndex: 0)]
+        let u = [Utterance(start: 1, end: 4, text: "mine", speaker: .local, origin: .mic)]
+        let out = Pipeline.assign(micSpans: mic, systemSpans: [], multipleInRoom: false, to: u)
+        XCTAssertEqual(out[0].speaker, SpeakerLabelID.local)
+        XCTAssertEqual(out[0].speaker.place, .you)
+    }
+
+    /// The correction that matters: in a meeting room the microphone holds several
+    /// people, and none of them may be assumed to be the user.
+    func testMultipleMicVoicesBecomeInRoomAndNoneIsAssumedToBeTheUser() {
+        let mic = [
+            DiarizedSpan(start: 0, end: 5, speakerIndex: 0),
+            DiarizedSpan(start: 5, end: 10, speakerIndex: 1),
         ]
-        let out = Pipeline.assign(spans: spans, to: utterances)
-        XCTAssertEqual(out[0].speaker, SpeakerLabelID.local,
-                       "AD-11: the Local Speaker is structural and cannot be overridden")
+        let u = [
+            Utterance(start: 1, end: 4, text: "me?", speaker: .local, origin: .mic),
+            Utterance(start: 6, end: 9, text: "colleague", speaker: .local, origin: .mic),
+        ]
+        let out = Pipeline.assign(micSpans: mic, systemSpans: [], multipleInRoom: true, to: u)
+        XCTAssertEqual(out[0].speaker, SpeakerLabelID.inRoom(0))
+        XCTAssertEqual(out[1].speaker, SpeakerLabelID.inRoom(1))
+        for o in out {
+            XCTAssertFalse(o.speaker.isLocal, "no in-room voice may be claimed as the user")
+            XCTAssertTrue(o.speaker.isInRoom, "but it is still structurally in the room")
+            XCTAssertEqual(o.speaker.place, .room)
+        }
+    }
+
+    /// The part of the original design that survives: a mic voice can never
+    /// become a remote one, or vice versa. Where a voice was is never a guess.
+    func testStreamsNeverCross() {
+        let mic = [DiarizedSpan(start: 0, end: 100, speakerIndex: 7)]
+        let sys = [DiarizedSpan(start: 0, end: 100, speakerIndex: 3)]
+        let u = [
+            Utterance(start: 1, end: 4, text: "room", speaker: .local, origin: .mic),
+            Utterance(start: 1, end: 4, text: "far end", speaker: .remote(0), origin: .system),
+        ]
+        let out = Pipeline.assign(micSpans: mic, systemSpans: sys, multipleInRoom: true, to: u)
+        XCTAssertTrue(out[0].speaker.isInRoom)
+        XCTAssertFalse(out[0].speaker.isRemote)
+        XCTAssertTrue(out[1].speaker.isRemote)
+        XCTAssertFalse(out[1].speaker.isInRoom)
     }
 
     func testUnmatchedSystemUtteranceKeepsItsLabel() {
         let spans = [DiarizedSpan(start: 50, end: 60, speakerIndex: 1)]
         let u = [Utterance(start: 1, end: 4, text: "x", speaker: .remote(0), origin: .system)]
-        let out = Pipeline.assign(spans: spans, to: u)
+        let out = Pipeline.assign(micSpans: [], systemSpans: spans, multipleInRoom: false, to: u)
         XCTAssertEqual(out[0].speaker, SpeakerLabelID.remote(0))
+    }
+
+    func testPlaceClassification() {
+        XCTAssertEqual(SpeakerLabelID.local.place, .you)
+        XCTAssertEqual(SpeakerLabelID.inRoom(2).place, .room)
+        XCTAssertEqual(SpeakerLabelID.remote(2).place, .remote)
+        XCTAssertTrue(SpeakerLabelID.local.isInRoom, "the user is, trivially, in the room")
+        XCTAssertFalse(SpeakerLabelID.inRoom(1).isLocal)
     }
 
     /// AD-19: rename edits the name map only. Renaming two IDs to one name is

@@ -85,7 +85,7 @@ struct MeetingsPane: View {
             } else {
                 HStack(spacing: Tok.s2) {
                     ForEach(m.speakers.prefix(4), id: \.raw) { s in
-                        SpeakerChip(name: m.displayName(for: s), isLocal: s.isLocal,
+                        SpeakerChip(name: m.displayName(for: s), place: s.place,
                                     isInferred: m.isInferred(s))
                     }
                     if m.speakers.count > 4 {
@@ -216,9 +216,9 @@ struct MeetingDetail: View {
                                 Button("Cancel") { editingSpeaker = nil }.controlSize(.small)
                             } else {
                                 SpeakerChip(name: meeting.displayName(for: s),
-                                            isLocal: s.isLocal,
+                                            place: s.place,
                                             isInferred: meeting.isInferred(s))
-                                if !s.isLocal {
+                                if true {
                                     Button("Rename") {
                                         draftName = meeting.displayName(for: s)
                                         editingSpeaker = s
@@ -321,7 +321,7 @@ struct MeetingDetail: View {
                                 HStack(spacing: Tok.s3) {
                                     Text(Fmt.timestamp(b.start)).font(.caption).monospacedDigit()
                                         .foregroundStyle(Tok.textSecondary)
-                                    SpeakerChip(name: b.name, isLocal: b.isLocal, isInferred: b.isInferred)
+                                    SpeakerChip(name: b.name, place: b.place, isInferred: b.isInferred)
                                 }
                                 // Transcript text is prose, not code — never monospaced.
                                 Text(b.text).font(.body).fixedSize(horizontal: false, vertical: true)
@@ -346,6 +346,9 @@ struct MeetingDetail: View {
                              good: meeting.systemStreamCaptured)
                     FactChip(text: meeting.diarizationSucceeded ? "Speakers separated" : "Speakers not separated",
                              good: meeting.diarizationSucceeded)
+                    if meeting.multipleInRoom {
+                        FactChip(text: "Several people in the room")
+                    }
                 }
                 Text("Everything above was produced on this Mac.")
                     .font(.caption2).foregroundStyle(Tok.textSecondary)
@@ -359,7 +362,7 @@ struct MeetingDetail: View {
         let id = UUID()
         var start: TimeInterval
         var name: String
-        var isLocal: Bool
+        var place: SpeakerLabelID.Place
         var isInferred: Bool
         var text: String
     }
@@ -373,7 +376,7 @@ struct MeetingDetail: View {
                 last.text += " " + u.text.trimmingCharacters(in: .whitespaces)
                 out[out.count - 1] = last
             } else {
-                out.append(Block(start: u.start, name: name, isLocal: u.speaker.isLocal,
+                out.append(Block(start: u.start, name: name, place: u.speaker.place,
                                  isInferred: meeting.isInferred(u.speaker),
                                  text: u.text.trimmingCharacters(in: .whitespaces)))
             }

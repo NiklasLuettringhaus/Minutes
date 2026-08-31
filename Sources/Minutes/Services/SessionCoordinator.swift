@@ -132,7 +132,9 @@ final class SessionCoordinator: ObservableObject {
             m.inferredSpeakers.removeAll { $0 == label.raw }
         }
         // Teach the directory this voice, so it arrives named next time (FR-25).
-        if !label.isLocal, let centroid = await loadCentroid(meetingID: meetingID, label: label) {
+        // This now includes naming YOURSELF among several people in a room — the
+        // one time you do it, and thereafter your voice is recognised.
+        if let centroid = await loadCentroid(meetingID: meetingID, label: label) {
             await SpeakerDirectory.shared.remember(name: trimmed, centroid: centroid)
         }
         await Pipeline.shared.rewriteNote(meetingID: meetingID)
@@ -150,9 +152,8 @@ final class SessionCoordinator: ObservableObject {
     private func loadCentroid(meetingID: String, label: SpeakerLabelID) async -> [Float]? {
         let dir = await MeetingStore.shared.directory(for: meetingID)
         guard let d = try? Data(contentsOf: dir.appendingPathComponent("centroids.json")),
-              let map = try? JSONDecoder().decode([Int: [Float]].self, from: d) else { return nil }
-        guard let idx = Int(label.raw.replacingOccurrences(of: "remote-", with: "")) else { return nil }
-        return map[idx]
+              let map = try? JSONDecoder().decode([String: [Float]].self, from: d) else { return nil }
+        return map[label.raw]
     }
 
     // MARK: - Retry / delete

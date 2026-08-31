@@ -99,6 +99,9 @@ struct NoteWriter: NoteWriting {
         if !m.systemStreamCaptured {
             out += "> Only the microphone was captured for this meeting, so remote participants do not appear in the transcript.\n\n"
         }
+        if m.multipleInRoom {
+            out += "> More than one person was speaking in the room, so the in-room voices are labelled but not identified. Rename them once and Minutes will recognise them next time.\n\n"
+        }
 
         out += "## Transcript\n\n"
         out += renderTranscript(m)
@@ -149,11 +152,20 @@ struct NoteWriter: NoteWriting {
         lines.append("duration: \(Self.yamlScalar(Fmt.duration(m.duration)))")
         lines.append("started_at: \(iso.string(from: m.startedAt))")
 
-        let participants = m.speakers.map { id -> String in
-            let n = m.displayName(for: id)
-            return m.isInferred(id) ? "~\(n)" : n
+        func names(_ ids: [SpeakerLabelID]) -> [String] {
+            ids.map { m.isInferred($0) ? "~\(m.displayName(for: $0))" : m.displayName(for: $0) }
         }
-        lines.append("participants: [\(participants.map(Self.yamlScalar).joined(separator: ", "))]")
+        let all = names(m.speakers)
+        lines.append("participants: [\(all.map(Self.yamlScalar).joined(separator: ", "))]")
+        // Where a voice was is structural; who it is may be an inference. Recording
+        // the split lets a reader trust the first part even when unsure of the second.
+        let room = names(m.inRoomSpeakers), remote = names(m.remoteSpeakers)
+        if !room.isEmpty {
+            lines.append("in_room: [\(room.map(Self.yamlScalar).joined(separator: ", "))]")
+        }
+        if !remote.isEmpty {
+            lines.append("remote: [\(remote.map(Self.yamlScalar).joined(separator: ", "))]")
+        }
 
         let tags = m.metadata?.tags ?? []
         lines.append("tags: [\(tags.map(Self.yamlScalar).joined(separator: ", "))]")
@@ -163,6 +175,7 @@ struct NoteWriter: NoteWriting {
         lines.append("metadata_backend: \(Self.yamlScalar(m.metadata?.backend.rawValue ?? "none"))")
         lines.append("system_audio_captured: \(m.systemStreamCaptured)")
         lines.append("speakers_separated: \(m.diarizationSucceeded)")
+        lines.append("multiple_people_in_room: \(m.multipleInRoom)")
         if let app = m.triggeringApp {
             lines.append("detected_from: \(Self.yamlScalar(app))")
         }

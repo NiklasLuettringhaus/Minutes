@@ -27,6 +27,8 @@ enum Tok {
     /// Cold on purpose: it can never be mistaken for the Recording state, which a
     /// warm accent could be.
     static let brand        = Color(red: 0.071, green: 0.647, blue: 0.580)  // #12A594
+    /// Readable amber for text on a light ground (the raw amber is too pale).
+    static let amberInk     = Color(red: 0.604, green: 0.384, blue: 0.012)
 
     // MARK: - Radii
 
@@ -233,21 +235,56 @@ struct StateBanner: View {
 /// is a fact, the others are inferences.
 struct SpeakerChip: View {
     let name: String
-    let isLocal: Bool
+    /// Where the voice was. This is the structural fact; who it is may not be.
+    let place: SpeakerLabelID.Place
     var isInferred: Bool = false
 
+    /// Convenience for call sites that only know local-or-not.
+    init(name: String, isLocal: Bool, isInferred: Bool = false) {
+        self.name = name
+        self.place = isLocal ? .you : .remote
+        self.isInferred = isInferred
+    }
+    init(name: String, place: SpeakerLabelID.Place, isInferred: Bool = false) {
+        self.name = name; self.place = place; self.isInferred = isInferred
+    }
+
     var body: some View {
-        Text(isInferred ? "~\(name)" : name)
-            .font(.caption)
-            .foregroundStyle(isLocal ? Tok.brand : Tok.textSecondary)
-            .padding(.horizontal, Tok.s3)
-            .padding(.vertical, 2)
-            .background(
-                (isLocal ? Tok.brand.opacity(0.15) : Tok.separator.opacity(0.5)),
-                in: Capsule())
-            .help(isInferred ? "Recognised automatically from a previous meeting — check it is right."
-                             : (isLocal ? "You. Attributed from your microphone, so this is always correct."
-                                        : "A remote participant, separated by on-device diarization."))
+        HStack(spacing: 4) {
+            if place == .room {
+                Image(systemName: "person.2.fill").font(.system(size: 8))
+            }
+            Text(isInferred ? "~\(name)" : name)
+        }
+        .font(.caption)
+        .foregroundStyle(tint)
+        .padding(.horizontal, Tok.s3)
+        .padding(.vertical, 2)
+        .background(background, in: Capsule())
+        .help(helpText)
+    }
+
+    private var tint: Color {
+        switch place {
+        case .you:    return Tok.brand
+        case .room:   return Tok.amberInk
+        case .remote: return Tok.textSecondary
+        }
+    }
+    private var background: Color {
+        switch place {
+        case .you:    return Tok.brand.opacity(0.15)
+        case .room:   return Tok.transcribing.opacity(0.16)
+        case .remote: return Tok.separator.opacity(0.5)
+        }
+    }
+    private var helpText: String {
+        if isInferred { return "Recognised from a previous meeting — check it is right." }
+        switch place {
+        case .you:    return "You. The microphone held a single voice, so this is certain."
+        case .room:   return "Someone in the room with you. Minutes knows the voice was in the room, but not who it is — rename it once and it will be recognised next time."
+        case .remote: return "A participant on the other end of the call."
+        }
     }
 }
 

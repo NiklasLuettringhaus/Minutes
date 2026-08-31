@@ -19,11 +19,26 @@ struct SpeakerLabelID: Hashable, Codable, Sendable, CustomStringConvertible {
     let raw: String
     init(_ raw: String) { self.raw = raw }
 
-    /// The one guaranteed-correct label in the product.
+    /// The user, and only used when the mic stream contained exactly ONE voice —
+    /// then it is certain. With several people in the room it is not, so the
+    /// in-room voices get `inRoom` labels and the app asserts nothing about which
+    /// one is the user until told.
     static let local = SpeakerLabelID("local")
+    /// One of several people physically in the room with the user.
+    static func inRoom(_ index: Int) -> SpeakerLabelID { SpeakerLabelID("room-\(index)") }
+    /// A participant on the other end of the call.
     static func remote(_ index: Int) -> SpeakerLabelID { SpeakerLabelID("remote-\(index)") }
 
+    /// Certainly the user.
     var isLocal: Bool { self == .local }
+    /// In the room — the user, or someone sitting next to them.
+    var isInRoom: Bool { self == .local || raw.hasPrefix("room-") }
+    var isRemote: Bool { raw.hasPrefix("remote-") }
+
+    /// Where this voice was, which is the part that IS structural.
+    enum Place { case you, room, remote }
+    var place: Place { isLocal ? .you : (isRemote ? .remote : .room) }
+
     var description: String { raw }
 }
 
@@ -136,6 +151,9 @@ struct Meeting: Codable, Sendable, Identifiable {
     /// Remote Speakers is never mistaken for a monologue (FR-7).
     var systemStreamCaptured: Bool
     var diarizationSucceeded: Bool
+    /// True when the mic stream held more than one voice, i.e. the user was in a
+    /// room with other people. When true, no voice is assumed to be the user.
+    var multipleInRoom: Bool = false
 
     /// Which app triggered a detected Session, if any.
     var triggeringApp: String?
@@ -158,6 +176,7 @@ struct Meeting: Codable, Sendable, Identifiable {
         self.failure = nil
         self.systemStreamCaptured = false
         self.diarizationSucceeded = false
+        self.multipleInRoom = false
         self.triggeringApp = nil
         self.transcriptionModel = nil
         self.utterances = []
@@ -171,8 +190,18 @@ struct Meeting: Codable, Sendable, Identifiable {
     // so an older record still loads (architecture convention).
 
     func displayName(for id: SpeakerLabelID) -> String {
-        speakerNames[id.raw] ?? (id.isLocal ? "Me" : "Speaker")
+        if let n = speakerNames[id.raw] { return n }
+        switch id.place {
+        case .you:    return "Me"
+        case .room:   return "In-room speaker"
+        case .remote: return "Speaker"
+        }
     }
+
+    /// Voices captured by the microphone: the user and anyone in the room.
+    var inRoomSpeakers: [SpeakerLabelID] { speakers.filter(\.isInRoom) }
+    /// Voices from the other end of the call.
+    var remoteSpeakers: [SpeakerLabelID] { speakers.filter(\.isRemote) }
 
     func isInferred(_ id: SpeakerLabelID) -> Bool { inferredSpeakers.contains(id.raw) }
 

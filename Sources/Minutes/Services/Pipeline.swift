@@ -129,59 +129,113 @@ actor Pipeline {
         }
     }
 
+    /// Diarizes BOTH streams.
+    ///
+    /// Revised after a user correction: the microphone is not necessarily the
+    /// user. In a meeting room it captures the user *and* whoever is sitting
+    /// next to them, so attributing all of it to the Local Speaker would put
+    /// colleagues' words in the user's mouth — strictly worse than an anonymous
+    /// label.
+    ///
+    /// What is still structural is *where* a voice was: the mic stream is the
+    /// room, the system stream is the far end. That split is never a guess.
     private func diarizeStage(_ id: String) async throws {
         let store = MeetingStore.shared
-        guard let sys = await store.audioURL(id: id, stream: .system) else {
-            // Mic-only Session: nothing to diarize, and that is not a failure.
-            _ = try await store.update(id: id) { $0.diarizationSucceeded = false }
-            return
-        }
-        do {
-            let (spans, centroids) = try await diarizer.diarizeFull(url: sys)
-            guard !spans.isEmpty else {
-                _ = try await store.update(id: id) { $0.diarizationSucceeded = false }
-                return
-            }
-            // Try to name each remote cluster from a stored Speaker Profile (FR-25).
-            var names: [String: String] = [:]
-            var inferred: [String] = []
-            for (idx, centroid) in centroids {
-                if let known = await SpeakerDirectory.shared.match(centroid: centroid) {
-                    names[SpeakerLabelID.remote(idx).raw] = known
-                    inferred.append(SpeakerLabelID.remote(idx).raw)
+        var centroids: [String: [Float]] = [:]
+        var anySucceeded = false
+        var multipleInRoom = false
+        var micSpans: [DiarizedSpan] = []
+        var systemSpans: [DiarizedSpan] = []
+
+        // --- Microphone: the room ---
+        if let mic = await store.audioURL(id: id, stream: .mic) {
+            do {
+                let (spans, c) = try await diarizer.diarizeFull(url: mic)
+                let voices = Set(spans.map(\.speakerIndex))
+                if voices.count > 1 {
+                    // Several people in the room. Do not claim any of them is the
+                    // user; the rename + profile machinery names them once.
+                    multipleInRoom = true
+                    micSpans = spans
+                    for (idx, vec) in c { centroids[SpeakerLabelID.inRoom(idx).raw] = vec }
+                } else {
+                    // A single voice on the microphone is the user, and that
+                    // inference is safe.
+                    for (_, vec) in c { centroids[SpeakerLabelID.local.raw] = vec }
                 }
+                anySucceeded = true
+            } catch {
+                // Degrade to the old assumption rather than fail: one voice, the user.
+                Log.pipeline.error("mic diarization failed, treating the mic as a single speaker: \(error.localizedDescription, privacy: .public)")
             }
-            let json = try JSONEncoder().encode(centroids.mapValues { $0 })
+        }
+
+        // --- System: the far end ---
+        if let sys = await store.audioURL(id: id, stream: .system) {
+            do {
+                let (spans, c) = try await diarizer.diarizeFull(url: sys)
+                systemSpans = spans
+                for (idx, vec) in c { centroids[SpeakerLabelID.remote(idx).raw] = vec }
+                if !spans.isEmpty { anySucceeded = true }
+            } catch {
+                Log.pipeline.error("system diarization failed, degrading to one speaker: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        // Name any voice we already know from a previous meeting (FR-25).
+        var names: [String: String] = [:]
+        var inferred: [String] = []
+        for (label, vec) in centroids {
+            if let known = await SpeakerDirectory.shared.match(centroid: vec) {
+                names[label] = known
+                inferred.append(label)
+            }
+        }
+
+        if !centroids.isEmpty {
+            let json = try JSONEncoder().encode(centroids)
             try MeetingStore.atomicWrite(json, to: await store.directory(for: id)
                 .appendingPathComponent("centroids.json"))
+        }
 
-            _ = try await store.update(id: id) { m in
-                m.diarizationSucceeded = true
-                for (k, v) in names { m.speakerNames[k] = v }
-                m.inferredSpeakers = inferred
-                // Stash spans for the attribute stage.
-                m.utterances = Self.assign(spans: spans, to: m.utterances)
-            }
-        } catch {
-            // AD-17: degrade to a single Speaker label rather than fail the Meeting (FR-22).
-            Log.pipeline.error("diarization failed, degrading: \(error.localizedDescription, privacy: .public)")
-            _ = try await store.update(id: id) { $0.diarizationSucceeded = false }
+        let mic = micSpans, sysSpans = systemSpans, multi = multipleInRoom
+        let ok = anySucceeded
+        _ = try await store.update(id: id) { m in
+            m.diarizationSucceeded = ok
+            m.multipleInRoom = multi
+            for (k, v) in names { m.speakerNames[k] = v }
+            m.inferredSpeakers = inferred
+            m.utterances = Self.assign(micSpans: mic, systemSpans: sysSpans,
+                                       multipleInRoom: multi, to: m.utterances)
         }
     }
 
-    /// Assigns each System Stream Utterance to the diarized speaker whose span
-    /// overlaps it most.
-    static func assign(spans: [DiarizedSpan], to utterances: [Utterance]) -> [Utterance] {
+    /// Assigns each Utterance to the diarized voice whose span overlaps it most,
+    /// within its own stream. A mic Utterance can only become an in-room voice and
+    /// a system Utterance can only become a remote one — the streams never mix,
+    /// which is the part of the original design that survives.
+    static func assign(micSpans: [DiarizedSpan],
+                       systemSpans: [DiarizedSpan],
+                       multipleInRoom: Bool,
+                       to utterances: [Utterance]) -> [Utterance] {
         utterances.map { u in
-            guard u.origin == .system else { return u }
+            let spans = u.origin == .mic ? micSpans : systemSpans
+            guard !spans.isEmpty else { return u }
             var best: (idx: Int, overlap: TimeInterval)? = nil
             for s in spans {
                 let o = min(u.end, s.end) - max(u.start, s.start)
                 guard o > 0 else { continue }
                 if best == nil || o > best!.overlap { best = (s.speakerIndex, o) }
             }
+            guard let b = best else { return u }
             var c = u
-            if let b = best { c.speaker = SpeakerLabelID.remote(b.idx) }
+            switch u.origin {
+            case .mic:
+                // One voice on the mic stays the user; several become in-room voices.
+                c.speaker = multipleInRoom ? SpeakerLabelID.inRoom(b.idx) : .local
+            case .system:
+                c.speaker = SpeakerLabelID.remote(b.idx)
+            }
             return c
         }
     }
@@ -190,13 +244,24 @@ actor Pipeline {
         let store = MeetingStore.shared
         let localName = await AppStateBridge.localSpeakerName()
         _ = try await store.update(id: id) { m in
-            m.speakerNames[SpeakerLabelID.local.raw] = localName
-            // Give every unnamed remote cluster a stable anonymous label.
-            var counter = 1
-            for s in m.speakers where !s.isLocal {
-                if m.speakerNames[s.raw] == nil {
-                    m.speakerNames[s.raw] = "Speaker \(counter)"
-                    counter += 1
+            if !m.multipleInRoom {
+                m.speakerNames[SpeakerLabelID.local.raw] = localName
+            }
+            // Number each group independently so "In-room 2" and "Speaker 2" are
+            // never confused for one another.
+            var roomN = 1, remoteN = 1
+            for s in m.speakers {
+                guard m.speakerNames[s.raw] == nil else {
+                    if s.isInRoom { roomN += 1 } else if s.isRemote { remoteN += 1 }
+                    continue
+                }
+                switch s.place {
+                case .you:
+                    m.speakerNames[s.raw] = localName
+                case .room:
+                    m.speakerNames[s.raw] = "In-room \(roomN)"; roomN += 1
+                case .remote:
+                    m.speakerNames[s.raw] = "Speaker \(remoteN)"; remoteN += 1
                 }
             }
             // AD-4: sort by the shared session clock.
