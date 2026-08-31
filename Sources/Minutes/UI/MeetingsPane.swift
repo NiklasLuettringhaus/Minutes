@@ -231,6 +231,14 @@ struct MeetingsPane: View {
                     Task { await SessionCoordinator.shared.rewriteNote(meetingID: m.id) }
                 }
             }
+            // The recordings live under ~/Library, which Finder hides, so without
+            // this there is no route to them from anywhere in the app.
+            Button("Reveal recording in Finder") {
+                Task {
+                    let dir = await MeetingStore.shared.directory(for: m.id)
+                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir.path)
+                }
+            }
             Divider()
             Button("Delete…", role: .destructive) {
                 deleteNoteToo = false

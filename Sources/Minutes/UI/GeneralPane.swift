@@ -73,15 +73,24 @@ struct GeneralPane: View {
                             .font(.caption).foregroundStyle(Tok.textSecondary)
 
                         Divider()
-                        HStack {
+                        HStack(spacing: Tok.s4) {
                             Text("Audio on disk: \(Fmt.bytes(audioBytes))")
                                 .font(.caption).monospacedDigit()
                                 .foregroundStyle(Tok.textSecondary)
                             Spacer()
+                            // The pane offered to *delete* this and no way to *look*
+                            // at it. Recordings live under ~/Library, which Finder
+                            // hides, so "where are my audio files" had no answer
+                            // anywhere in the app.
+                            Button("Show in Finder") { revealAudio() }
+                                .buttonStyle(.borderless).font(.caption)
                             Button("Delete all recorded audio") { clearAudio() }
                                 .buttonStyle(.borderless).font(.caption)
                                 .disabled(audioBytes == 0)
                         }
+                        Text("Recordings are kept per meeting under ~/Library/Application Support/Minutes/Meetings. Two files each: your microphone, and the far end.")
+                            .font(.caption).foregroundStyle(Tok.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -246,6 +255,13 @@ struct GeneralPane: View {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .full
         return f.localizedString(for: d, relativeTo: Date())
+    }
+
+    private func revealAudio() {
+        Task {
+            let root = await MeetingStore.shared.meetingsRoot
+            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: root.path)
+        }
     }
 
     private func choose() {

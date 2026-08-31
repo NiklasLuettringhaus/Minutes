@@ -78,6 +78,7 @@ enum Doctor {
         print("  readable:           \(meetings.count)")
         print("  UNREADABLE:         \(bad.count)")
         for b in bad { print("    ✗ \(b.id): \(b.reason.prefix(160))") }
+        print("  meetings root:      \(await store.meetingsRoot.path)")
         print("  audio on disk:      \(bytes(await store.audioBytes()))")
         for m in meetings {
             let audio = await store.hasAudio(id: m.id) ? "audio" : "no audio"
