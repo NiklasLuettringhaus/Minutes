@@ -82,21 +82,50 @@ struct SectionHeading: View {
 
 // MARK: - Done pill
 
-/// Deliberately **not** a button: no border, no hover state, not focusable, fully
-/// round so it reads as status. If a user tries to click it, the design has failed.
+/// Reads as status, and acts like a control when there is somewhere to go.
+///
+/// This was originally documented as "deliberately not a button — if a user tries
+/// to click it, the design has failed". A user tried to click it, so it had: a
+/// satisfied row is still the natural place to go and *check* the thing, and a
+/// dead green pill is a cul-de-sac. With an `action` it becomes a button that
+/// reveals a chevron on hover; without one it stays exactly as it was.
 struct DonePill: View {
+    var label: String = "Done"
+    var action: (() -> Void)? = nil
+    @State private var hovering = false
+
     var body: some View {
+        if let action {
+            Button(action: action) { pill }
+                .buttonStyle(.plain)
+                .onHover { hovering = $0 }
+                .accessibilityLabel("\(label), open settings")
+                .accessibilityRemoveTraits(.isStaticText)
+        } else {
+            pill
+                .accessibilityElement()
+                .accessibilityLabel(label)
+                .accessibilityAddTraits(.isStaticText)
+        }
+    }
+
+    private var pill: some View {
         HStack(spacing: Tok.s2) {
             Image(systemName: "checkmark").font(.system(size: 9, weight: .bold))
-            Text("Done").font(.caption)
+            Text(label).font(.caption)
+            if action != nil {
+                // Only on hover, so a satisfied row still recedes at rest.
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+                    .opacity(hovering ? 1 : 0)
+                    .frame(width: hovering ? nil : 0)
+            }
         }
         .foregroundStyle(Tok.brand)
         .padding(.horizontal, Tok.s4)
         .padding(.vertical, Tok.s2 + 1)
-        .background(Tok.brand.opacity(0.15), in: Capsule())
-        .accessibilityElement()
-        .accessibilityLabel("Done")
-        .accessibilityAddTraits(.isStaticText)
+        .background(Tok.brand.opacity(hovering ? 0.28 : 0.15), in: Capsule())
+        .animation(.easeOut(duration: 0.12), value: hovering)
     }
 }
 

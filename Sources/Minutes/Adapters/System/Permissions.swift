@@ -80,10 +80,13 @@ enum Permissions {
         open("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
     }
 
+    /// `Privacy_AudioCapture` verified present in
+    /// `SecurityPrivacyExtension.appex` on macOS 26 — the previous generic
+    /// `?Privacy` anchor landed the user on the Privacy root and left them to find
+    /// the right list themselves. An unrecognised anchor still falls back there,
+    /// so naming it costs nothing.
     static func openSystemAudioSettings() {
-        // macOS files system-audio capture under its own privacy pane; fall back
-        // to the Privacy root if the specific anchor is not recognised.
-        open("x-apple.systempreferences:com.apple.preference.security?Privacy")
+        open("x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture")
     }
 
     private static func open(_ s: String) {

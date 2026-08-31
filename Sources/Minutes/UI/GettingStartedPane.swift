@@ -89,8 +89,12 @@ struct GettingStartedPane: View {
                         : "Needed to turn recordings into text. Runs entirely on this Mac.",
                     isSatisfied: modelReady
                 ) {
-                    if modelReady { DonePill() }
-                    else { RowActionButton(title: "Choose Model") { selection = .transcription } }
+                    // A satisfied row still leads somewhere: the place you would
+                    // go to check or change the thing it reports.
+                    if modelReady {
+                        DonePill { selection = .transcription }
+                            .help("Open Transcription settings")
+                    } else { RowActionButton(title: "Choose Model") { selection = .transcription } }
                 }
                 RowDivider()
 
@@ -103,8 +107,10 @@ struct GettingStartedPane: View {
                         : "Needed to record your side of the conversation.",
                     isSatisfied: micState.isAuthorized
                 ) {
-                    if micState.isAuthorized { DonePill() }
-                    else if micState == .denied {
+                    if micState.isAuthorized {
+                        DonePill { Permissions.openMicrophoneSettings() }
+                            .help("Open Privacy & Security › Microphone")
+                    } else if micState == .denied {
                         RowActionButton(title: "Open Settings") {
                             Permissions.openMicrophoneSettings()
                         }
@@ -126,8 +132,10 @@ struct GettingStartedPane: View {
                     isSatisfied: sysState == .observedWorking,
                     isOptional: true
                 ) {
-                    if sysState == .observedWorking { DonePill() }
-                    else { RowActionButton(title: "Run Test") { runTest() } }
+                    if sysState == .observedWorking {
+                        DonePill { Permissions.openSystemAudioSettings() }
+                            .help("Open Privacy & Security")
+                    } else { RowActionButton(title: "Run Test") { runTest() } }
                 }
                 RowDivider()
 
@@ -140,8 +148,10 @@ struct GettingStartedPane: View {
                         : "Where the Markdown file for each meeting is written.",
                     isSatisfied: folderReady
                 ) {
-                    if folderReady && prefs.hasExplicitNotesFolder() { DonePill() }
-                    else {
+                    if folderReady && prefs.hasExplicitNotesFolder() {
+                        DonePill { if let f = prefs.notesFolder() { NSWorkspace.shared.open(f) } }
+                            .help("Show the folder in Finder")
+                    } else {
                         RowActionButton(title: "Choose Folder…", showsChevron: false) { chooseFolder() }
                     }
                 }
@@ -158,8 +168,10 @@ struct GettingStartedPane: View {
                     isSatisfied: notifier.canDeliver,
                     isOptional: true
                 ) {
-                    if notifier.canDeliver { DonePill() }
-                    else if notifier.authorizationStatus == .denied {
+                    if notifier.canDeliver {
+                        DonePill { Notifier.openSettings() }
+                            .help("Open Notifications settings")
+                    } else if notifier.authorizationStatus == .denied {
                         // macOS will not show its dialog a second time.
                         RowActionButton(title: "Open Settings") { Notifier.openSettings() }
                     } else {
@@ -180,8 +192,10 @@ struct GettingStartedPane: View {
                     isSatisfied: testPassed,
                     isOptional: true
                 ) {
-                    if testPassed { DonePill() }
-                    else { RowActionButton(title: "Run Test") { runTest() } }
+                    if testPassed {
+                        DonePill(label: "Passed") { runTest() }
+                            .help("Run the test again")
+                    } else { RowActionButton(title: "Run Test") { runTest() } }
                 }
 
                 if requiredSatisfied {
