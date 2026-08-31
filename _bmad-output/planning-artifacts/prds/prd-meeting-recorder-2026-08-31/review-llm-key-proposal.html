@@ -1,0 +1,490 @@
+<title>The LLM You Already Own</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --paper:      #f6f7f7;
+    --surface:    #ffffff;
+    --surface-2:  #eef1f1;
+    --ink:        #16191b;
+    --ink-soft:   #596366;
+    --ink-faint:  #838d90;
+    --line:       #dde2e2;
+    --teal:       #0d6e66;
+    --teal-wash:  #e4f2f0;
+    --alarm:      #a81f26;
+    --alarm-wash: #fbeced;
+    --amber:      #8a5a06;
+    --amber-wash: #fbf2e0;
+    --shadow:     0 1px 2px rgba(20,28,30,.05), 0 8px 24px -12px rgba(20,28,30,.12);
+    --serif: "Instrument Serif", Georgia, "Times New Roman", serif;
+    --sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #0f1213;
+      --surface:    #171b1c;
+      --surface-2:  #1f2425;
+      --ink:        #e6eaea;
+      --ink-soft:   #a2adaf;
+      --ink-faint:  #7b8688;
+      --line:       #2b3233;
+      --teal:       #37d6c2;
+      --teal-wash:  #10302d;
+      --alarm:      #f4868c;
+      --alarm-wash: #35191c;
+      --amber:      #dfab4d;
+      --amber-wash: #2f2512;
+      --shadow:     0 1px 2px rgba(0,0,0,.3), 0 10px 28px -14px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:      #0f1213;
+    --surface:    #171b1c;
+    --surface-2:  #1f2425;
+    --ink:        #e6eaea;
+    --ink-soft:   #a2adaf;
+    --ink-faint:  #7b8688;
+    --line:       #2b3233;
+    --teal:       #37d6c2;
+    --teal-wash:  #10302d;
+    --alarm:      #f4868c;
+    --alarm-wash: #35191c;
+    --amber:      #dfab4d;
+    --amber-wash: #2f2512;
+    --shadow:     0 1px 2px rgba(0,0,0,.3), 0 10px 28px -14px rgba(0,0,0,.6);
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 50rem; margin: 0 auto; padding: 3.5rem 1.5rem 6rem; }
+  @media (max-width: 640px) { .wrap { padding: 2rem 1.1rem 4rem; } }
+
+  /* ---- masthead ---- */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .69rem;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin: 0 0 1.1rem;
+  }
+  h1 {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: clamp(2.5rem, 7vw, 3.9rem);
+    line-height: 1.02;
+    letter-spacing: -.015em;
+    text-wrap: balance;
+    margin: 0 0 .8rem;
+  }
+  .standfirst {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: clamp(1.15rem, 2.6vw, 1.4rem);
+    line-height: 1.45;
+    color: var(--ink-soft);
+    max-width: 34ch;
+    margin: 0 0 2.4rem;
+  }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: .4rem 1.4rem;
+    font-family: var(--mono); font-size: .72rem;
+    color: var(--ink-faint);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: .8rem 0;
+    margin-bottom: 3rem;
+  }
+  .meta b { color: var(--ink-soft); font-weight: 500; }
+
+  /* ---- section headings ---- */
+  h2 {
+    font-family: var(--serif);
+    font-weight: 400;
+    font-size: clamp(1.7rem, 4vw, 2.15rem);
+    line-height: 1.12;
+    letter-spacing: -.01em;
+    text-wrap: balance;
+    margin: 3.6rem 0 1rem;
+  }
+  h2 .num {
+    font-family: var(--mono);
+    font-size: .68rem;
+    letter-spacing: .1em;
+    color: var(--teal);
+    display: block;
+    margin-bottom: .5rem;
+    text-transform: uppercase;
+  }
+  h3 {
+    font-size: 1rem; font-weight: 600;
+    margin: 2rem 0 .5rem;
+  }
+  p { margin: 0 0 1.05rem; max-width: 68ch; }
+  a { color: var(--teal); }
+
+  /* ---- verdict ---- */
+  .verdict {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--teal);
+    border-radius: 3px;
+    box-shadow: var(--shadow);
+    padding: 1.6rem 1.7rem;
+    margin: 0 0 1.6rem;
+  }
+  .verdict .label {
+    font-family: var(--mono); font-size: .68rem; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--teal); margin: 0 0 .6rem;
+  }
+  .verdict p:last-child { margin-bottom: 0; }
+  .verdict strong { font-weight: 600; }
+
+  /* ---- the decisive callout ---- */
+  .decisive {
+    background: var(--teal-wash);
+    border: 1px solid color-mix(in oklab, var(--teal) 30%, transparent);
+    border-radius: 3px;
+    padding: 1.7rem 1.8rem;
+    margin: 1.6rem 0 2rem;
+  }
+  .decisive h2 { margin: 0 0 .9rem; font-size: clamp(1.45rem, 3.4vw, 1.85rem); }
+  .decisive h2 .num { color: var(--teal); }
+  .decisive p:last-child { margin-bottom: 0; }
+  .decisive ul { margin: 0 0 1.05rem; padding-left: 1.15rem; max-width: 68ch; }
+  .decisive li { margin-bottom: .4rem; }
+
+  /* ---- code + quote ---- */
+  pre {
+    font-family: var(--mono); font-size: .8rem; line-height: 1.55;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: .85rem 1rem;
+    overflow-x: auto;
+    margin: 0 0 1.05rem;
+  }
+  code { font-family: var(--mono); font-size: .87em; }
+  p > code, li > code, td > code {
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 3px; padding: .06em .32em;
+  }
+  blockquote {
+    margin: 0 0 1.05rem;
+    padding: .3rem 0 .3rem 1.3rem;
+    border-left: 2px solid var(--alarm);
+    font-family: var(--serif);
+    font-size: 1.16rem;
+    line-height: 1.45;
+    color: var(--ink-soft);
+    max-width: 62ch;
+  }
+
+  /* ---- findings ---- */
+  .finding {
+    border-top: 1px solid var(--line);
+    padding: 1.35rem 0 .4rem;
+  }
+  .finding:first-of-type { border-top: 1px solid var(--ink-soft); }
+  .fhead { display: flex; gap: .85rem; align-items: baseline; margin-bottom: .7rem; }
+  .fnum {
+    font-family: var(--mono); font-size: .78rem; font-weight: 500;
+    color: var(--teal); flex: none; padding-top: .15rem;
+  }
+  .ftitle { font-weight: 600; font-size: 1.03rem; line-height: 1.35; text-wrap: balance; }
+  .frow { display: grid; grid-template-columns: 5.6rem 1fr; gap: .3rem .9rem; margin-bottom: .45rem; }
+  @media (max-width: 560px) { .frow { grid-template-columns: 1fr; gap: .1rem; } }
+  .frow dt {
+    font-family: var(--mono); font-size: .64rem; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--ink-faint); padding-top: .3rem;
+  }
+  .frow dd { margin: 0; max-width: 66ch; }
+  .frow .where { font-family: var(--mono); font-size: .76rem; color: var(--ink-soft); }
+  .frow.cost dd { color: var(--alarm); }
+  .frow.cost dt { color: var(--alarm); opacity: .85; }
+  .tag {
+    display: inline-block; font-family: var(--mono); font-size: .62rem;
+    letter-spacing: .08em; text-transform: uppercase;
+    padding: .16em .5em; border-radius: 2px; vertical-align: .1em;
+    margin-left: .5rem; white-space: nowrap;
+  }
+  .tag.breaks { background: var(--alarm-wash); color: var(--alarm); }
+  .tag.favour { background: var(--teal-wash); color: var(--teal); }
+  .tag.caution { background: var(--amber-wash); color: var(--amber); }
+
+  /* ---- tables ---- */
+  .scroller { overflow-x: auto; margin: 0 0 1.4rem; border: 1px solid var(--line); border-radius: 3px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: .87rem; }
+  th, td { text-align: left; padding: .68rem .85rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th {
+    font-family: var(--mono); font-size: .64rem; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--ink-faint); font-weight: 500;
+    background: var(--surface-2); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.opt { font-weight: 600; }
+  .yes { color: var(--teal); font-weight: 500; }
+  .no  { color: var(--alarm); font-weight: 500; }
+  .num-cell { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+  /* ---- recommendation blocks ---- */
+  .rec {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 3px; box-shadow: var(--shadow);
+    padding: 1.4rem 1.6rem; margin: 0 0 1.2rem;
+  }
+  .rec .rlabel {
+    font-family: var(--mono); font-size: .66rem; letter-spacing: .11em;
+    text-transform: uppercase; color: var(--ink-faint); margin: 0 0 .45rem;
+  }
+  .rec h3 { margin: 0 0 .7rem; font-size: 1.12rem; }
+  .rec h3 .accept { color: var(--teal); }
+  .rec p:last-child { margin-bottom: 0; }
+
+  .step { display: flex; gap: .9rem; margin-bottom: 1rem; align-items: baseline; }
+  .step .sn {
+    font-family: var(--mono); font-size: .72rem; color: var(--teal);
+    border: 1px solid color-mix(in oklab, var(--teal) 40%, transparent);
+    border-radius: 50%; width: 1.6rem; height: 1.6rem; flex: none;
+    display: grid; place-items: center;
+  }
+  .step p { margin: 0; }
+
+  footer {
+    margin-top: 4rem; padding-top: 1.2rem; border-top: 1px solid var(--line);
+    font-family: var(--mono); font-size: .7rem; color: var(--ink-faint);
+  }
+</style>
+
+<div class="wrap">
+
+  <p class="eyebrow">bmad-review &middot; adversarial + edge-case-hunter</p>
+  <h1>The LLM You Already Own</h1>
+  <p class="standfirst">A review of gating summaries on a real language model, and paying for one with an API key.</p>
+
+  <div class="meta">
+    <span><b>Subject</b> Minutes, increment 3 proposal</span>
+    <span><b>Date</b> 31 Aug 2026</span>
+    <span><b>Lenses</b> adversarial, edge-case-hunter</span>
+    <span><b>Findings</b> 14 + 13 paths</span>
+  </div>
+
+  <div class="verdict">
+    <p class="label">Verdict &middot; split the proposal</p>
+    <p><strong>Half of this is clearly right and should ship on its own. The other half is the most expensive way to get what you want, and it breaks the product's founding claim to do it.</strong></p>
+    <p>Gating the summary on a real model is a good instinct the PRD already argues for. But "gate the summary" and "buy the intelligence with an API key" are two independent decisions fused into one sentence. Separate them and the answer changes, because you are already holding an unused LLM.</p>
+  </div>
+
+  <div class="decisive">
+    <h2><span class="num">The finding that should decide this</span>The model is switched off, not absent</h2>
+    <p>Apple's on-device model backend was built in increment 1 &mdash; story 7.1, FR-27 &mdash; is unit-tested, and is wired into the pipeline with guided generation into a typed structure. It has never run once. Here is why:</p>
+    <pre>SystemLanguageModel.default.availability
+  = unavailable(appleIntelligenceNotEnabled)</pre>
+    <p>That reason is the whole point. It is <strong>not</strong> <code>deviceNotEligible</code> and <strong>not</strong> <code>modelNotReady</code>.</p>
+    <ul>
+      <li>The machine is an <strong>Apple M5 MacBook Pro, 24&nbsp;GB</strong> &mdash; comfortably eligible.</li>
+      <li><code>com.apple.CloudSubscriptionFeatures.optIn</code> contains <code>"opted_out_buddy" = 1</code> &mdash; Apple Intelligence was declined during Setup Assistant.</li>
+    </ul>
+    <p>So the sequence was: the app shipped with an LLM backend; that backend checked availability at run time, correctly found the feature off, and fell back to keyphrase extraction exactly as designed; you read the keyphrase output, correctly judged it not worth having, and proposed buying a language model.</p>
+    <p>Switching on Apple Intelligence in System Settings gets you real LLM summaries with <strong>no new code, no key, no recurring cost, and nothing leaving the Mac.</strong> Do that before deciding anything else here.</p>
+  </div>
+
+  <h2><span class="num">Section 01</span>Your judgement of the output is correct</h2>
+  <p>The complaint is well-founded, and it pays to be precise about <em>which</em> part is bad. This is a real summary from your notes folder:</p>
+  <blockquote>Okay, let's talk about the pricing page redesign. The preaching page is confusing customers, conversion dropped 12% last quarter. So we decided to simplify the pricing page down to three tiers. Can you also check the mobile pricing page layout?</blockquote>
+  <p>That is not a summary. It is four sentences copied out of the transcript, in order, at roughly 80% of the transcript's own length &mdash; for a 30-second recording, nearly the whole thing. It also says <em>preaching page</em>, because Whisper misheard <em>pricing page</em>. That matters later.</p>
+  <p>The <strong>titles</strong>, by contrast, are fine: "Pricing Page", "Page Redesigned Together". So "better titles" solves a problem you do not have, while "summaries" solves one you do.</p>
+
+  <h2><span class="num">Section 02</span>Adversarial findings</h2>
+
+  <div class="finding">
+    <div class="fhead"><span class="fnum">01</span><span class="ftitle">NFR-1 and NFR-6 are contradicted, not amended<span class="tag breaks">breaks a claim</span></span></div>
+    <dl class="frow"><dt>Where</dt><dd class="where">PRD &sect;8 &mdash; NFR-1, NFR-6</dd></dl>
+    <dl class="frow"><dt>Problem</dt><dd>NFR-1 reads "No audio, Transcript, or Metadata is transmitted anywhere, ever." NFR-6 requires the zero-egress claim be "verifiable by an outside observer with a network monitor". A user-supplied key makes the app fail NFR-6 by construction &mdash; a network monitor will show transcripts leaving.</dd></dl>
+    <dl class="frow"><dt>Fix</dt><dd>Either retire NFR-1 and NFR-6 explicitly, in writing, with the brief's thesis alongside them &mdash; or keep the model local. Do not leave them standing while shipping code that violates them.</dd></dl>
+    <dl class="frow cost"><dt>If left</dt><dd>The product's strongest claim becomes false and stays written down as though it were true.</dd></dl>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fnum">02</span><span class="ftitle">The transcript is not yours alone to send<span class="tag breaks">consent</span></span></div>
+    <dl class="frow"><dt>Where</dt><dd class="where">proposal point 3</dd></dl>
+    <dl class="frow"><dt>Problem</dt><dd>The payload is other people's speech &mdash; verbatim, named, timestamped and attributed. Your own Spirii all-hands had 37 participants. None of them agreed to have their words sent to an API vendor.</dd></dl>
+    <dl class="frow"><dt>Fix</dt><dd>If this ships, sending must be per-meeting and opt-in, with the participant list shown at the moment of sending. Never a global default that silently applies to every future meeting.</dd></dl>
+    <dl class="frow cost"><dt>If left</dt><dd>One settings toggle exports every colleague's words from then on.</dd></dl>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fnum">03</span><span class="ftitle">This creates a company exposure, not just a personal preference<span class="tag breaks">compliance</span></span></div>
+    <dl class="frow"><dt>Where</dt><dd class="where">proposal point 3 &middot; PRD &sect;9.1</dd></dl>
+    <dl class="frow"><dt>Problem</dt><dd>Voice, name and content together are personal data. Sending them to a US provider makes that provider a processor, which needs a legal basis and a data processing agreement. An individual employee cannot establish either on colleagues' behalf.</dd></dl>
+    <dl class="frow"><dt>Fix</dt><dd>Default off, and say this plainly in the settings pane. Recommend the local path for work meetings. If the company already has an approved vendor under a DPA, use that one and name it.</dd></dl>
+    <dl class="frow cost"><dt>If left</dt><dd>A personal productivity tool quietly becomes a data-protection problem with your employer's name on it.</dd></dl>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fnum">04</span><span class="ftitle">Two independent decisions are fused into one</span></div>
+    <dl class="frow"><dt>Where</dt><dd class="where">general</dd></dl>
+    <dl class="frow"><dt>Problem</dt><dd>"Gate the summary on a real LLM" and "get the LLM by API key" are separable. The first is clearly right. The second is one of three ways to satisfy it, and the only one carrying these costs.</dd></dl>
+    <dl class="frow"><dt>Fix</dt><dd>Decide them separately &mdash; see the options table below.</dd></dl>
+    <dl class="frow cost"><dt>If left</dt><dd>Accepting the good half drags in the contentious half for no reason.</dd></dl>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fnum">05</span><span class="ftitle">FR-26 becomes unsatisfiable as written</span></div>
+    <dl class="frow"><dt>Where</dt><dd class="where">PRD &sect;4.6 &mdash; FR-26</dd></dl>
+    <dl class="frow"><dt>Problem</dt><dd>FR-26 requires every Meeting to receive a title, a tag set <em>and</em> a summary, and states no Meeting is ever left untitled. A basic tier with no summary contradicts it.</dd></dl>
+    <dl class="frow"><dt>Fix</dt><dd>Amend FR-26 so summary and tags become conditional while the title guarantee survives. Also define "title setting" &mdash; a manual title, a heuristic title, or a filename template? The proposal says it without saying which.</dd></dl>
+    <dl class="frow cost"><dt>If left</dt><dd>The PRD and the build disagree about whether a meeting can exist without a summary.</dd></dl>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fnum">06</span><span class="ftitle">"Better titles" targets the component that already works</span></div>
+    <dl class="frow"><dt>Where</dt><dd class="where">proposal point 3</dd></dl>
+    <dl class="frow"><dt>Problem</dt><dd>Heuristic titles are adequate; heuristic <em>summaries</em> and <em>tags</em> are not. <code>preaching-page</code> as a tag is the visible failure, not <code>Pricing Page</code> as a title.</dd></dl>
+    <dl class="frow"><dt>Fix</dt><dd>Scope the model to the summary, decisions, action items and tags. Leave title generation alone until it is measured against a real alternative.</dd></dl>
+    <dl class="frow cost"><dt>If left</dt><dd>Recurring per-token spend regenerating output that was already fine.</dd></dl>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fnum">07</span><span class="ftitle">The quality ceiling is the transcript, not the summariser<span class="tag caution">root cause</span></span></div>
+    <dl class="frow"><dt>Where</dt><dd class="where">general</dd></dl>
+    <dl class="frow"><dt>Problem</dt><dd>"Preaching page" is a Whisper error. An LLM will write a fluent, confident summary <em>of the wrong words</em> &mdash; and fluency makes the error harder to catch than the current clumsy extract does.</dd></dl>
+    <dl class="frow"><dt>Fix</dt><dd>Before blaming summarisation, re-run a meeting with a stronger transcription model. <code>large-v3-turbo</code> is already downloaded and Parakeet is available. Compare word error rate on the same audio first.</dd></dl>
+    <dl class="frow cost"><dt>If left</dt><dd>Money and egress spent on a problem whose cause is upstream, and the remaining errors get harder to notice.</dd></dl>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fnum">08</span><span class="ftitle">No cost model, against a PRD that names zero cost as a constraint<span class="tag breaks">breaks a claim</span></span></div>
+    <dl class="frow"><dt>Where</dt><dd class="where">PRD &sect;9.2</dd></dl>
+    <dl class="frow"><dt>Problem</dt><dd>&sect;9.2 states zero run-time cost is "a design constraint, not an outcome &mdash; it is what makes a tool with no business model sustainable." A 60-minute meeting is roughly 8&ndash;10k words: call it 12k tokens in. Several meetings a day is a real recurring bill.</dd></dl>
+    <dl class="frow"><dt>Fix</dt><dd>Show an estimated token count and cost <em>before</em> sending, plus a running monthly total. And renegotiate &sect;9.2 in writing rather than silently breaking it.</dd></dl>
+    <dl class="frow cost"><dt>If left</dt><dd>Unbounded silent spend, and a stated constraint quietly abandoned.</dd></dl>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fnum">09</span><span class="ftitle">Key storage is unspecified, in an ad-hoc-signed app<span class="tag breaks">security</span></span></div>
+    <dl class="frow"><dt>Where</dt><dd class="where">proposal point 3</dd></dl>
+    <dl class="frow"><dt>Problem</dt><dd>An API key in <code>UserDefaults</code> is plain text readable by any process running as you. This app is ad-hoc signed with no stable identity, which weakens Keychain ACLs too.</dd></dl>
+    <dl class="frow"><dt>Fix</dt><dd>Keychain only, <code>kSecAttrAccessibleWhenUnlocked</code>. Never <code>UserDefaults</code>, never the notes folder, never a log line, and never echoed back into the UI after saving.</dd></dl>
+    <dl class="frow cost"><dt>If left</dt><dd>A credential leak out of a note-taking tool.</dd></dl>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fnum">10</span><span class="ftitle">Provenance stops being checkable<span class="tag breaks">honesty</span></span></div>
+    <dl class="frow"><dt>Where</dt><dd class="where">PRD &sect;4.6 FR-30, &sect;9.3 &middot; note frontmatter</dd></dl>
+    <dl class="frow"><dt>Problem</dt><dd>Every note ends its frontmatter with <code>generated_by: Minutes (local, on-device)</code>. With a cloud backend that line is false, and FR-30's promise that a reader can tell a model summary from keyphrase extraction now has three answers, not two.</dd></dl>
+    <dl class="frow"><dt>Fix</dt><dd>Extend the backend kind with provider <em>and</em> model identifier, and make <code>generated_by</code> conditional per note. Old notes must keep saying what was true when they were written.</dd></dl>
+    <dl class="frow cost"><dt>If left</dt><dd>Notes assert on-device generation regardless of what happened &mdash; and &sect;9.3, the honesty section, is the thing that breaks.</dd></dl>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fnum">11</span><span class="ftitle">No offline or failure path is stated</span></div>
+    <dl class="frow"><dt>Where</dt><dd class="where">proposal point 3 &middot; PRD &sect;8 NFR-5</dd></dl>
+    <dl class="frow"><dt>Problem</dt><dd>Meetings happen on planes, on captive-portal wifi, and on expired keys. NFR-5 requires that no failure path silently discards a note.</dd></dl>
+    <dl class="frow"><dt>Fix</dt><dd>State it: on unreachable API, 401, 429, quota exhaustion or timeout, the note is still written with heuristic metadata and the failure is recorded on the meeting. Never block the note on a network call.</dd></dl>
+    <dl class="frow cost"><dt>If left</dt><dd>A network error costs the user their meeting notes &mdash; the one outcome the whole app exists to prevent.</dd></dl>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fnum">12</span><span class="ftitle">"If we can actually use an LLM" needs a definition</span></div>
+    <dl class="frow"><dt>Where</dt><dd class="where">proposal point 1</dd></dl>
+    <dl class="frow"><dt>Problem</dt><dd>"Can use" collapses three distinct states: no backend available at all, a backend configured but unreachable right now, and a backend working. Each needs different UI and a different fallback.</dd></dl>
+    <dl class="frow"><dt>Fix</dt><dd>Define the gate as those three states explicitly before building the conditional summary.</dd></dl>
+    <dl class="frow cost"><dt>If left</dt><dd>The gate gets implemented against whichever state the developer happened to think of.</dd></dl>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fnum">13</span><span class="ftitle">FR-52 shipped hours ago and this already contradicts it</span></div>
+    <dl class="frow"><dt>Where</dt><dd class="where">PRD &sect;4.6 &mdash; FR-52</dd></dl>
+    <dl class="frow"><dt>Problem</dt><dd>FR-52 gives a two-way choice: auto, or pin the deterministic backend. A third backend with a key makes it three-way with undefined precedence &mdash; Apple Intelligence on <em>and</em> a key present, which wins?</dd></dl>
+    <dl class="frow"><dt>Fix</dt><dd>Define precedence before adding the option. The defensible order is explicit user pin, then local model, then cloud.</dd></dl>
+    <dl class="frow cost"><dt>If left</dt><dd>Two settings that can disagree, and a summary whose origin depends on undocumented ordering.</dd></dl>
+  </div>
+
+  <div class="finding">
+    <div class="fhead"><span class="fnum">14</span><span class="ftitle">The basic tier is better than today, and the proposal undersells it<span class="tag favour">in favour</span></span></div>
+    <dl class="frow"><dt>Where</dt><dd class="where">proposal points 1&ndash;2</dd></dl>
+    <dl class="frow"><dt>Problem</dt><dd>&sect;9.3 already requires that absence be represented honestly and never as invented content. An <em>empty</em> summary section is more compliant with the PRD than the current extract, which reads like a summary and is not one.</dd></dl>
+    <dl class="frow"><dt>Fix</dt><dd>Ship the gate on its own merits, immediately, independent of any LLM decision. It improves the product today.</dd></dl>
+    <dl class="frow cost"><dt>If left</dt><dd>A good change waits on an unrelated and much larger one.</dd></dl>
+  </div>
+
+  <h2><span class="num">Section 03</span>Edge-case findings</h2>
+  <p>Unhandled paths in the proposal as specified. Handled paths are omitted.</p>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Path</th><th>Missing handling</th></tr></thead>
+      <tbody>
+        <tr><td>Key present but malformed or revoked</td><td>No stated behaviour. Must fall back and record the failure, not retry silently.</td></tr>
+        <tr><td>Quota exhausted partway through a queue</td><td>FR-20 processes serially; some meetings get model metadata and some do not, with nothing distinguishing them.</td></tr>
+        <tr><td>Key removed after notes were generated with it</td><td>Existing notes' provenance must stay truthful; nothing says it is preserved.</td></tr>
+        <tr><td>Apple Intelligence on <em>and</em> a key present</td><td>Precedence undefined. See finding 13.</td></tr>
+        <tr><td>FR-52 "pin heuristic" set <em>and</em> a key present</td><td>Two settings that contradict each other.</td></tr>
+        <tr><td>Empty transcript &mdash; the <code>[BLANK_AUDIO]</code> case, already observed</td><td>Sends a paid request containing nothing. Must short-circuit.</td></tr>
+        <tr><td>Transcript containing only your own voice</td><td>Still exports a recording of you talking to yourself. Arguably fine, but unstated.</td></tr>
+        <tr><td>Zero-duration recording &mdash; observed twice on this machine</td><td>Same as empty: no gate specified.</td></tr>
+        <tr><td>Meeting longer than the provider's context window</td><td>FR-27 defines chunk-and-combine for the local model; nothing says the cloud path reuses it, and cost scales with the strategy.</td></tr>
+        <tr><td>Provider deprecates the model named in a note</td><td>The stored identifier becomes unresolvable and provenance degrades to a string nobody can check.</td></tr>
+        <tr><td>Notes folder inside iCloud Drive</td><td>A second egress path already exists that &sect;9.1 never disclosed; adding a first one makes the omission worse.</td></tr>
+        <tr><td>A detection-triggered meeting accepted quickly</td><td>Consent to <em>record</em> is not consent to <em>transmit</em>; FR-12's prompt says nothing about sending.</td></tr>
+        <tr><td>Non-English meeting</td><td>Transcription model and LLM have different language competence; no stated behaviour when they disagree.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2><span class="num">Section 04</span>Recommendation</h2>
+
+  <div class="rec">
+    <p class="rlabel">Decision A</p>
+    <h3>Gate the summary on a real model &mdash; <span class="accept">accept</span></h3>
+    <p>Ship it independently and soon. When no model is producing metadata, write the transcript, the heuristic title and the tags, and <strong>omit the summary, decisions and action items sections entirely</strong> rather than filling them with sentence extracts. &sect;9.3 already asks for this. It makes the product more honest today, at no cost, whatever you decide about Decision B.</p>
+    <p>One amendment needed: FR-26 must be reworded so the title guarantee survives while the summary becomes conditional.</p>
+  </div>
+
+  <div class="rec">
+    <p class="rlabel">Decision B</p>
+    <h3>Where the intelligence comes from</h3>
+    <div class="scroller">
+      <table>
+        <thead><tr><th>Option</th><th>Quality</th><th>Egress</th><th>Recurring cost</th><th>Work</th><th>NFR-1</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="opt">1. Enable Apple Intelligence</td>
+            <td>Good</td><td class="yes">None</td><td class="yes">None</td>
+            <td class="yes">Already built</td><td class="yes">Intact</td>
+          </tr>
+          <tr>
+            <td class="opt">2. Bundle a local model<br><span style="font-weight:400;color:var(--ink-soft)">MLX, Qwen3-class 4&ndash;8B</span></td>
+            <td>Good to very good</td><td class="yes">None</td><td class="yes">None</td>
+            <td>Moderate; 2&ndash;5&nbsp;GB download</td><td class="yes">Intact</td>
+          </tr>
+          <tr>
+            <td class="opt">3. User-supplied cloud key</td>
+            <td>Best</td><td class="no">Every transcript</td><td class="no">Per meeting, forever</td>
+            <td class="no">Large</td><td class="no">Broken</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="step"><span class="sn">1</span><p><strong>Do option 1 today.</strong> It is a switch in System Settings, the code path already exists and is tested, and it costs nothing. Then read a real LLM summary of a real meeting and decide whether you still want anything more.</p></div>
+    <div class="step"><span class="sn">2</span><p><strong>Option 2 if option 1 disappoints.</strong> It keeps every claim in the PRD true, works with Apple Intelligence off, and is a one-time download rather than a recurring bill.</p></div>
+    <div class="step"><span class="sn">3</span><p><strong>Option 3 only if both fail</strong> &mdash; and then only with the fourteen findings answered, particularly consent (2), compliance (3), provenance (10) and the offline path (11), and with NFR-1, NFR-6 and &sect;9.2 formally retired rather than quietly contradicted.</p></div>
+  </div>
+
+  <h2><span class="num">Section 05</span>What to do before any of this</h2>
+  <p>Re-transcribe one meeting with <code>large-v3-turbo</code> and compare it against the <code>base</code> output you have been reading. "Preaching page" is not a summarisation failure &mdash; and if the transcript is wrong, then every option in Decision B produces a confident, fluent, wrong summary. Fixing the input is cheaper than all three options and improves every one of them.</p>
+
+  <footer>
+    Minutes &middot; bmad-review &middot; adversarial + edge-case-hunter &middot; 31 August 2026<br>
+    Source: <code>_bmad-output/planning-artifacts/prds/prd-meeting-recorder-2026-08-31/review-llm-key-proposal.md</code>
+  </footer>
+
+</div>
