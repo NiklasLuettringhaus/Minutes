@@ -19,7 +19,9 @@ actor MLEngine {
         whisper = nil
         loadedModel = nil
         do {
-            let config = WhisperKitConfig(model: model, verbose: false, logLevel: .error,
+            let config = WhisperKitConfig(model: model,
+                                          downloadBase: ModelStorage.base,
+                                          verbose: false, logLevel: .error,
                                           prewarm: false, load: true, download: download)
             let w = try await WhisperKit(config)
             whisper = w
@@ -54,6 +56,18 @@ actor MLEngine {
 /// transcription time (NFR-1); only a missing model triggers a download.
 struct WhisperKitTranscriber: Transcribing {
 
+    /// Whisper's well-known hallucinations over silence. It emits these with
+    /// high confidence on an empty channel — a real run produced a phantom
+    /// `Me: "Thank you."` from a microphone nobody spoke into, which invents a
+    /// participant. Only ever matched against a segment's ENTIRE text, so real
+    /// speech containing these words survives.
+    static let hallucinations: Set<String> = [
+        "thank you", "thanks", "thank you very much", "thanks for watching",
+        "thank you for watching", "please subscribe", "subscribe",
+        "bye", "goodbye", "bye bye", "you", "yeah", "okay", "ok", "mm", "mhm",
+        "uh", "um", "hmm", "so", "and", "the", "amen", "music",
+    ]
+
     /// Whisper's non-speech placeholders are not speech and must never reach a
     /// Note. Returns nil when nothing usable is left.
     static func clean(_ raw: String) -> String? {
@@ -72,6 +86,8 @@ struct WhisperKitTranscriber: Transcribing {
         // A segment reduced to punctuation or a bare filler is not speech.
         let bare = s.lowercased().trimmingCharacters(in: CharacterSet.punctuationCharacters.union(.whitespaces))
         if bare.isEmpty { return nil }
+        // Whole-segment hallucination, not speech.
+        if hallucinations.contains(bare) { return nil }
         return s
     }
 

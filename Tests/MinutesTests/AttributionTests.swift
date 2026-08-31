@@ -109,6 +109,22 @@ final class TranscriptCleaningTests: XCTestCase {
         XCTAssertEqual(out, "Okay, let's begin.")
     }
 
+    /// A real run produced a phantom `Me: "Thank you."` from a silent microphone,
+    /// which invents a participant who never spoke.
+    func testDropsWholeSegmentHallucinations() {
+        XCTAssertNil(WhisperKitTranscriber.clean("Thank you."))
+        XCTAssertNil(WhisperKitTranscriber.clean("  thanks for watching  "))
+        XCTAssertNil(WhisperKitTranscriber.clean("you"))
+        XCTAssertNil(WhisperKitTranscriber.clean("Okay."))
+    }
+
+    func testKeepsHallucinationWordsInsideRealSpeech() {
+        XCTAssertEqual(WhisperKitTranscriber.clean("Thank you for taking the pricing page on."),
+                       "Thank you for taking the pricing page on.")
+        XCTAssertEqual(WhisperKitTranscriber.clean("Okay, so what about Thursday?"),
+                       "Okay, so what about Thursday?")
+    }
+
     func testDoesNotEatBracketedRealContent() {
         // Square brackets are not automatically non-speech.
         XCTAssertEqual(WhisperKitTranscriber.clean("The [Q3] number is twelve."),

@@ -91,7 +91,10 @@ final class DetectionService: ObservableObject {
 
         // Released: clear debounce state, and auto-stop if this Session came from
         // a Detection Prompt for that app (FR-14).
-        for id in firstSeen.keys where !heldIDs.contains(id) {
+        // Snapshot before mutating: iterating `firstSeen.keys` while removing from
+        // `firstSeen` is undefined behaviour and can crash.
+        let released = firstSeen.keys.filter { !heldIDs.contains($0) }
+        for id in released {
             firstSeen.removeValue(forKey: id)
             promptedThisSession.remove(id)
             Task { await SessionCoordinator.shared.autoStopIfTriggered(by: id) }

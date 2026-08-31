@@ -10,8 +10,9 @@ final class SpeakerKitBox {
 
     init() async throws {
         do {
-            // Defaults: Pyannote v4 community-1, models fetched lazily on first diarize.
-            kit = try await SpeakerKit()
+            // Pyannote v4 community-1, fetched lazily on first diarize. downloadBase
+            // is set for the same reason as WhisperKit — see ModelStorage.
+            kit = try await SpeakerKit(PyannoteConfig(downloadBase: ModelStorage.base.path))
         } catch {
             throw MinutesError.diarizationFailed(error.localizedDescription)
         }

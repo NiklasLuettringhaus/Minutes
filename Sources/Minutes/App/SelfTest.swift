@@ -14,6 +14,7 @@ enum SelfTest {
         let model = args.first { $0.hasPrefix("openai_whisper") || $0.hasPrefix("distil") }
 
         setbuf(stdout, nil)
+        ModelStorage.adoptLegacyDownloads()
         print("=== Minutes self-test ===")
         print("bundle:  \(Bundle.main.bundleIdentifier ?? "nil")")
         print("mic:     \(Permissions.micState().label)")

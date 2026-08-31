@@ -53,6 +53,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppDelegate.shared = self
         Log.app.info("Minutes launched")
 
+        // Reuse anything the library already downloaded to its own default
+        // location rather than costing the user a second 600 MB fetch.
+        ModelStorage.adoptLegacyDownloads()
+
         Notifier.shared.configure()
         SessionCoordinator.shared.refreshMicAuthorization()
         ModelCatalog.shared.loadLocalRecommendations()

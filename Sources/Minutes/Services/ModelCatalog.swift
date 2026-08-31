@@ -73,9 +73,12 @@ final class ModelCatalog: ObservableObject {
                   accuracy: Self.accuracy(id))
         }
         .sorted { a, b in
-            // Recommended default first, then by accuracy, then name.
-            if a.id == Preferences.defaultModel { return true }
-            if b.id == Preferences.defaultModel { return false }
+            // Recommended default first, then alphabetical. Written as a strict
+            // weak ordering: returning true for two equal elements is invalid and
+            // can make sorted(by:) misbehave.
+            let ad = a.id == Preferences.defaultModel
+            let bd = b.id == Preferences.defaultModel
+            if ad != bd { return ad }
             return a.id < b.id
         }
     }
@@ -122,15 +125,8 @@ final class ModelCatalog: ObservableObject {
         return .best
     }
 
-    /// WhisperKit caches under Application Support; a model folder existing with
-    /// content is our download signal.
-    static func modelFolder(_ id: String) -> URL? {
-        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        else { return nil }
-        return base
-            .appendingPathComponent("huggingface/models/argmaxinc/whisperkit-coreml", isDirectory: true)
-            .appendingPathComponent(id, isDirectory: true)
-    }
+    /// A model folder holding compiled CoreML packages is our download signal.
+    static func modelFolder(_ id: String) -> URL? { ModelStorage.whisperFolder(id) }
 
     static func isDownloaded(_ id: String) -> Bool {
         guard let f = modelFolder(id) else { return false }

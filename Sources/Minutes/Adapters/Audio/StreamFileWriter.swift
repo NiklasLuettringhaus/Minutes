@@ -49,10 +49,21 @@ final class StreamFileWriter {
     }
 
     func stop() {
+        // Signal the drain thread and WAIT for it to finish before touching the
+        // file. Draining from two threads at once is a data race on AVAudioFile,
+        // and the old code did exactly that.
         running = false
-        // Give the drain loop a moment to flush what is left.
-        for _ in 0..<50 where ring.count > 0 { usleep(10_000) }
-        drainOnce()
+        let deadline = Date().addingTimeInterval(3)
+        while !(thread?.isFinished ?? true), Date() < deadline {
+            usleep(5_000)
+        }
+        // Now sole owner: flush everything left, not just one chunk. The previous
+        // single drainOnce() call truncated the tail of every recording.
+        while ring.count > 0 {
+            let before = ring.count
+            drainOnce()
+            if ring.count >= before { break }  // no progress; avoid spinning
+        }
         file = nil
         thread = nil
     }
