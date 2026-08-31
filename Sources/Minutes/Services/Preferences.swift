@@ -21,6 +21,8 @@ final class Preferences: ObservableObject {
         static let didCompleteFirstRun = "didCompleteFirstRun"
         static let lastSystemCaptureOK = "lastSystemCaptureOK"
         static let lastThroughput = "lastThroughputRatio"
+        static let removeFiller = "removeFillerWords"
+        static let fillerWords = "fillerWords"
     }
 
     /// Verified present in the live catalogue. Deliberately not the library's
@@ -42,6 +44,14 @@ final class Preferences: ObservableObject {
     }
     @Published var keepAudio: Bool {
         didSet { d.set(keepAudio, forKey: K.keepAudio) }
+    }
+    /// On by default: a long meeting transcript is genuinely hard to read with
+    /// every clause opening "um, uh, so".
+    @Published var removeFillerWords: Bool {
+        didSet { d.set(removeFillerWords, forKey: K.removeFiller) }
+    }
+    @Published var fillerWords: [String] {
+        didSet { d.set(fillerWords, forKey: K.fillerWords) }
     }
     @Published var didCompleteFirstRun: Bool {
         didSet { d.set(didCompleteFirstRun, forKey: K.didCompleteFirstRun) }
@@ -71,6 +81,8 @@ final class Preferences: ObservableObject {
         detectionEnabled = d.object(forKey: K.detectionEnabled) as? Bool ?? true
         suppressedApps = d.stringArray(forKey: K.suppressedApps) ?? []
         keepAudio = d.object(forKey: K.keepAudio) as? Bool ?? true
+        removeFillerWords = d.object(forKey: K.removeFiller) as? Bool ?? true
+        fillerWords = d.stringArray(forKey: K.fillerWords) ?? FillerWords.defaults
         didCompleteFirstRun = d.bool(forKey: K.didCompleteFirstRun)
         lastSystemCaptureOK = d.object(forKey: K.lastSystemCaptureOK) as? Bool
         lastThroughputRatio = d.object(forKey: K.lastThroughput) as? Double
@@ -136,6 +148,16 @@ final class Preferences: ObservableObject {
     func unsuppress(_ bundleID: String) {
         suppressedApps.removeAll { $0 == bundleID }
     }
+
+    func resetFillerWords() { fillerWords = FillerWords.defaults }
+
+    func addFillerWord(_ w: String) {
+        let x = w.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !x.isEmpty, !fillerWords.contains(x) else { return }
+        fillerWords.append(x)
+    }
+
+    func removeFillerWord(_ w: String) { fillerWords.removeAll { $0 == w } }
 
     // MARK: - Sidebar restoration
 

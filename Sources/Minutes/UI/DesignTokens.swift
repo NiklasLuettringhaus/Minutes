@@ -336,3 +336,67 @@ struct FactChip: View {
                         in: RoundedRectangle(cornerRadius: Tok.rSm))
     }
 }
+
+
+// MARK: - Removable chips
+
+/// Wrapping row of removable tokens. Used for the filler-word list.
+struct FlowChips: View {
+    let items: [String]
+    let onRemove: (String) -> Void
+
+    var body: some View {
+        FlowLayout(spacing: Tok.s2) {
+            ForEach(items, id: \.self) { item in
+                HStack(spacing: 4) {
+                    Text(item).font(.caption).monospaced()
+                    Button {
+                        onRemove(item)
+                    } label: {
+                        Image(systemName: "xmark").font(.system(size: 7, weight: .bold))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Tok.textSecondary)
+                    .help("Remove \(item)")
+                }
+                .padding(.horizontal, Tok.s3)
+                .padding(.vertical, 3)
+                .background(Tok.separator.opacity(0.55), in: Capsule())
+            }
+        }
+    }
+}
+
+/// Minimal wrapping layout — SwiftUI has no built-in flow layout, and a fixed
+/// grid would leave ragged gaps with tokens this short.
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 4
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
+        for s in subviews {
+            let size = s.sizeThatFits(.unspecified)
+            if x + size.width > maxWidth, x > 0 {
+                x = 0; y += rowHeight + spacing; rowHeight = 0
+            }
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        return CGSize(width: maxWidth == .infinity ? x : maxWidth, height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize,
+                       subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
+        for s in subviews {
+            let size = s.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX, x > bounds.minX {
+                x = bounds.minX; y += rowHeight + spacing; rowHeight = 0
+            }
+            s.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+    }
+}

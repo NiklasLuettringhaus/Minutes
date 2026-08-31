@@ -104,19 +104,30 @@ actor Pipeline {
     private func transcribeStage(_ id: String) async throws {
         let store = MeetingStore.shared
         let model = await AppStateBridge.model()
+        let (stripFiller, fillers) = await AppStateBridge.fillerSettings()
         var utterances: [Utterance] = []
+
+        /// Drops disfluencies, and drops the Utterance entirely when it was
+        /// nothing but them.
+        func clean(_ s: String) -> String? {
+            guard stripFiller else { return s }
+            let out = FillerWords.strip(s, words: fillers)
+            return out.isEmpty ? nil : out
+        }
 
         // The Mic Stream is the Local Speaker, structurally and without inference (AD-11).
         if let mic = await store.audioURL(id: id, stream: .mic) {
             for s in try await transcriber.transcribe(url: mic, model: model) {
-                utterances.append(Utterance(start: s.start, end: s.end, text: s.text,
+                guard let text = clean(s.text) else { continue }
+                utterances.append(Utterance(start: s.start, end: s.end, text: text,
                                             speaker: .local, origin: .mic))
             }
         }
         // System Stream segments start unassigned; diarization names them next.
         if let sys = await store.audioURL(id: id, stream: .system) {
             for s in try await transcriber.transcribe(url: sys, model: model) {
-                utterances.append(Utterance(start: s.start, end: s.end, text: s.text,
+                guard let text = clean(s.text) else { continue }
+                utterances.append(Utterance(start: s.start, end: s.end, text: text,
                                             speaker: SpeakerLabelID.remote(0), origin: .system))
             }
         }

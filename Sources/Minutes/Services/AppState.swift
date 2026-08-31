@@ -53,6 +53,9 @@ enum AppStateBridge {
     static func localSpeakerName() async -> String {
         await MainActor.run { Preferences.shared.localSpeakerName }
     }
+    static func fillerSettings() async -> (Bool, [String]) {
+        await MainActor.run { (Preferences.shared.removeFillerWords, Preferences.shared.fillerWords) }
+    }
     static func keepAudio() async -> Bool {
         await MainActor.run { Preferences.shared.keepAudio }
     }

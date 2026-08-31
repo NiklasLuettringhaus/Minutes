@@ -7,7 +7,9 @@ import AppKit
 @main
 enum Entry {
     static func main() {
-        if CommandLine.arguments.contains("--selftest") {
+        if CommandLine.arguments.contains("--benchmark") {
+            Benchmark.run()
+        } else if CommandLine.arguments.contains("--selftest") {
             SelfTest.run()
         } else {
             MinutesApp.main()

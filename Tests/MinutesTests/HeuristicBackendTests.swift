@@ -103,3 +103,52 @@ final class HeuristicBackendTests: XCTestCase {
         XCTAssertFalse(md.title.isEmpty)
     }
 }
+
+/// Filler-word stripping. The dangerous failure is substring matching, so that
+/// is tested first.
+final class FillerWordTests: XCTestCase {
+    private let w = FillerWords.defaults
+
+    func testStripsStandaloneFillers() {
+        XCTAssertEqual(FillerWords.strip("So um we decided to ship it", words: w),
+                       "So we decided to ship it")
+        XCTAssertEqual(FillerWords.strip("Uh, I think that works", words: w),
+                       "I think that works")
+    }
+
+    /// "um" must never be cut out of "number".
+    func testNeverMatchesInsideAnotherWord() {
+        XCTAssertEqual(FillerWords.strip("The number is umbrella shaped", words: w),
+                       "The number is umbrella shaped")
+        XCTAssertEqual(FillerWords.strip("Her manner was ahead of ours", words: w),
+                       "Her manner was ahead of ours")
+    }
+
+    func testRepairsPunctuationLeftBehind() {
+        // Without repair this becomes "So, , we decided" — worse than the filler.
+        XCTAssertEqual(FillerWords.strip("So, um, we decided", words: w), "So, we decided")
+        XCTAssertEqual(FillerWords.strip("Right , uh . Next item", words: w), "Right. Next item")
+    }
+
+    func testDropsUtterancesThatWereOnlyFiller() {
+        XCTAssertEqual(FillerWords.strip("Um.", words: w), "")
+        XCTAssertEqual(FillerWords.strip("uh, um, er", words: w), "")
+    }
+
+    func testRecapitalisesAfterStrippingAnOpener() {
+        XCTAssertEqual(FillerWords.strip("Um, the pricing page is confusing", words: w),
+                       "The pricing page is confusing")
+    }
+
+    func testLongestMatchWinsSoRemnantsAreNotLeft() {
+        XCTAssertEqual(FillerWords.strip("Ummm okay then", words: w), "Okay then")
+    }
+
+    func testDisabledListIsANoOp() {
+        XCTAssertEqual(FillerWords.strip("So um we decided", words: []), "So um we decided")
+    }
+
+    func testCaseInsensitive() {
+        XCTAssertEqual(FillerWords.strip("UH, right", words: w), "Right")
+    }
+}

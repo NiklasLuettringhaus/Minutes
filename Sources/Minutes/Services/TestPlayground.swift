@@ -134,6 +134,8 @@ final class TestPlayground: ObservableObject {
                 audioSeconds: max(streams.duration, 0.1))
             // Feeds the model picker's speed guidance (PRD open question 1).
             Preferences.shared.lastThroughputRatio = result.ratio
+            ModelCatalog.record(ratio: result.ratio, for: model)
+            ModelCatalog.shared.loadLocalRecommendations()
             phase = .done(result)
         } catch let e as MinutesError {
             phase = .failed(e.localizedDescription)
