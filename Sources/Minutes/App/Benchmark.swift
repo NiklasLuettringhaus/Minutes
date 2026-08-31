@@ -33,10 +33,20 @@ enum Benchmark {
 
             
             for m in models {
-                guard ModelCatalog.isDownloaded(m) else {
-                    print(pad(m, 46) + "not downloaded"); continue
+                if !ModelCatalog.isDownloaded(m) {
+                    print(pad(m, 46) + "downloading…")
+                    do {
+                        if ParakeetModel.isParakeet(m) {
+                            _ = try await MLEngine.shared.parakeet(version: ParakeetModel.version(for: m))
+                        } else {
+                            _ = try await MLEngine.shared.whisperKit(model: m, download: true)
+                        }
+                    } catch {
+                        print(pad(m, 46) + "download failed: \(error.localizedDescription)")
+                        continue
+                    }
                 }
-                await MLEngine.shared.unloadWhisper()   // force a genuine cold load
+                await MLEngine.shared.unloadAll()   // force a genuine cold load, either engine
                 let c0 = Date()
                 guard let _ = try? await (ParakeetModel.isParakeet(m) ? ParakeetTranscriber() as Transcribing : WhisperKitTranscriber()).transcribe(url: url, model: m) else {
                     print(pad(m, 46) + "failed"); continue

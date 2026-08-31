@@ -274,7 +274,13 @@ struct TranscriptionPane: View {
         downloading = e.id
         Task {
             do {
-                _ = try await MLEngine.shared.whisperKit(model: e.id, download: true)
+                // Route by engine: a Parakeet id loaded through the Whisper path
+                // simply fails, which is how this was caught.
+                if ParakeetModel.isParakeet(e.id) {
+                    _ = try await MLEngine.shared.parakeet(version: ParakeetModel.version(for: e.id))
+                } else {
+                    _ = try await MLEngine.shared.whisperKit(model: e.id, download: true)
+                }
                 await MainActor.run {
                     prefs.model = e.id
                     downloading = nil
