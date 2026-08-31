@@ -52,17 +52,39 @@ final class HeuristicBackendTests: XCTestCase {
         }
     }
 
-    func testFindsDecisionWithTimestamp() async throws {
+    /// FR-55, and the point of story 9.1: this Backend no longer writes prose.
+    ///
+    /// The extract it used to call a summary was the four highest-weighted
+    /// sentences of the transcript in transcript order — for a short meeting, most
+    /// of the original text, and persuasive enough to be read as a real summary.
+    func testDeriveProducesATitleAndTagsAndNoProse() async throws {
         let md = try await HeuristicBackend().derive(from: meetingTranscript, names: [:])
-        XCTAssertFalse(md.decisions.isEmpty, "should find 'We decided to…'")
-        XCTAssertNotNil(md.decisions.first?.at, "a decision must cite the timestamp it came from")
+        XCTAssertFalse(md.title.isEmpty, "the title guarantee survives (FR-26)")
+        XCTAssertFalse(md.tags.isEmpty, "tags survive — keyphrase salience is right for a label")
+        XCTAssertTrue(md.summary.isEmpty, "no summary from a Backend that cannot write one")
+        XCTAssertTrue(md.decisions.isEmpty, "no decisions")
+        XCTAssertTrue(md.actionItems.isEmpty, "no action items")
+        XCTAssertEqual(md.backend, .heuristic, "provenance is still recorded")
     }
 
-    func testActionItemOwnerFromFirstPerson() async throws {
+    // The extraction functions are retained, unused by `derive`, and still covered:
+    // they are pure, they are the only tested implementation of extractive
+    // metadata, and re-enabling any of them is a one-line change. The action-item
+    // extraction in particular was the best-performing of the three.
+
+    func testFindsDecisionWithTimestamp() {
+        let sentences = HeuristicBackend.sentences(from: meetingTranscript)
+        let decisions = HeuristicBackend.decisions(in: sentences)
+        XCTAssertFalse(decisions.isEmpty, "should find 'We decided to…'")
+        XCTAssertNotNil(decisions.first?.at, "a decision must cite the timestamp it came from")
+    }
+
+    func testActionItemOwnerFromFirstPerson() {
         let names = [SpeakerLabelID.local.raw: "Me", SpeakerLabelID.remote(1).raw: "Mikkel"]
-        let md = try await HeuristicBackend().derive(from: meetingTranscript, names: names)
-        XCTAssertFalse(md.actionItems.isEmpty)
-        let mikkels = md.actionItems.filter { $0.owner == "Mikkel" }
+        let sentences = HeuristicBackend.sentences(from: meetingTranscript)
+        let items = HeuristicBackend.actionItems(in: sentences, names: names)
+        XCTAssertFalse(items.isEmpty)
+        let mikkels = items.filter { $0.owner == "Mikkel" }
         XCTAssertFalse(mikkels.isEmpty, "\"I'll take…\" said by Mikkel should be owned by Mikkel")
     }
 

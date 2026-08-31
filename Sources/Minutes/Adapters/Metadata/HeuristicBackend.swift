@@ -11,6 +11,25 @@ struct HeuristicBackend: MetadataBackend {
     /// No model, no network, no assets — always true.
     func isAvailable() async -> Bool { true }
 
+    /// FR-55: this Backend produces a title and tags, and deliberately **no**
+    /// summary, decisions or action items.
+    ///
+    /// It used to produce all five. The "summary" was the four highest-weighted
+    /// sentences of the transcript, in transcript order — which for a short meeting
+    /// came to roughly 80% of the original text and read convincingly enough to be
+    /// mistaken for a summary. §9.3 requires that absence be represented honestly
+    /// rather than as invented content, and a persuasive extract of someone else's
+    /// words is closer to invention than to absence.
+    ///
+    /// Titles and tags stay because they are observably good: "Pricing Page",
+    /// "Page Redesigned Together". Keyphrase salience is the right tool for a short
+    /// label and the wrong tool for prose.
+    ///
+    /// `Self.summary`, `Self.decisions` and `Self.actionItems` are retained,
+    /// unused, and still unit-tested — they are pure functions and the only tested
+    /// implementation of extractive metadata. Re-enabling any of them is a one-line
+    /// change here, which matters because the action-item extraction was the
+    /// best-performing part of the three.
     func derive(from utterances: [Utterance], names: [String: String]) async throws -> MeetingMetadata {
         let sentences = Self.sentences(from: utterances)
         let phrases = Self.keyphrases(in: sentences)
@@ -18,9 +37,9 @@ struct HeuristicBackend: MetadataBackend {
         return MeetingMetadata(
             title: Self.title(from: sentences, phrases: phrases),
             tags: Self.tags(from: phrases),
-            summary: Self.summary(from: sentences, phrases: phrases),
-            decisions: Self.decisions(in: sentences),
-            actionItems: Self.actionItems(in: sentences, names: names),
+            summary: "",
+            decisions: [],
+            actionItems: [],
             backend: .heuristic)
     }
 

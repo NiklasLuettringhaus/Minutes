@@ -962,8 +962,15 @@ Targets on the reference machine (Apple M5, 24 GB, macOS 26.6):
 | Library list responsive at | ≥ 500 Meetings |
 | Max supported Session length | ≥ 3 hours |
 | Idle CPU | negligible; no Idle animation |
+| Retained audio, per hour of Meeting, both Streams | ≤ 250 MB · **measured 230 MB** |
 
 Model-specific transcription throughput must be **measured on the target machine, not estimated**, and the model picker's speed guidance should derive from those measurements.
+
+**Audio storage budget, added in increment 3.** There was no budget here, and the omission cost real disk: the writer stored the capture format straight through — 48 kHz float32, stereo for the System Stream — at 532 KB/s across both Streams, 1.96 GB per hour, 1.5 GB for a 45-minute Meeting. With FR-44 retention on by default that grows without bound.
+
+Nothing consumed the extra resolution. Both transcription engines and the Diarizer resample to 16 kHz mono before doing anything, so 6× the data was being stored in order to be discarded on every read. Streams are now written at **16 kHz mono, 16-bit** — the rate Whisper and Parakeet were trained on, and the standard depth for speech. Measured: 64 KB/s, **8.4× smaller**, and a 45-minute Meeting drops from 1.47 GB to 176 MB.
+
+The budget is stated as a target so that a future format change has something to violate rather than a silence to slip through.
 
 ## 12. Platform, Permissions and Signing
 

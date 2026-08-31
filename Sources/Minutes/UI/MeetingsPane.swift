@@ -333,6 +333,10 @@ struct MeetingDetail: View {
 
     private var noteIsMissing: Bool { app.missingNotes.contains(meeting.id) }
 
+    private func openSummaries() {
+        app.paneRequest = MainWindow.Pane.summaries.rawValue
+    }
+
     private var failureBlock: some View {
         VStack(alignment: .leading, spacing: Tok.s3) {
             StateBanner(kind: .degraded, text: meeting.failure ?? "Processing failed.")
@@ -391,6 +395,24 @@ struct MeetingDetail: View {
 
     private func metadataBlock(_ md: MeetingMetadata) -> some View {
         VStack(alignment: .leading, spacing: Tok.cardGap) {
+            // FR-55: say why the derived sections are absent, rather than leaving
+            // the reader to wonder whether the meeting was too short or the app
+            // silently failed.
+            if md.summary.isEmpty && md.decisions.isEmpty && md.actionItems.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    SectionHeading(text: "No summary")
+                    Card {
+                        VStack(alignment: .leading, spacing: Tok.s3) {
+                            Text("This meeting has a transcript and a title, and no summary — nothing capable of writing one was available.")
+                                .font(.caption).foregroundStyle(Tok.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button("Set up summaries…") { openSummaries() }
+                                .buttonStyle(.borderless).font(.caption)
+                        }
+                    }
+                }
+            }
+
             if !md.summary.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
                     SectionHeading(text: "Summary")

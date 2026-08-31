@@ -71,6 +71,11 @@ struct MainWindow: View {
         .onChange(of: selection) { _, new in
             Preferences.shared.lastPane = new.rawValue
         }
+        .onChange(of: app.paneRequest) { _, req in
+            guard let req, let pane = Pane(rawValue: req) else { return }
+            selection = pane
+            app.paneRequest = nil
+        }
     }
 
     private func row(_ p: Pane) -> some View {

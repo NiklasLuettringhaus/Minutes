@@ -47,6 +47,10 @@ final class AppState: ObservableObject {
     /// re-rendered by the system, so the cost has to be bounded and stoppable
     /// (NFR-3). It advances only while Recording and stops dead otherwise.
     @Published private(set) var pulsePhase: Int = 0
+    /// A pane another surface wants brought forward. `MainWindow` owns the actual
+    /// selection, so a deep link sets this and clears it rather than reaching into
+    /// someone else's `@State` (AD-7: views call intents, they do not mutate).
+    @Published var paneRequest: String?
     @Published private(set) var micAuthorized: Bool = false
     @Published private(set) var audioBytes: Int64 = 0
 
