@@ -11,6 +11,8 @@ enum Entry {
             Benchmark.run()
         } else if CommandLine.arguments.contains("--selftest") {
             SelfTest.run()
+        } else if CommandLine.arguments.contains("--doctor") {
+            Doctor.run()
         } else {
             MinutesApp.main()
         }
@@ -34,9 +36,11 @@ struct MinutesApp: App {
         } label: {
             // SwiftUI renders this as a template unless we hand it a non-template
             // NSImage, and Recording's colour is load-bearing.
-            Image(nsImage: MenuBarIcon.image(for: app.sessionState))
+            Image(nsImage: MenuBarIcon.image(for: app.sessionState,
+                                             isAsking: app.pendingPrompt != nil))
                 .accessibilityLabel(MenuBarIcon.accessibilityLabel(
-                    for: app.sessionState, elapsed: app.elapsed))
+                    for: app.sessionState, elapsed: app.elapsed,
+                    asking: app.pendingPrompt?.appName))
         }
     }
 }
@@ -60,6 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ModelStorage.adoptLegacyDownloads()
 
         Notifier.shared.configure()
+        Task { await Notifier.shared.refreshAuthorization() }
         SessionCoordinator.shared.refreshMicAuthorization()
         ModelCatalog.shared.loadLocalRecommendations()
         ModelCatalog.shared.refreshDownloadStates()

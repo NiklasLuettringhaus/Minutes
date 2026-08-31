@@ -9,7 +9,13 @@ import AppKit
 /// Transcribing are rendered with their own colour, because that colour carries
 /// meaning the system must not override.
 enum MenuBarIcon {
-    static func image(for state: AppState.SessionState) -> NSImage {
+    /// `isAsking` wins over Idle: a detected meeting the user has not answered is
+    /// the one thing the icon must not stay silent about, since the prompt itself
+    /// can be suppressed by the system.
+    static func image(for state: AppState.SessionState, isAsking: Bool = false) -> NSImage {
+        if isAsking, case .idle = state {
+            return tinted("waveform.badge.exclamationmark", color: NSColor(Tok.brand))
+        }
         switch state {
         case .idle:
             return template("waveform")
@@ -38,7 +44,11 @@ enum MenuBarIcon {
     }
 
     /// VoiceOver states meaning, not appearance (NFR-7).
-    static func accessibilityLabel(for state: AppState.SessionState, elapsed: TimeInterval) -> String {
+    static func accessibilityLabel(for state: AppState.SessionState, elapsed: TimeInterval,
+                                   asking: String? = nil) -> String {
+        if let asking, case .idle = state {
+            return "Minutes, asking whether to record \(asking)"
+        }
         switch state {
         case .idle: return "Minutes, idle"
         case .recording(_, let degraded):
@@ -58,6 +68,23 @@ struct MenuBarContent: View {
 
     var body: some View {
         Group {
+            // A pending ask sits above everything else. It is repeated here because
+            // the notification that normally carries it can be denied, dismissed or
+            // missed, and then this is the only place it survives.
+            if let p = app.pendingPrompt, app.sessionState == .idle {
+                Text("\(p.appName) is using your microphone")
+                Button("Record \(p.appName) Meeting") {
+                    AppState.shared.pendingPrompt = nil
+                    PromptPanel.shared.dismiss()
+                    Task { await SessionCoordinator.shared.start(triggeredBy: p) }
+                }
+                Button("Not Now") {
+                    AppState.shared.pendingPrompt = nil
+                    PromptPanel.shared.dismiss()
+                }
+                Divider()
+            }
+
             switch app.sessionState {
             case .idle:
                 Button("Start Recording") { Task { await SessionCoordinator.shared.start() } }

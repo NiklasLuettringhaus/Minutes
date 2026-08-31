@@ -186,8 +186,33 @@ struct Meeting: Codable, Sendable, Identifiable {
         self.noteFilename = nil
     }
 
-    // Unknown-key tolerant by virtue of Codable synthesis + optionals; defaults fill gaps
-    // so an older record still loads (architecture convention).
+    /// Hand-written because the synthesised `Codable` was **not** tolerant of an
+    /// older record, contrary to what a comment here used to claim: Swift ignores a
+    /// property's default value when the key is absent and throws `keyNotFound`
+    /// instead. Adding `multipleInRoom` therefore made every meeting recorded
+    /// before it silently unreadable, and `MeetingStore.loadAll`'s `try?` dropped
+    /// them from the list — five real recordings vanished from the UI while still
+    /// sitting on disk. Only `id` and `startedAt` are required; everything else
+    /// falls back, so a future field can never orphan history again.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        startedAt = try c.decode(Date.self, forKey: .startedAt)
+        duration = try c.decodeIfPresent(TimeInterval.self, forKey: .duration) ?? 0
+        stage = try c.decodeIfPresent(Stage.self, forKey: .stage) ?? .captured
+        failure = try c.decodeIfPresent(String.self, forKey: .failure)
+        systemStreamCaptured = try c.decodeIfPresent(Bool.self, forKey: .systemStreamCaptured) ?? false
+        diarizationSucceeded = try c.decodeIfPresent(Bool.self, forKey: .diarizationSucceeded) ?? false
+        multipleInRoom = try c.decodeIfPresent(Bool.self, forKey: .multipleInRoom) ?? false
+        triggeringApp = try c.decodeIfPresent(String.self, forKey: .triggeringApp)
+        transcriptionModel = try c.decodeIfPresent(String.self, forKey: .transcriptionModel)
+        utterances = try c.decodeIfPresent([Utterance].self, forKey: .utterances) ?? []
+        speakerNames = try c.decodeIfPresent([String: String].self, forKey: .speakerNames)
+            ?? [SpeakerLabelID.local.raw: "Me"]
+        inferredSpeakers = try c.decodeIfPresent([String].self, forKey: .inferredSpeakers) ?? []
+        metadata = try c.decodeIfPresent(MeetingMetadata.self, forKey: .metadata)
+        noteFilename = try c.decodeIfPresent(String.self, forKey: .noteFilename)
+    }
 
     func displayName(for id: SpeakerLabelID) -> String {
         if let n = speakerNames[id.raw] { return n }

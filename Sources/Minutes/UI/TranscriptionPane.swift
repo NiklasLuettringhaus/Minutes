@@ -12,6 +12,7 @@ struct TranscriptionPane: View {
     @ObservedObject var catalog = ModelCatalog.shared
     @State private var downloading: String?
     @State private var downloadError: String?
+    @State private var downloadTask: Task<Void, Never>?
     @State private var showAll = false
 
     var body: some View {
@@ -179,7 +180,11 @@ struct TranscriptionPane: View {
         if downloading == e.id {
             HStack(spacing: Tok.s3) {
                 ProgressView().controlSize(.small)
-                Text("Downloading…").font(.caption).foregroundStyle(Tok.textSecondary)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("Downloading…").font(.caption).foregroundStyle(Tok.textSecondary)
+                    Button("Cancel") { cancelDownload() }
+                        .buttonStyle(.borderless).font(.caption)
+                }
             }
         } else if e.isDownloaded {
             VStack(alignment: .trailing, spacing: 3) {
@@ -282,7 +287,7 @@ struct TranscriptionPane: View {
         if e.isDownloaded { prefs.model = e.id; catalog.refreshDownloadStates(); return }
         guard downloading == nil else { return }
         downloading = e.id
-        Task {
+        downloadTask = Task {
             do {
                 // Route by engine: a Parakeet id loaded through the Whisper path
                 // simply fails, which is how this was caught.
@@ -291,14 +296,24 @@ struct TranscriptionPane: View {
                 } else {
                     _ = try await MLEngine.shared.whisperKit(model: e.id, download: true)
                 }
+                try Task.checkCancellation()
                 await MainActor.run {
                     prefs.model = e.id
                     downloading = nil
+                    downloadTask = nil
                     catalog.refreshDownloadStates()
                 }
+            } catch is CancellationError {
+                await MainActor.run { finishCancelled(e.id) }
             } catch {
+                // A cancelled URLSession surfaces as an NSError, not CancellationError.
+                if (error as NSError).code == NSURLErrorCancelled || Task.isCancelled {
+                    await MainActor.run { finishCancelled(e.id) }
+                    return
+                }
                 await MainActor.run {
                     downloading = nil
+                    downloadTask = nil
                     // A failed download must leave no partial model behind (FR-18).
                     try? ModelCatalog.removeDownload(e.id)
                     catalog.refreshDownloadStates()
@@ -306,6 +321,24 @@ struct TranscriptionPane: View {
                 }
             }
         }
+    }
+
+    private func cancelDownload() {
+        downloadTask?.cancel()
+        // The UI returns to Download immediately; the partial files are removed by
+        // whichever path lands first, and again here so a stalled request that
+        // never observes cancellation still cannot leave half a model behind.
+        if let id = downloading { finishCancelled(id) }
+    }
+
+    /// A cancelled download is a normal outcome, not a failure: no error banner,
+    /// no partial model left on disk, and the active model is left untouched.
+    private func finishCancelled(_ id: String) {
+        downloading = nil
+        downloadTask = nil
+        downloadError = nil
+        try? ModelCatalog.removeDownload(id)
+        catalog.refreshDownloadStates()
     }
 }
 

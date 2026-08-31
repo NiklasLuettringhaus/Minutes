@@ -9,6 +9,7 @@ struct GettingStartedPane: View {
     @EnvironmentObject var prefs: Preferences
     @ObservedObject var playground = TestPlayground.shared
     @ObservedObject var catalog = ModelCatalog.shared
+    @ObservedObject var notifier = Notifier.shared
     @Binding var selection: MainWindow.Pane
 
     /// Recomputed on appearance and on window focus, never stored. A permission
@@ -47,6 +48,7 @@ struct GettingStartedPane: View {
     private func refresh() {
         catalog.refreshDownloadStates()
         SessionCoordinator.shared.refreshMicAuthorization()
+        Task { await Notifier.shared.refreshAuthorization() }
         refreshToken += 1
     }
 
@@ -145,9 +147,32 @@ struct GettingStartedPane: View {
                 }
                 RowDivider()
 
-                // 5 — Test
+                // 5 — Detection prompts. Optional because Minutes falls back to a
+                // floating panel, but worth its own row: with this denied the
+                // notification path is silently dead, which is how a real Teams
+                // call went unprompted with nothing to show for it.
                 ChecklistRow(
                     ordinal: 5,
+                    title: "Detection prompts",
+                    subtitle: notificationSubtitle,
+                    isSatisfied: notifier.canDeliver,
+                    isOptional: true
+                ) {
+                    if notifier.canDeliver { DonePill() }
+                    else if notifier.authorizationStatus == .denied {
+                        // macOS will not show its dialog a second time.
+                        RowActionButton(title: "Open Settings") { Notifier.openSettings() }
+                    } else {
+                        RowActionButton(title: "Allow Notifications", showsChevron: false) {
+                            Task { await Notifier.shared.requestAuthorization() }
+                        }
+                    }
+                }
+                RowDivider()
+
+                // 6 — Test
+                ChecklistRow(
+                    ordinal: 6,
                     title: "Test your setup",
                     subtitle: testPassed
                         ? "Passed. Minutes can record, transcribe and attribute speech."
@@ -173,6 +198,20 @@ struct GettingStartedPane: View {
 
     /// Reads as a trade-off, not a failure — and names the real cause when it
     /// regresses, because rebuilding the app is the most likely reason (PRD §12).
+
+    /// Says what the consequence is, not just what the state is — "denied" alone
+    /// leaves the user with no idea that detection still works.
+    private var notificationSubtitle: String {
+        switch notifier.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            return "Minutes can notify you when a meeting starts."
+        case .denied:
+            return "Notifications are off for Minutes, so detected meetings appear as a small floating panel instead."
+        default:
+            return "Not asked yet. Without it, detected meetings appear as a small floating panel."
+        }
+    }
+
     private var systemAudioSubtitle: String {
         switch sysState {
         case .observedWorking:

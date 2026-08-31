@@ -22,7 +22,21 @@ final class Notifier: NSObject, ObservableObject, UNUserNotificationCenterDelega
         static let reveal = "REVEAL"
     }
 
-    private var authorized = false
+    /// Published so the setup checklist and the Detection pane can say *why*
+    /// detection is silent. This started as a private `Bool` that nothing read,
+    /// which is exactly how a denied permission turned the whole detection
+    /// feature into a no-op with no visible symptom.
+    @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
+
+    /// True only when a posted prompt will actually reach the user. When this is
+    /// false, `DetectionService` falls back to the in-app panel instead of
+    /// posting into a void.
+    var canDeliver: Bool {
+        switch authorizationStatus {
+        case .authorized, .provisional, .ephemeral: return true
+        default: return false
+        }
+    }
 
     func configure() {
         let center = UNUserNotificationCenter.current()
@@ -42,12 +56,37 @@ final class Notifier: NSObject, ObservableObject, UNUserNotificationCenterDelega
                                            intentIdentifiers: [], options: [])
         center.setNotificationCategories([detect, ready])
 
-        center.requestAuthorization(options: [.alert, .sound]) { granted, error in
-            Task { @MainActor in
-                self.authorized = granted
-                if let error { Log.app.error("notification auth: \(error.localizedDescription, privacy: .public)") }
-            }
-        }
+        // Deliberately does NOT ask here. Asking at launch spends the one dialog
+        // macOS ever shows on a moment the user has no context for, and if they
+        // dismiss it the whole detection feature is dead with nothing on screen to
+        // say so. The ask now belongs to the setup checklist, where it is labelled.
+        Task { await refreshAuthorization() }
+    }
+
+    /// Re-read the real state from the system. `requestAuthorization` reports only
+    /// the outcome of *this* ask; a previously denied app is never asked again and
+    /// its completion handler reports `false` with no error, indistinguishable from
+    /// a fresh refusal. Called at launch and whenever the window appears, so
+    /// flipping the switch in System Settings is reflected without a relaunch.
+    func refreshAuthorization() async {
+        let s = await UNUserNotificationCenter.current().notificationSettings()
+        authorizationStatus = s.authorizationStatus
+    }
+
+    /// The explicit ask, driven by the setup checklist rather than fired blindly at
+    /// launch. macOS shows its dialog **once ever** per app: after a denial this
+    /// returns without prompting, which is why the checklist offers System Settings
+    /// instead once the status is `.denied`.
+    func requestAuthorization() async {
+        _ = try? await UNUserNotificationCenter.current()
+            .requestAuthorization(options: [.alert, .sound])
+        await refreshAuthorization()
+    }
+
+    /// Opens the app's own row in System Settings › Notifications.
+    static func openSettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications")!
+        NSWorkspace.shared.open(url)
     }
 
     /// FR-12: names the app, offers Record and a decline, and starts nothing

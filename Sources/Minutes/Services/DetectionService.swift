@@ -125,7 +125,14 @@ final class DetectionService: ObservableObject {
             promptedThisSession.insert(h.bundleID)
             Log.detection.info("prompting for \(h.bundleID, privacy: .public)")
             AppState.shared.pendingPrompt = h
-            Notifier.shared.askToRecord(h)
+            // Two channels, chosen by whether the first one can actually arrive.
+            // Posting only a notification meant a denied permission silently
+            // disabled detection outright.
+            if Notifier.shared.canDeliver {
+                Notifier.shared.askToRecord(h)
+            } else {
+                PromptPanel.shared.present(h)
+            }
         }
     }
 

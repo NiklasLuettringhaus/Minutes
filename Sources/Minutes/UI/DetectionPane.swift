@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
 struct DetectionPane: View {
     @EnvironmentObject var prefs: Preferences
     @ObservedObject var detection = DetectionService.shared
+    @ObservedObject var notifier = Notifier.shared
     @State private var live: [String] = []
     @State private var addError: String?
 
@@ -26,6 +27,34 @@ struct DetectionPane: View {
                     }
                 }
                 .toggleStyle(.switch)
+            }
+
+            // How the ask reaches you. This exists because it silently did not:
+            // notification permission was denied, the prompt was posted anyway, and
+            // a real Teams call produced nothing at all.
+            if prefs.detectionEnabled {
+                VStack(alignment: .leading, spacing: 0) {
+                    SectionHeading(text: "How Minutes asks")
+                    Card {
+                        HStack(alignment: .top, spacing: Tok.s4) {
+                            Image(systemName: notifier.canDeliver ? "bell.badge" : "macwindow.on.rectangle")
+                                .foregroundStyle(notifier.canDeliver ? Tok.brand : Tok.textSecondary)
+                                .frame(width: 20)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(notifier.canDeliver ? "With a notification" : "With a floating panel")
+                                    .font(.body)
+                                Text(deliveryExplanation)
+                                    .font(.caption).foregroundStyle(Tok.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: Tok.s4)
+                            if !notifier.canDeliver {
+                                Button("Open Settings") { Notifier.openSettings() }
+                                    .font(.caption)
+                            }
+                        }
+                    }
+                }
             }
 
             VStack(alignment: .leading, spacing: 0) {
@@ -131,7 +160,7 @@ struct DetectionPane: View {
                 }
             }
         }
-        .onAppear { refreshLive() }
+        .onAppear { refreshLive(); Task { await Notifier.shared.refreshAuthorization() } }
         .task {
             // Cheap diagnostic refresh while the pane is open.
             while !Task.isCancelled {
@@ -182,6 +211,17 @@ struct DetectionPane: View {
         let icon = NSWorkspace.shared.icon(forFile: url.path)
         icon.size = NSSize(width: 22, height: 22)
         return icon
+    }
+
+    private var deliveryExplanation: String {
+        switch notifier.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            return "A notification with Record, Not now, and Never for this app."
+        case .denied:
+            return "Notifications are turned off for Minutes, so the ask appears as a small panel in the corner instead. It never takes focus from your meeting."
+        default:
+            return "Notifications have not been allowed yet, so the ask appears as a small panel in the corner. It never takes focus from your meeting."
+        }
     }
 
     private func refreshLive() {

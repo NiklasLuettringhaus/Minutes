@@ -49,12 +49,25 @@ actor MeetingStore {
     /// All meetings, newest first. Unreadable records are skipped rather than
     /// failing the whole listing.
     func loadAll() -> [Meeting] {
-        guard let names = try? fm.contentsOfDirectory(atPath: root.path) else { return [] }
+        loadAllReportingFailures().0
+    }
+
+    /// The same listing, plus what it could not read. A bare `try?` here once hid a
+    /// schema-compatibility bug that removed five meetings from the UI while they
+    /// sat intact on disk, so an unreadable record is now logged and surfaced to
+    /// `--doctor` rather than merely skipped.
+    func loadAllReportingFailures() -> ([Meeting], [(id: String, reason: String)]) {
+        guard let names = try? fm.contentsOfDirectory(atPath: root.path) else { return ([], []) }
         var out: [Meeting] = []
-        for n in names where !n.hasPrefix(".") {
-            if let m = try? load(id: n) { out.append(m) }
+        var bad: [(id: String, reason: String)] = []
+        for n in names.sorted() where !n.hasPrefix(".") {
+            do { out.append(try load(id: n)) }
+            catch {
+                bad.append((n, String(describing: error)))
+                Log.store.error("unreadable meeting \(n, privacy: .public)")
+            }
         }
-        return out.sorted { $0.startedAt > $1.startedAt }
+        return (out.sorted { $0.startedAt > $1.startedAt }, bad)
     }
 
     /// Field-level update through one serial access point (AD-21).
