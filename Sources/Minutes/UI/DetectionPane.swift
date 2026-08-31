@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 
 /// FR-43 / FR-15. Detection is a convenience over a fundamentally unreliable
 /// signal, so this pane is honest about that and makes being left alone easy —
@@ -7,6 +9,7 @@ struct DetectionPane: View {
     @EnvironmentObject var prefs: Preferences
     @ObservedObject var detection = DetectionService.shared
     @State private var live: [String] = []
+    @State private var addError: String?
 
     var body: some View {
         PaneScaffold(title: "Detection",
@@ -26,17 +29,45 @@ struct DetectionPane: View {
             }
 
             VStack(alignment: .leading, spacing: 0) {
-                SectionHeading(text: "Watched apps")
+                SectionHeading(text: "Watched apps", trailing: AnyView(
+                    Button {
+                        pickApp()
+                    } label: { Label("Add app…", systemImage: "plus").font(.caption) }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(Tok.brand)
+                ))
                 Card {
-                    ForEach(Array(DetectionService.watched.enumerated()), id: \.element.id) { idx, w in
+                    let list = DetectionService.watched
+                    ForEach(Array(list.enumerated()), id: \.element.id) { idx, w in
                         HStack(spacing: Tok.s4) {
+                            if let icon = appIcon(for: w.bundleIDPrefix) {
+                                Image(nsImage: icon).resizable().frame(width: 22, height: 22)
+                            } else {
+                                Image(systemName: "app.dashed")
+                                    .foregroundStyle(Tok.textSecondary).frame(width: 22)
+                            }
                             VStack(alignment: .leading, spacing: 1) {
-                                Text(w.displayName).font(.body)
+                                HStack(spacing: Tok.s3) {
+                                    Text(w.displayName).font(.body)
+                                    if !w.isBuiltIn {
+                                        Text("added by you").font(.caption2)
+                                            .foregroundStyle(Tok.textSecondary)
+                                    }
+                                }
                                 Text(isActive(w) ? "Using your microphone now."
                                                  : "Not using your microphone.")
                                     .font(.caption).foregroundStyle(Tok.textSecondary)
                             }
                             Spacer()
+                            if !w.isBuiltIn {
+                                Button {
+                                    prefs.removeWatchedApp(bundleID: w.bundleIDPrefix)
+                                    DetectionService.shared.restart()
+                                } label: { Image(systemName: "minus.circle").font(.caption) }
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(Tok.textSecondary)
+                                .help("Stop watching \(w.displayName)")
+                            }
                             Toggle("", isOn: Binding(
                                 get: { !prefs.isSuppressed(w.bundleIDPrefix) },
                                 set: { on in
@@ -49,7 +80,11 @@ struct DetectionPane: View {
                             .disabled(!prefs.detectionEnabled)
                         }
                         .padding(.vertical, 8)
-                        if idx < DetectionService.watched.count - 1 { RowDivider() }
+                        if idx < list.count - 1 { RowDivider() }
+                    }
+                    if let addError {
+                        Text(addError).font(.caption).foregroundStyle(Tok.recording)
+                            .padding(.top, Tok.s3)
                     }
                 }
             }
@@ -104,6 +139,49 @@ struct DetectionPane: View {
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
             }
         }
+    }
+
+    /// A real application picker rather than asking for a bundle identifier.
+    /// The bundle ID is read from whatever the user chose.
+    private func pickApp() {
+        addError = nil
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.prompt = "Watch"
+        panel.message = "Choose an app that should offer to record when it uses your microphone."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        guard let bundle = Bundle(url: url), let id = bundle.bundleIdentifier else {
+            addError = "That does not look like an application bundle."
+            return
+        }
+        let name = (bundle.infoDictionary?["CFBundleDisplayName"] as? String)
+            ?? (bundle.infoDictionary?["CFBundleName"] as? String)
+            ?? url.deletingPathExtension().lastPathComponent
+
+        if DetectionService.builtIn.contains(where: { id.hasPrefix($0.bundleIDPrefix) }) {
+            addError = "\(name) is already watched."
+            return
+        }
+        if prefs.customWatchedApps.contains(where: { $0.hasPrefix(id + "|") }) {
+            addError = "\(name) is already in the list."
+            return
+        }
+        prefs.addWatchedApp(bundleID: id, name: name)
+        DetectionService.shared.restart()
+    }
+
+    /// Shown so a row is recognisable at a glance.
+    private func appIcon(for bundleID: String) -> NSImage? {
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+        else { return nil }
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        icon.size = NSSize(width: 22, height: 22)
+        return icon
     }
 
     private func refreshLive() {

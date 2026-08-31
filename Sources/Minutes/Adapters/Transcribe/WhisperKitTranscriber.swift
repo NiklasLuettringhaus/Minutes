@@ -1,5 +1,6 @@
 import Foundation
 import WhisperKit
+import FluidAudio
 
 /// AD-14: a single serial actor owns all ML execution. Two CoreML models never
 /// load concurrently, which is what keeps a 24 GB machine out of memory pressure
@@ -10,6 +11,8 @@ actor MLEngine {
     private var whisper: WhisperKit?
     private var loadedModel: String?
     private var speaker: SpeakerKitBox?
+    private var parakeetManager: AsrManager?
+    private var parakeetVersion: AsrModelVersion?
 
     /// Loads (downloading if needed) and caches a Whisper model. Reloads only when
     /// the requested model differs from the loaded one.
@@ -38,6 +41,34 @@ actor MLEngine {
         loadedModel = nil
     }
 
+    /// Loads (downloading if needed) and caches the Parakeet engine. Same serial
+    /// executor as Whisper, so two CoreML models still never load at once (AD-14).
+    func parakeet(version: AsrModelVersion) async throws -> ParakeetSession {
+        if let m = parakeetManager, parakeetVersion == matchable(version) {
+            return ParakeetSession(manager: m)
+        }
+        parakeetManager = nil
+        // Release the Whisper model before loading a different engine.
+        whisper = nil; loadedModel = nil
+        do {
+            let id = version == .v2 ? ParakeetModel.v2 : ParakeetModel.v3
+            let dir = ParakeetModel.directory(for: id)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let models = try await AsrModels.downloadAndLoad(to: dir, version: version)
+            let manager = AsrManager(models: models)
+            parakeetManager = manager
+            parakeetVersion = matchable(version)
+            Log.transcribe.info("loaded Parakeet \(id, privacy: .public)")
+            return ParakeetSession(manager: manager)
+        } catch {
+            throw MinutesError.modelLoadFailed(error.localizedDescription)
+        }
+    }
+
+    private func matchable(_ v: AsrModelVersion) -> AsrModelVersion { v }
+
+    func unloadParakeet() { parakeetManager = nil; parakeetVersion = nil }
+
     func speakerKit() async throws -> SpeakerKitBox {
         if let s = speaker { return s }
         let s = try await SpeakerKitBox()
@@ -47,8 +78,20 @@ actor MLEngine {
 
     func unloadAll() async {
         whisper = nil; loadedModel = nil
+        parakeetManager = nil; parakeetVersion = nil
         if let s = speaker { await s.unload() }
         speaker = nil
+    }
+}
+
+/// Wraps `AsrManager` so the decoder state, which the API takes `inout`, stays
+/// owned in one place rather than leaking into the adapter.
+struct ParakeetSession {
+    let manager: AsrManager
+
+    func transcribe(_ url: URL) async throws -> ASRResult {
+        var state = try TdtDecoderState()
+        return try await manager.transcribe(url, decoderState: &state)
     }
 }
 

@@ -23,6 +23,7 @@ final class Preferences: ObservableObject {
         static let lastThroughput = "lastThroughputRatio"
         static let removeFiller = "removeFillerWords"
         static let fillerWords = "fillerWords"
+        static let customWatchedApps = "customWatchedApps"
     }
 
     /// Verified present in the live catalogue. Deliberately not the library's
@@ -52,6 +53,12 @@ final class Preferences: ObservableObject {
     }
     @Published var fillerWords: [String] {
         didSet { d.set(fillerWords, forKey: K.fillerWords) }
+    }
+    /// Apps the user added themselves, as `bundleID|Display Name` pairs.
+    /// Slack and Teams ship built in; anything else is opt-in, because a
+    /// wider watch list means more spurious prompts (SM-C1).
+    @Published var customWatchedApps: [String] {
+        didSet { d.set(customWatchedApps, forKey: K.customWatchedApps) }
     }
     @Published var didCompleteFirstRun: Bool {
         didSet { d.set(didCompleteFirstRun, forKey: K.didCompleteFirstRun) }
@@ -83,6 +90,7 @@ final class Preferences: ObservableObject {
         keepAudio = d.object(forKey: K.keepAudio) as? Bool ?? true
         removeFillerWords = d.object(forKey: K.removeFiller) as? Bool ?? true
         fillerWords = d.stringArray(forKey: K.fillerWords) ?? FillerWords.defaults
+        customWatchedApps = d.stringArray(forKey: K.customWatchedApps) ?? []
         didCompleteFirstRun = d.bool(forKey: K.didCompleteFirstRun)
         lastSystemCaptureOK = d.object(forKey: K.lastSystemCaptureOK) as? Bool
         lastThroughputRatio = d.object(forKey: K.lastThroughput) as? Double
@@ -147,6 +155,21 @@ final class Preferences: ObservableObject {
     }
     func unsuppress(_ bundleID: String) {
         suppressedApps.removeAll { $0 == bundleID }
+    }
+
+    // MARK: - Custom watched apps
+
+    func addWatchedApp(bundleID: String, name: String) {
+        let id = bundleID.trimmingCharacters(in: .whitespaces)
+        guard !id.isEmpty else { return }
+        // Never shadow a built-in, and never add the same app twice.
+        guard !DetectionService.builtIn.contains(where: { id.hasPrefix($0.bundleIDPrefix) }) else { return }
+        guard !customWatchedApps.contains(where: { $0.hasPrefix(id + "|") }) else { return }
+        customWatchedApps.append("\(id)|\(name)")
+    }
+
+    func removeWatchedApp(bundleID: String) {
+        customWatchedApps.removeAll { $0.hasPrefix(bundleID + "|") }
     }
 
     func resetFillerWords() { fillerWords = FillerWords.defaults }

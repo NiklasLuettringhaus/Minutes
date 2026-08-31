@@ -85,6 +85,18 @@ struct TranscriptionPane: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: Tok.s3) {
+                    // Provider up front — asked for directly, and it matters more
+                    // now that two different engines are on offer.
+                    HStack(spacing: 4) {
+                        Image(systemName: e.provider.glyph).font(.system(size: 9))
+                        Text(e.provider.rawValue).font(.caption2)
+                    }
+                    .foregroundStyle(e.provider == .nvidia ? Tok.brand : Tok.textSecondary)
+                    .padding(.horizontal, 6).padding(.vertical, 1)
+                    .background(
+                        (e.provider == .nvidia ? Tok.brand.opacity(0.12)
+                                               : Tok.separator.opacity(0.45)),
+                        in: RoundedRectangle(cornerRadius: Tok.rSm))
                     Text(e.name).font(.body).fontWeight(isActive ? .semibold : .medium)
                     if showRole && e.role != .other {
                         Text(e.role.rawValue.lowercased())
@@ -97,12 +109,18 @@ struct TranscriptionPane: View {
                                 in: Capsule())
                     }
                 }
-                if showRole && !e.role.blurb.isEmpty {
+                if let note = ModelCatalog.note(for: e.id) {
+                    Text(note).font(.caption).foregroundStyle(Tok.textSecondary)
+                } else if showRole && !e.role.blurb.isEmpty {
                     Text(e.role.blurb).font(.caption).foregroundStyle(Tok.textSecondary)
                 }
                 // The identifier, so the row is never ambiguous about which model
                 // it actually is.
-                Text(e.technical).font(.caption2).monospaced().foregroundStyle(Tok.textSecondary)
+                HStack(spacing: Tok.s3) {
+                    Text(e.technical).font(.caption2).monospaced()
+                    Text("· \(e.engine.rawValue)").font(.caption2)
+                }
+                .foregroundStyle(Tok.textSecondary)
 
                 HStack(spacing: Tok.s5) {
                     Meter(label: "Speed", value: e.speed, tint: Tok.brand)

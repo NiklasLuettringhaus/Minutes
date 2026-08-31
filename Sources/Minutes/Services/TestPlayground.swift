@@ -114,7 +114,7 @@ final class TestPlayground: ObservableObject {
         }
 
         let started = Date()
-        let transcriber = WhisperKitTranscriber()
+        let transcriber: Transcribing = ParakeetModel.isParakeet(model) ? ParakeetTranscriber() : WhisperKitTranscriber()
         do {
             var segments = try await transcriber.transcribe(url: micURL, model: model)
             if let sys = streams.systemURL {

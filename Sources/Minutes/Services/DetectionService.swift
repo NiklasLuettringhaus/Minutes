@@ -26,19 +26,32 @@ struct DetectedMeeting: Identifiable, Equatable {
 final class DetectionService: ObservableObject {
     static let shared = DetectionService()
 
-    struct WatchedApp: Identifiable {
+    struct WatchedApp: Identifiable, Hashable {
         var id: String { bundleIDPrefix }
         let bundleIDPrefix: String
         let displayName: String
+        var isBuiltIn: Bool = false
     }
 
-    /// v1 targets exactly what was asked for. Chrome is installed on this machine
-    /// and browser calls are plausibly common, but it was deliberately excluded
-    /// (PRD §6.2) — adding it is a one-line change once detection is proven.
-    static let watched: [WatchedApp] = [
-        WatchedApp(bundleIDPrefix: "com.tinyspeck.slackmacgap", displayName: "Slack"),
-        WatchedApp(bundleIDPrefix: "com.microsoft.teams2", displayName: "Microsoft Teams"),
+    /// Slack and Teams ship built in — the two that were asked for. Anything
+    /// else the user adds themselves, because every extra watched app is another
+    /// source of spurious prompts, and SM-C1 prefers a missed huddle to a nag.
+    static let builtIn: [WatchedApp] = [
+        WatchedApp(bundleIDPrefix: "com.tinyspeck.slackmacgap", displayName: "Slack", isBuiltIn: true),
+        WatchedApp(bundleIDPrefix: "com.microsoft.teams2", displayName: "Microsoft Teams", isBuiltIn: true),
     ]
+
+    /// Built-ins plus whatever the user has added.
+    @MainActor
+    static var watched: [WatchedApp] {
+        builtIn + Preferences.shared.customWatchedApps.compactMap { entry in
+            let parts = entry.split(separator: "|", maxSplits: 1).map(String.init)
+            guard let id = parts.first, !id.isEmpty else { return nil }
+            return WatchedApp(bundleIDPrefix: id,
+                              displayName: parts.count > 1 ? parts[1] : id,
+                              isBuiltIn: false)
+        }
+    }
 
     /// Seconds the input device must stay held before we prompt, so notification
     /// sounds and device probes do not trigger it (FR-12).
@@ -120,12 +133,14 @@ final class DetectionService: ObservableObject {
 
     /// Watched apps currently holding the audio input device, matched by
     /// bundle-ID **prefix** (AD-5).
+    @MainActor
     static func appsUsingAudioInput() -> [DetectedMeeting] {
+        let list = watched
         var out: [DetectedMeeting] = []
         var seen = Set<String>()
         for obj in processObjects() {
             guard let bundle = bundleID(obj), isRunningInput(obj) else { continue }
-            guard let w = watched.first(where: { bundle.hasPrefix($0.bundleIDPrefix) }) else { continue }
+            guard let w = list.first(where: { bundle.hasPrefix($0.bundleIDPrefix) }) else { continue }
             guard !seen.contains(w.bundleIDPrefix) else { continue }
             seen.insert(w.bundleIDPrefix)
             out.append(DetectedMeeting(bundleID: bundle, appName: w.displayName))

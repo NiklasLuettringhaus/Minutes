@@ -12,7 +12,10 @@ import Foundation
 actor Pipeline {
     static let shared = Pipeline()
 
-    private let transcriber: Transcribing = WhisperKitTranscriber()
+    /// Chosen per model: the two engines share one port (AD-12's pattern).
+    private func transcriber(for model: String) -> Transcribing {
+        ParakeetModel.isParakeet(model) ? ParakeetTranscriber() : WhisperKitTranscriber()
+    }
     private let diarizer = SpeakerKitDiarizerAdapter()
     private let noteWriter: NoteWriting = NoteWriter()
     private let heuristic = HeuristicBackend()
@@ -117,7 +120,7 @@ actor Pipeline {
 
         // The Mic Stream is the Local Speaker, structurally and without inference (AD-11).
         if let mic = await store.audioURL(id: id, stream: .mic) {
-            for s in try await transcriber.transcribe(url: mic, model: model) {
+            for s in try await transcriber(for: model).transcribe(url: mic, model: model) {
                 guard let text = clean(s.text) else { continue }
                 utterances.append(Utterance(start: s.start, end: s.end, text: text,
                                             speaker: .local, origin: .mic))
@@ -125,7 +128,7 @@ actor Pipeline {
         }
         // System Stream segments start unassigned; diarization names them next.
         if let sys = await store.audioURL(id: id, stream: .system) {
-            for s in try await transcriber.transcribe(url: sys, model: model) {
+            for s in try await transcriber(for: model).transcribe(url: sys, model: model) {
                 guard let text = clean(s.text) else { continue }
                 utterances.append(Utterance(start: s.start, end: s.end, text: text,
                                             speaker: SpeakerLabelID.remote(0), origin: .system))

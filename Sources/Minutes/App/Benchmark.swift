@@ -31,20 +31,20 @@ enum Benchmark {
             print(pad("model", 46) + pad("cold", 11) + pad("warm", 11) + "warm ×realtime   30-min meeting")
             print(String(repeating: "-", count: 104))
 
-            let t = WhisperKitTranscriber()
+            
             for m in models {
                 guard ModelCatalog.isDownloaded(m) else {
                     print(pad(m, 46) + "not downloaded"); continue
                 }
                 await MLEngine.shared.unloadWhisper()   // force a genuine cold load
                 let c0 = Date()
-                guard let _ = try? await t.transcribe(url: url, model: m) else {
+                guard let _ = try? await (ParakeetModel.isParakeet(m) ? ParakeetTranscriber() as Transcribing : WhisperKitTranscriber()).transcribe(url: url, model: m) else {
                     print(pad(m, 46) + "failed"); continue
                 }
                 let cold = Date().timeIntervalSince(c0)
 
                 let w0 = Date()
-                _ = try? await t.transcribe(url: url, model: m)
+                _ = try? await (ParakeetModel.isParakeet(m) ? ParakeetTranscriber() as Transcribing : WhisperKitTranscriber()).transcribe(url: url, model: m)
                 let warm = Date().timeIntervalSince(w0)
 
                 let ratio = warm / seconds

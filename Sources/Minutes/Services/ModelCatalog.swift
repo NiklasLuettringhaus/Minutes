@@ -36,11 +36,32 @@ final class ModelCatalog: ObservableObject {
         }
     }
 
+    /// Who made the model. Asked for directly — "distil large-v3" says nothing
+    /// about provenance, and the engine matters now that there are two.
+    enum Provider: String {
+        case openAI = "OpenAI"
+        case nvidia = "NVIDIA"
+        case distil = "Distil-Whisper"
+
+        var glyph: String {
+            switch self {
+            case .openAI: return "circle.hexagongrid.fill"
+            case .nvidia: return "bolt.fill"
+            case .distil: return "circle.dashed"
+            }
+        }
+    }
+
+    /// Which inference engine runs it.
+    enum Engine: String { case whisper = "WhisperKit", parakeet = "Parakeet" }
+
     struct Entry: Identifiable, Hashable {
         let id: String              // the real WhisperKit identifier
         var name: String            // plain-language, and guaranteed unique
         var technical: String       // the identifier, shown as a subtitle
         var role: Role
+        var provider: Provider
+        var engine: Engine
         var bytes: Int64?
         /// 1 (slowest) … 5 (fastest). Relative, and labelled as an estimate
         /// until a real measurement exists for this Mac.
@@ -63,15 +84,32 @@ final class ModelCatalog: ObservableObject {
     // Keyed on the real identifiers. Sizes are the CoreML on-disk figures; a
     // table beats regex-guessing, and it is the only way to give each variant a
     // name that actually distinguishes it.
-    private struct Spec { let name: String; let role: Role; let mb: Int; let speed: Int; let acc: Int }
+    private struct Spec {
+        let name: String; let role: Role; let mb: Int; let speed: Int; let acc: Int
+        var provider: Provider = .openAI
+        var engine: Engine = .whisper
+        var note: String? = nil
+    }
 
     private static let specs: [String: Spec] = [
+        // --- NVIDIA Parakeet, via FluidAudio. Roughly an order of magnitude
+        // faster than Whisper on Apple Silicon, which is the whole reason to
+        // offer a second engine.
+        ParakeetModel.v3:
+            Spec(name: "Blazing fast", role: .recommended, mb: 461, speed: 5, acc: 4,
+                 provider: .nvidia, engine: .parakeet,
+                 note: "25 European languages. Much faster than Whisper."),
+        ParakeetModel.v2:
+            Spec(name: "Blazing fast, English", role: .english, mb: 461, speed: 5, acc: 4,
+                 provider: .nvidia, engine: .parakeet,
+                 note: "English only, and a little sharper for it."),
+        // --- OpenAI Whisper, via WhisperKit ---
         "openai_whisper-large-v3-v20240930_turbo_632MB":
-            Spec(name: "Balanced", role: .recommended, mb: 632, speed: 4, acc: 5),
+            Spec(name: "Balanced", role: .accurate, mb: 632, speed: 4, acc: 5),
         "openai_whisper-base":
             Spec(name: "Quick", role: .fastest, mb: 147, speed: 5, acc: 2),
         "openai_whisper-large-v3_947MB":
-            Spec(name: "Highest quality", role: .accurate, mb: 947, speed: 2, acc: 5),
+            Spec(name: "Highest quality", role: .other, mb: 947, speed: 2, acc: 5),
         "openai_whisper-small.en":
             Spec(name: "English, balanced", role: .english, mb: 483, speed: 4, acc: 4),
         "openai_whisper-base.en":
@@ -80,9 +118,9 @@ final class ModelCatalog: ObservableObject {
             Spec(name: "Tiny", role: .compact, mb: 78, speed: 5, acc: 1),
         // Sensible alternates, kept out of the curated list but named properly.
         "distil-whisper_distil-large-v3_turbo_600MB":
-            Spec(name: "Distilled turbo", role: .other, mb: 600, speed: 4, acc: 4),
+            Spec(name: "Distilled turbo", role: .other, mb: 600, speed: 4, acc: 4, provider: .distil),
         "distil-whisper_distil-large-v3_594MB":
-            Spec(name: "Distilled", role: .other, mb: 594, speed: 4, acc: 4),
+            Spec(name: "Distilled", role: .other, mb: 594, speed: 4, acc: 4, provider: .distil),
         "openai_whisper-large-v3_turbo_954MB":
             Spec(name: "Turbo, full precision", role: .other, mb: 954, speed: 3, acc: 5),
         "openai_whisper-large-v3-v20240930_626MB":
@@ -99,11 +137,11 @@ final class ModelCatalog: ObservableObject {
 
     /// The curated picker, in this order.
     private static let curatedOrder = [
+        ParakeetModel.v3,
+        ParakeetModel.v2,
         "openai_whisper-large-v3-v20240930_turbo_632MB",
         "openai_whisper-base",
-        "openai_whisper-large-v3_947MB",
         "openai_whisper-small.en",
-        "openai_whisper-tiny",
     ]
 
     // MARK: - Loading
@@ -133,8 +171,10 @@ final class ModelCatalog: ObservableObject {
         return out
     }
 
-    private func rebuild(from ids: [String]) {
+    private func rebuild(from whisperIDs: [String]) {
         let measurements = Self.loadMeasurements()
+        // Parakeet does not come from WhisperKit's catalogue, so it is added here.
+        let ids = [ParakeetModel.v3, ParakeetModel.v2] + whisperIDs
         var built: [Entry] = ids.map { id in
             let s = Self.specs[id]
             return Entry(
@@ -142,6 +182,8 @@ final class ModelCatalog: ObservableObject {
                 name: s?.name ?? Self.derivedName(id),
                 technical: id.replacingOccurrences(of: "openai_whisper-", with: ""),
                 role: s?.role ?? .other,
+                provider: s?.provider ?? (id.contains("distil") ? .distil : .openAI),
+                engine: s?.engine ?? .whisper,
                 bytes: s.map { Int64($0.mb) * 1_000_000 } ?? Self.sizeFromSuffix(id),
                 speed: s?.speed ?? Self.guessSpeed(id),
                 accuracy: s?.acc ?? Self.guessAccuracy(id),
@@ -239,12 +281,16 @@ final class ModelCatalog: ObservableObject {
         specs[id]?.name ?? derivedName(id)
     }
 
+    static func note(for id: String) -> String? { specs[id]?.note }
+    static func engine(for id: String) -> Engine { specs[id]?.engine ?? .whisper }
+
     // MARK: - Download state
 
     static func modelFolder(_ id: String) -> URL? { ModelStorage.whisperFolder(id) }
 
     /// A model folder holding compiled CoreML packages is our download signal.
     static func isDownloaded(_ id: String) -> Bool {
+        if ParakeetModel.isParakeet(id) { return ParakeetModel.isDownloaded(id) }
         guard let f = modelFolder(id),
               let items = try? FileManager.default.contentsOfDirectory(atPath: f.path)
         else { return false }
@@ -253,6 +299,7 @@ final class ModelCatalog: ObservableObject {
     }
 
     static func removeDownload(_ id: String) throws {
+        if ParakeetModel.isParakeet(id) { try ParakeetModel.removeDownload(id); return }
         guard let f = modelFolder(id) else { return }
         try FileManager.default.removeItem(at: f)
     }

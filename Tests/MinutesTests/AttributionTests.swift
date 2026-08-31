@@ -1,4 +1,5 @@
 import XCTest
+import FluidAudio
 @testable import Minutes
 
 /// AD-11 / AD-19 / AD-4 — the structural claims the product rests on.
@@ -171,5 +172,48 @@ final class TranscriptCleaningTests: XCTestCase {
         // Square brackets are not automatically non-speech.
         XCTAssertEqual(WhisperKitTranscriber.clean("The [Q3] number is twelve."),
                        "The [Q3] number is twelve.")
+    }
+}
+
+/// Parakeet returns one text blob plus token timings, where Whisper returns
+/// ready-made segments — so segments have to be rebuilt.
+final class ParakeetSegmentTests: XCTestCase {
+    private func tok(_ s: String, _ a: Double, _ b: Double) -> FluidAudioTokenStub {
+        FluidAudioTokenStub(token: s, startTime: a, endTime: b)
+    }
+
+    func testSplitsOnSentenceEnd() {
+        let out = ParakeetTranscriber.segments(from: [
+            tok("▁Hello", 0.0, 0.4), tok("▁there", 0.4, 0.8), tok(".", 0.8, 0.9),
+            tok("▁Next", 1.0, 1.4), tok("▁item", 1.4, 1.8), tok(".", 1.8, 1.9),
+        ].map(\.asTiming))
+        XCTAssertEqual(out.count, 2)
+        XCTAssertEqual(out[0].text, "Hello there.")
+        XCTAssertEqual(out[1].text, "Next item.")
+        XCTAssertEqual(out[0].start, 0.0, accuracy: 0.001)
+        XCTAssertEqual(out[1].end, 1.9, accuracy: 0.001)
+    }
+
+    func testSplitsOnLongPause() {
+        let out = ParakeetTranscriber.segments(from: [
+            tok("▁Right", 0.0, 0.4),
+            tok("▁so", 5.0, 5.3),   // 4.6s gap
+        ].map(\.asTiming))
+        XCTAssertEqual(out.count, 2)
+    }
+
+    func testEmptyInputIsEmpty() {
+        XCTAssertTrue(ParakeetTranscriber.segments(from: []).isEmpty)
+    }
+}
+
+/// Small shim so the segment grouping can be tested without constructing
+/// FluidAudio's full token type.
+struct FluidAudioTokenStub {
+    let token: String
+    let startTime: TimeInterval
+    let endTime: TimeInterval
+    var asTiming: TokenTiming {
+        TokenTiming(token: token, tokenId: 0, startTime: startTime, endTime: endTime, confidence: 1)
     }
 }
