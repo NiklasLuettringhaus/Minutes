@@ -36,11 +36,21 @@ struct MinutesApp: App {
         } label: {
             // SwiftUI renders this as a template unless we hand it a non-template
             // NSImage, and Recording's colour is load-bearing.
-            Image(nsImage: MenuBarIcon.image(for: app.sessionState,
-                                             isAsking: app.pendingPrompt != nil))
-                .accessibilityLabel(MenuBarIcon.accessibilityLabel(
-                    for: app.sessionState, elapsed: app.elapsed,
-                    asking: app.pendingPrompt?.appName))
+            // FR-49: the elapsed time has to be readable with the menu closed, so
+            // it lives in the label rather than only in the menu (FR-4 covers the
+            // open menu, and both requirements hold). Text is shown only while
+            // Recording, so the menu bar never implies a Session that is not running.
+            HStack(spacing: 3) {
+                Image(nsImage: MenuBarIcon.image(for: app.sessionState,
+                                                 isAsking: app.pendingPrompt != nil,
+                                                 pulsePhase: app.pulsePhase))
+                if app.sessionState.isRecording {
+                    Text(Fmt.duration(app.elapsed)).monospacedDigit()
+                }
+            }
+            .accessibilityLabel(MenuBarIcon.accessibilityLabel(
+                for: app.sessionState, elapsed: app.elapsed,
+                asking: app.pendingPrompt?.appName))
         }
     }
 }

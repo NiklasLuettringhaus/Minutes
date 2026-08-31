@@ -92,6 +92,64 @@ actor SpeakerDirectory {
 
     func knownNames() -> [String] { profiles.map(\.name).sorted() }
 
+    // MARK: - FR-51: seeing and curating what is remembered
+
+    /// What the voices list shows. Deliberately excludes the centroid: it is the
+    /// one field that is biometric-adjacent and it means nothing to a reader.
+    struct Summary: Identifiable, Equatable, Sendable {
+        var id: String { name }
+        let name: String
+        /// How many Meetings contributed, so a one-sample guess is distinguishable
+        /// from a well-established voice.
+        let samples: Int
+        let updatedAt: Date
+    }
+
+    func summaries() -> [Summary] {
+        profiles
+            .map { Summary(name: $0.name, samples: $0.samples, updatedAt: $0.updatedAt) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Renames a Profile in place, keeping its learned centroid and sample count —
+    /// the point of a correction is that what was learned about the *voice* stays.
+    ///
+    /// Renaming onto an existing name merges the two, which is the fix when one
+    /// person was recorded as two. Merging averages the centroids weighted by
+    /// sample count, matching how `remember` accumulates.
+    ///
+    /// Does not relabel Meetings already written: that was not asked for, and it
+    /// would rewrite Notes the user may have edited by hand.
+    @discardableResult
+    func rename(from old: String, to new: String) -> Bool {
+        let trimmed = new.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let i = profiles.firstIndex(where: { $0.name.caseInsensitiveCompare(old) == .orderedSame })
+        else { return false }
+
+        if let j = profiles.firstIndex(where: {
+            $0.name.caseInsensitiveCompare(trimmed) == .orderedSame
+        }), j != i {
+            let a = profiles[i], b = profiles[j]
+            var merged = b.centroid
+            if a.centroid.count == b.centroid.count, !merged.isEmpty {
+                let wa = Float(a.samples), wb = Float(b.samples)
+                for k in 0..<merged.count {
+                    merged[k] = (a.centroid[k] * wa + b.centroid[k] * wb) / (wa + wb)
+                }
+            }
+            profiles[j] = Profile(name: trimmed, centroid: merged,
+                                  samples: a.samples + b.samples, updatedAt: Date())
+            profiles.remove(at: i)
+        } else {
+            let p = profiles[i]
+            profiles[i] = Profile(name: trimmed, centroid: p.centroid,
+                                  samples: p.samples, updatedAt: Date())
+        }
+        persist()
+        return true
+    }
+
     // MARK: - Persistence (atomic, AD-10)
 
     private static func loadProfiles(from url: URL) -> [Profile] {

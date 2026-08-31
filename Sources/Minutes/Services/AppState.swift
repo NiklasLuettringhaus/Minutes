@@ -25,12 +25,28 @@ final class AppState: ObservableObject {
     @Published var lastError: MinutesError?
     /// A meeting the user has been offered but not yet answered (FR-12).
     @Published var pendingPrompt: DetectedMeeting?
+    /// Meetings whose Note is recorded but absent from the Notes Folder (FR-53).
+    ///
+    /// A display state derived on read, never written into the record: the folder
+    /// can change, and a transient filesystem condition must not become a
+    /// permanent claim in `meeting.json`.
+    @Published private(set) var missingNotes: Set<String> = []
+    /// Meeting records that could not be decoded, surfaced rather than skipped
+    /// (FR-54). A listing that silently drops what it cannot parse is wrong
+    /// without appearing wrong.
+    @Published private(set) var unreadableMeetings: [String] = []
     /// Meetings actually in the pipeline right now — queued or running.
     ///
     /// The Meetings list used to infer "in progress" from `stage != .written`,
     /// which is a claim about the record, not about the work. A session interrupted
     /// by a quit therefore span a progress spinner forever with nothing behind it.
     @Published private(set) var inFlight: Set<String> = []
+    /// Drives the FR-50 Recording pulse and, with it, the FR-49 menu bar timer.
+    ///
+    /// One published integer rather than an animation: the menu bar label is
+    /// re-rendered by the system, so the cost has to be bounded and stoppable
+    /// (NFR-3). It advances only while Recording and stops dead otherwise.
+    @Published private(set) var pulsePhase: Int = 0
     @Published private(set) var micAuthorized: Bool = false
     @Published private(set) var audioBytes: Int64 = 0
 
@@ -41,6 +57,10 @@ final class AppState: ObservableObject {
     func setMeetings(_ m: [Meeting]) { meetings = m }
     func setMicAuthorized(_ b: Bool) { micAuthorized = b }
     func setInFlight(_ ids: Set<String>) { inFlight = ids }
+    func setMissingNotes(_ ids: Set<String>) { missingNotes = ids }
+    func advancePulse() { pulsePhase = (pulsePhase + 1) % 4 }
+    func resetPulse() { pulsePhase = 0 }
+    func setUnreadable(_ ids: [String]) { unreadableMeetings = ids }
     func setAudioBytes(_ n: Int64) { audioBytes = n }
 
     var elapsed: TimeInterval {
@@ -62,6 +82,9 @@ enum AppStateBridge {
     }
     static func fillerSettings() async -> (Bool, [String]) {
         await MainActor.run { (Preferences.shared.removeFillerWords, Preferences.shared.fillerWords) }
+    }
+    static func pinHeuristicBackend() async -> Bool {
+        await MainActor.run { Preferences.shared.metadataBackend == .heuristic }
     }
     static func keepAudio() async -> Bool {
         await MainActor.run { Preferences.shared.keepAudio }
@@ -88,12 +111,31 @@ enum AppStateBridge {
     }
 
     static func reloadMeetings() async {
-        let meetings = await MeetingStore.shared.loadAll()
+        let (meetings, bad) = await MeetingStore.shared.loadAllReportingFailures()
         let bytes = await MeetingStore.shared.audioBytes()
+        let missing = await missingNoteIDs(in: meetings)
         await MainActor.run {
             AppState.shared.setMeetings(meetings)
             AppState.shared.setAudioBytes(bytes)
+            AppState.shared.setMissingNotes(missing)
+            AppState.shared.setUnreadable(bad.map(\.id))
         }
+    }
+
+    /// FR-53. Resolved against the folder *currently* in effect, so moving the
+    /// Notes Folder does not mark every past Meeting broken. Only Meetings that
+    /// claim a written Note are candidates — an unfinished one is not "missing" it.
+    static func missingNoteIDs(in meetings: [Meeting]) async -> Set<String> {
+        guard let folder = await notesFolder() else { return [] }
+        let fm = FileManager.default
+        var out: Set<String> = []
+        for m in meetings {
+            guard m.isComplete, let f = m.noteFilename else { continue }
+            if !fm.fileExists(atPath: folder.appendingPathComponent(f).path) {
+                out.insert(m.id)
+            }
+        }
+        return out
     }
 
     static func finished(meetingID id: String) async {

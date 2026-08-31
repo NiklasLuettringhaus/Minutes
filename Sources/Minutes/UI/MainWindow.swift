@@ -5,13 +5,14 @@ import SwiftUI
 /// than creating a second (FR-5).
 struct MainWindow: View {
     enum Pane: String, CaseIterable, Identifiable {
-        case gettingStarted, transcription, detection, general, meetings
+        case gettingStarted, transcription, summaries, detection, general, meetings
         var id: String { rawValue }
 
         var title: String {
             switch self {
             case .gettingStarted: return "Getting Started"
             case .transcription:  return "Transcription"
+            case .summaries:      return "Summaries"
             case .detection:      return "Detection"
             case .general:        return "General"
             case .meetings:       return "Meetings"
@@ -21,6 +22,7 @@ struct MainWindow: View {
             switch self {
             case .gettingStarted: return "house"
             case .transcription:  return "waveform"
+            case .summaries:      return "text.alignleft"
             case .detection:      return "sensor.tag.radiowaves.forward"
             case .general:        return "gearshape"
             case .meetings:       return "list.bullet.rectangle"
@@ -29,7 +31,7 @@ struct MainWindow: View {
         var group: String {
             switch self {
             case .gettingStarted: return "Setup"
-            case .transcription, .detection, .general: return "Configure"
+            case .transcription, .summaries, .detection, .general: return "Configure"
             case .meetings: return "Activity"
             }
         }
@@ -54,7 +56,7 @@ struct MainWindow: View {
                     row(.gettingStarted)
                 }
                 Section("Configure") {
-                    row(.transcription); row(.detection); row(.general)
+                    row(.transcription); row(.summaries); row(.detection); row(.general)
                 }
                 Section("Activity") {
                     row(.meetings)
@@ -81,6 +83,7 @@ struct MainWindow: View {
         switch selection {
         case .gettingStarted: GettingStartedPane(selection: $selection)
         case .transcription:  TranscriptionPane()
+        case .summaries:      SummariesPane()
         case .detection:      DetectionPane()
         case .general:        GeneralPane()
         case .meetings:       MeetingsPane()

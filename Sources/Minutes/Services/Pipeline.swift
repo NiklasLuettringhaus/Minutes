@@ -324,7 +324,10 @@ actor Pipeline {
         // AD-12: prefer the LLM, fall back to the deterministic backend. The
         // fallback is NOT an error here — it is the expected path on this machine.
         var result: MeetingMetadata
-        if await llm.isAvailable() {
+        // FR-52 amends FR-27: preferring the LLM is a default, and an explicit
+        // user choice wins over availability.
+        let pinHeuristic = await AppStateBridge.pinHeuristicBackend()
+        if !pinHeuristic, await llm.isAvailable() {
             do {
                 result = try await llm.derive(from: meeting.utterances, names: meeting.speakerNames)
             } catch {

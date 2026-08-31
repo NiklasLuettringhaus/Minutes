@@ -6,22 +6,36 @@ import AppKit
 struct MeetingsPane: View {
     @EnvironmentObject var app: AppState
     @EnvironmentObject var prefs: Preferences
-    @State private var selected: String?
-    @State private var deleting: Meeting?
+    /// A Set, not an optional: FR-40's amendment is multi-select delete, and
+    /// "manage" stops meaning anything if clearing five test recordings takes five
+    /// confirmations.
+    @State private var selected: Set<String> = []
+    @State private var confirmingDelete = false
     @State private var deleteNoteToo = false
+    @State private var refreshing = false
+
+    /// The one selected Meeting, or nil when the selection is empty or plural.
+    private var single: Meeting? {
+        guard selected.count == 1, let id = selected.first else { return nil }
+        return app.meeting(id: id)
+    }
+
+    /// Selection order is not meaningful, but confirmation copy is, so the list is
+    /// resolved in display order.
+    private var selectedMeetings: [Meeting] {
+        app.meetings.filter { selected.contains($0.id) }
+    }
 
     var body: some View {
         HSplitView {
             list
                 .frame(minWidth: 250, idealWidth: 280, maxWidth: 380)
-            if let id = selected, let m = app.meeting(id: id) {
+            if let m = single {
                 MeetingDetail(meeting: m)
             } else {
                 VStack {
                     Spacer()
-                    Text(app.meetings.isEmpty
-                         ? "No meetings yet. Click the menu bar icon to record one."
-                         : "Select a meeting.")
+                    Text(detailPlaceholder)
                         .font(.body).foregroundStyle(Tok.textSecondary)
                     Spacer()
                 }
@@ -30,23 +44,50 @@ struct MeetingsPane: View {
             }
         }
         .onAppear { Task { await AppStateBridge.reloadMeetings() } }
-        .alert("Delete this meeting?", isPresented: Binding(
-            get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
-            Button("Cancel", role: .cancel) { deleting = nil }
+        .alert(deleteTitle, isPresented: $confirmingDelete) {
+            Button("Cancel", role: .cancel) { confirmingDelete = false }
             Button("Delete", role: .destructive) {
-                if let m = deleting {
-                    Task { await SessionCoordinator.shared.delete(meetingID: m.id, alsoNote: deleteNoteToo) }
-                }
-                deleting = nil
+                let ids = selectedMeetings.map(\.id)
+                let alsoNote = deleteNoteToo
+                selected = []
+                // Reset the destructive option rather than letting it persist into
+                // the next selection: a sticky "also delete notes" would silently
+                // widen a later deletion the user did not re-consider.
+                deleteNoteToo = false
+                Task { await SessionCoordinator.shared.delete(meetingIDs: ids, alsoNote: alsoNote) }
             }
         } message: {
             // Enumerates exactly what will be removed before removing it (FR-40).
-            if let m = deleting {
-                Text(deleteNoteToo
-                     ? "The recording, the transcript and the Markdown note “\(m.noteFilename ?? "")” will be permanently deleted."
-                     : "The recording and transcript will be permanently deleted. The Markdown note will be left in your notes folder.")
-            }
+            Text(deleteMessage)
         }
+    }
+
+    private var detailPlaceholder: String {
+        if app.meetings.isEmpty { return "No meetings yet. Click the menu bar icon to record one." }
+        if selected.count > 1 { return "\(selected.count) meetings selected." }
+        return "Select a meeting."
+    }
+
+    private var deleteTitle: String {
+        selected.count > 1 ? "Delete \(selected.count) meetings?" : "Delete this meeting?"
+    }
+
+    /// Names the count and the Note consequence explicitly. Discoverability does
+    /// not weaken confirmation — a destructive action still says what it destroys.
+    private var deleteMessage: String {
+        let ms = selectedMeetings
+        let notes = ms.compactMap(\.noteFilename)
+        if ms.count == 1 {
+            guard deleteNoteToo else {
+                return "The recording and transcript will be permanently deleted. The Markdown note will be left in your notes folder."
+            }
+            let name = notes.first.map { "the Markdown note “\($0)”" } ?? "its Markdown note"
+            return "The recording, the transcript and \(name) will be permanently deleted."
+        }
+        let base = "\(ms.count) recordings and their transcripts will be permanently deleted."
+        return deleteNoteToo
+            ? base + " \(notes.count) Markdown \(notes.count == 1 ? "note" : "notes") will be deleted with them."
+            : base + " Their Markdown notes will be left in your notes folder."
     }
 
     private var list: some View {
@@ -57,8 +98,69 @@ struct MeetingsPane: View {
                 }
             }
             .listStyle(.inset)
+            // FR-40 amended: the standard key for the standard action. Still
+            // routed through the confirmation.
+            .onDeleteCommand(perform: selected.isEmpty ? nil : { confirmingDelete = true })
+
+            // FR-54: an unreadable record is surfaced, never silently omitted.
+            if !app.unreadableMeetings.isEmpty {
+                StateBanner(kind: .degraded,
+                            text: "\(app.unreadableMeetings.count) meeting \(app.unreadableMeetings.count == 1 ? "record" : "records") could not be read. They are still on disk.")
+                    .padding(.horizontal, Tok.s4)
+                    .padding(.bottom, Tok.s3)
+            }
+
+            libraryToolbar
         }
         .background(Tok.surfaceWindow)
+    }
+
+    /// The visible home for management actions. Previously delete, retry and
+    /// rename existed only in a context menu, which the user never found — so the
+    /// capability was shipped and unreachable.
+    private var libraryToolbar: some View {
+        HStack(spacing: Tok.s3) {
+            Button {
+                confirmingDelete = true
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .disabled(selected.isEmpty)
+            .help(selected.count > 1 ? "Delete \(selected.count) meetings" : "Delete the selected meeting")
+
+            Toggle(isOn: $deleteNoteToo) {
+                Text("also delete notes").font(.caption)
+            }
+            .toggleStyle(.checkbox)
+            .disabled(selected.isEmpty)
+            .help("Include the Markdown note when deleting")
+
+            Spacer()
+
+            if !selected.isEmpty {
+                Text("\(selected.count) selected").font(.caption)
+                    .foregroundStyle(Tok.textSecondary).monospacedDigit()
+            }
+
+            // FR-54.
+            Button {
+                refreshing = true
+                Task {
+                    await SessionCoordinator.shared.refreshLibrary()
+                    refreshing = false
+                }
+            } label: {
+                if refreshing { ProgressView().controlSize(.small) }
+                else { Image(systemName: "arrow.clockwise") }
+            }
+            .buttonStyle(.borderless)
+            .disabled(refreshing)
+            .help("Re-read meetings and notes from disk")
+        }
+        .padding(.horizontal, Tok.s4)
+        .padding(.vertical, Tok.s3)
+        .background(.bar)
     }
 
     private func row(_ m: Meeting) -> some View {
@@ -89,6 +191,12 @@ struct MeetingsPane: View {
                     Image(systemName: "pause.circle").font(.caption2)
                     Text("Interrupted").font(.caption2)
                 }.foregroundStyle(Tok.textSecondary)
+            } else if app.missingNotes.contains(m.id) {
+                // FR-53: complete in the record is not complete on disk.
+                HStack(spacing: 4) {
+                    Image(systemName: "doc.badge.ellipsis").font(.caption2)
+                    Text("Note missing").font(.caption2)
+                }.foregroundStyle(Tok.recording)
             } else {
                 HStack(spacing: Tok.s2) {
                     ForEach(m.speakers.prefix(4), id: \.raw) { s in
@@ -118,8 +226,18 @@ struct MeetingsPane: View {
                     Task { await SessionCoordinator.shared.retry(meetingID: m.id) }
                 }
             }
+            if app.missingNotes.contains(m.id) {
+                Button("Rewrite note") {
+                    Task { await SessionCoordinator.shared.rewriteNote(meetingID: m.id) }
+                }
+            }
             Divider()
-            Button("Delete…", role: .destructive) { deleteNoteToo = false; deleting = m }
+            Button("Delete…", role: .destructive) {
+                deleteNoteToo = false
+                // Right-clicking a row outside the selection acts on that row.
+                if !selected.contains(m.id) { selected = [m.id] }
+                confirmingDelete = true
+            }
         }
     }
 
@@ -134,6 +252,7 @@ struct MeetingsPane: View {
 
 struct MeetingDetail: View {
     let meeting: Meeting
+    @EnvironmentObject var app: AppState
     @EnvironmentObject var prefs: Preferences
     @State private var editingSpeaker: SpeakerLabelID?
     @State private var draftName = ""
@@ -182,7 +301,14 @@ struct MeetingDetail: View {
                 Text(fullDate).font(.caption).foregroundStyle(Tok.textSecondary)
                 Text(Fmt.duration(meeting.duration)).font(.caption).monospacedDigit()
                     .foregroundStyle(Tok.textSecondary)
-                if let f = meeting.noteFilename, let folder = prefs.notesFolder() {
+                // FR-53: offering "Reveal note" for a file that is not there sends
+                // the user to an empty Finder window, so the two cases are split.
+                if noteIsMissing {
+                    Button("Rewrite note") {
+                        Task { await SessionCoordinator.shared.rewriteNote(meetingID: meeting.id) }
+                    }
+                    .buttonStyle(.borderless).font(.caption)
+                } else if let f = meeting.noteFilename, let folder = prefs.notesFolder() {
                     Button("Reveal note") {
                         NSWorkspace.shared.selectFile(folder.appendingPathComponent(f).path,
                                                       inFileViewerRootedAtPath: folder.path)
@@ -190,8 +316,14 @@ struct MeetingDetail: View {
                     .buttonStyle(.borderless).font(.caption)
                 }
             }
+            if noteIsMissing {
+                StateBanner(kind: .degraded,
+                            text: "This meeting's note is not in your notes folder. Rewriting recreates it from the recording's stored transcript — nothing is re-transcribed, and your speaker names are kept.")
+            }
         }
     }
+
+    private var noteIsMissing: Bool { app.missingNotes.contains(meeting.id) }
 
     private var failureBlock: some View {
         VStack(alignment: .leading, spacing: Tok.s3) {

@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-31-2026 11:23
-last_updated: 08-31-2026 15:45
+last_updated: 08-31-2026 16:05
 project: Minutes
 project_key: NOKEY
 tracking_system: file-system
@@ -99,11 +99,11 @@ development_status:
   7-3-metadata-provenance-in-the-note: done
   epic-7-retrospective: optional
 
-  epic-8: backlog
-  8-1-a-meeting-s-note-is-verified-against-the-folder: backlog
-  8-2-refresh-the-library-from-disk: backlog
-  8-3-delete-meetings-without-hunting-for-a-context-menu: backlog
-  8-4-see-and-curate-remembered-voices: backlog
-  8-5-elapsed-time-and-a-living-recording-indicator-in-the-menu-ba: backlog
-  8-6-say-what-writes-the-summaries-and-let-it-be-pinned: backlog
+  epic-8: in-progress
+  8-1-a-meeting-s-note-is-verified-against-the-folder: review
+  8-2-refresh-the-library-from-disk: review
+  8-3-delete-meetings-without-hunting-for-a-context-menu: review
+  8-4-see-and-curate-remembered-voices: review
+  8-5-elapsed-time-and-a-living-recording-indicator-in-the-menu-ba: review
+  8-6-say-what-writes-the-summaries-and-let-it-be-pinned: review
   epic-8-retrospective: optional

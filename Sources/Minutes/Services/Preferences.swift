@@ -25,6 +25,7 @@ final class Preferences: ObservableObject {
         static let fillerWords = "fillerWords"
         static let customWatchedApps = "customWatchedApps"
         static let showInDock = "showInDock"
+        static let metadataBackend = "metadataBackend"
     }
 
     /// Verified present in the live catalogue. Deliberately not the library's
@@ -50,6 +51,16 @@ final class Preferences: ObservableObject {
     /// Off by default: FR-1 makes this a menu bar tool, and `LSUIElement` in
     /// Info.plist starts it that way. The toggle overrides the activation policy at
     /// runtime rather than the plist, so it takes effect without a relaunch.
+    /// FR-52. `auto` means AD-12's original behaviour: use the on-device LLM when
+    /// it is available, otherwise the deterministic backend. `heuristic` pins the
+    /// deterministic one even when the LLM is available, because a reproducible
+    /// summary is sometimes the one you want.
+    enum MetadataBackendChoice: String, CaseIterable {
+        case auto, heuristic
+    }
+    @Published var metadataBackend: MetadataBackendChoice {
+        didSet { d.set(metadataBackend.rawValue, forKey: K.metadataBackend) }
+    }
     @Published var showInDock: Bool {
         didSet {
             d.set(showInDock, forKey: K.showInDock)
@@ -99,6 +110,8 @@ final class Preferences: ObservableObject {
         suppressedApps = d.stringArray(forKey: K.suppressedApps) ?? []
         keepAudio = d.object(forKey: K.keepAudio) as? Bool ?? true
         showInDock = d.object(forKey: K.showInDock) as? Bool ?? false
+        metadataBackend = (d.string(forKey: K.metadataBackend)
+            .flatMap(MetadataBackendChoice.init(rawValue:))) ?? .auto
         removeFillerWords = d.object(forKey: K.removeFiller) as? Bool ?? true
         fillerWords = d.stringArray(forKey: K.fillerWords) ?? FillerWords.defaults
         customWatchedApps = d.stringArray(forKey: K.customWatchedApps) ?? []

@@ -12,7 +12,14 @@ enum MenuBarIcon {
     /// `isAsking` wins over Idle: a detected meeting the user has not answered is
     /// the one thing the icon must not stay silent about, since the prompt itself
     /// can be suppressed by the system.
-    static func image(for state: AppState.SessionState, isAsking: Bool = false) -> NSImage {
+    ///
+    /// `pulsePhase` implements FR-50 by varying the Recording tint's alpha over a
+    /// four-phase cycle. It is deliberately a *variation on an already-legible
+    /// state*, never the carrier of it: FR-2's silhouette-and-tint rule still
+    /// distinguishes Recording, so the pulse survives a greyscale menu bar and a
+    /// colour-blind reader losing nothing (NFR-7).
+    static func image(for state: AppState.SessionState, isAsking: Bool = false,
+                      pulsePhase: Int = 0) -> NSImage {
         if isAsking, case .idle = state {
             return tinted("waveform.badge.exclamationmark", color: NSColor(Tok.brand))
         }
@@ -20,9 +27,21 @@ enum MenuBarIcon {
         case .idle:
             return template("waveform")
         case .recording:
-            return tinted("record.circle.fill", color: NSColor(Tok.recording))
+            return tinted("record.circle.fill",
+                          color: NSColor(Tok.recording).withAlphaComponent(pulseAlpha(pulsePhase)))
         case .transcribing:
             return tinted("ellipsis.circle", color: NSColor(Tok.transcribing))
+        }
+    }
+
+    /// Never dips far enough to read as "off" — a status light that blinks out
+    /// looks like a fault, and the ask was to animate it *slightly*.
+    static func pulseAlpha(_ phase: Int) -> CGFloat {
+        switch phase % 4 {
+        case 0:  return 1.0
+        case 1:  return 0.72
+        case 2:  return 0.5
+        default: return 0.72
         }
     }
 

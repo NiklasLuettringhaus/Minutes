@@ -175,22 +175,58 @@ final class SessionCoordinator: ObservableObject {
         await AppStateBridge.reloadMeetings()
     }
 
+    /// FR-40 (amended): one confirmed action over a selection, one reload at the
+    /// end rather than a reload per Meeting.
+    func delete(meetingIDs: [String], alsoNote: Bool) async {
+        let store = MeetingStore.shared
+        let folder = Preferences.shared.notesFolder()
+        for id in meetingIDs {
+            var noteURL: URL? = nil
+            if alsoNote, let m = try? await store.load(id: id), let f = m.noteFilename, let folder {
+                noteURL = folder.appendingPathComponent(f)
+            }
+            try? await store.delete(id: id, alsoDeleteNote: noteURL)
+        }
+        await AppStateBridge.reloadMeetings()
+    }
+
+    /// FR-53: re-render a Note that is recorded but absent, from the stored record.
+    /// No transcription, no diarization, and nothing parsed out of any file — the
+    /// record is the source of truth and the Note is a projection (AD-9).
+    func rewriteNote(meetingID: String) async {
+        await Pipeline.shared.rewriteNote(meetingID: meetingID)
+        await AppStateBridge.reloadMeetings()
+    }
+
+    /// FR-54: an explicit resynchronisation with what is on disk. Changes what is
+    /// displayed, never what is stored.
+    func refreshLibrary() async {
+        await AppStateBridge.reloadMeetings()
+    }
+
     // MARK: - Elapsed-time ticking
 
     private func startTicking() {
         tickTimer?.invalidate()
-        // Drives the menu's elapsed time, which must update at least once per
-        // second while the menu is open (FR-4).
-        tickTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        // One timer drives three things: the menu's elapsed time (FR-4), the menu
+        // bar's elapsed time (FR-49) and the Recording pulse (FR-50). 0.5s gives a
+        // 2s pulse cycle over four phases — slow enough to read as a status light —
+        // while still updating elapsed time more often than the once-per-second
+        // FR-4 requires. Deliberately not four separate timers, and deliberately
+        // not an animation: this stops when Recording stops (NFR-3).
+        tickTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, let cap = self.capture, let started = self.startedAt else { return }
+                AppState.shared.advancePulse()
                 AppState.shared.setSessionState(.recording(since: started, degraded: cap.isDegraded))
             }
         }
+        tickTimer?.tolerance = 0.1
     }
 
     private func stopTicking() {
         tickTimer?.invalidate(); tickTimer = nil
+        AppState.shared.resetPulse()
     }
 
     /// Live capture level, for the self-test and the Test Playground meters.

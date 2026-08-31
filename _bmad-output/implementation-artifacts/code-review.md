@@ -106,3 +106,50 @@ These are implemented and compile, but cannot be exercised autonomously:
    maths is unit-tested, but the 0.45 threshold is uncalibrated against real
    voices. Deliberately conservative: a wrong automatic name is worse than an
    anonymous one.
+
+---
+
+# Code Review — Epic 8 (increment 2)
+
+**Date:** 2026-08-31 · **Scope:** FR-49 to FR-54 and the FR-40 amendment · **Stories:** 8.1-8.6
+
+Reviewed inline against the six stories' acceptance criteria and constraints. 67 tests pass (15 new). Findings below are the ones that survived checking; each was fixed before commit unless marked otherwise.
+
+## Findings
+
+**1. Sticky destructive option — fixed.**
+`deleteNoteToo` moved from per-invocation state to a toolbar checkbox, so it persisted across selections. A user who ticked "also delete notes" once would have it silently applied to every later deletion. The confirmation always states the consequence, so this was not silent *at the moment of deletion* — but it widened a destructive default without the user revisiting it. Now reset after each confirmed delete.
+
+**2. `Reveal note` on a file that does not exist — fixed as part of 8.1.**
+The detail pane offered "Reveal note" whenever `noteFilename` was set, which for the five meetings with absent notes would have opened an empty Finder window. Split into "Reveal note" and "Rewrite note" on the FR-53 condition.
+
+**3. Right-click delete outside the selection — handled.**
+With multi-select, right-clicking an unselected row and choosing Delete is ambiguous: does it act on the row or the selection? It now replaces the selection with that row, matching Finder. Worth restating because the alternative — deleting a multi-row selection the user cannot see from the row they clicked — is the dangerous reading.
+
+## Verified against real state
+
+The two defects that motivated stories 8.1 and 8.2 are reproduced and now visible rather than silent:
+
+```
+notes on disk: 3
+meetings whose note is absent: 5
+    20260831-115827-wbbx -> 2026-08-31 1158 Meeting-31-August-11-58.md
+    20260831-133820-00gq -> 2026-08-31 1338 Pricing-Page.md
+    20260831-134017-anb2 -> 2026-08-31 1340 Pricing-Page.md
+    20260831-134640-669r -> 2026-08-31 1346 Pricing-Page.md
+    20260831-135902-7fen -> 2026-08-31 1359 Page-Redesigned-Together.md
+```
+
+Those five now render as **Note missing** with a **Rewrite note** action, instead of claiming to be complete. `--doctor` reports 8 readable, 0 unreadable.
+
+Also observed during the run: the interrupted 15:29 recording resumed on launch and completed to `2026-08-31 1529 Forever-And-Ever.md`, exercising the resume path added just before this epic.
+
+## Not verified — needs the user's eyes
+
+**FR-49's menu bar text.** `MenuBarExtra`'s label is given an `HStack { Image; Text }`. This is the idiomatic construction and is widely used, but SwiftUI's menu bar label supports a restricted view set and I cannot see the menu bar from here. If the timer does not appear next to the icon while recording, the fallback is to composite the icon and the time into a single `NSImage`, resolving `NSColor.labelColor` against the current menu bar appearance on each redraw. Recorded as a known unknown rather than asserted as working.
+
+**§13 Q10 — pulse cost over a long Session.** The 0.5s tick publishes `AppState`, re-rendering the label (and the menu, when open) at 2 Hz for the whole Session. Bounded and stoppable by construction, and unit-tested for shape, but not profiled over two hours. If it breaches NFR-3 the epic's own constraint applies: degrade to a discrete two-frame indicator.
+
+## Requirements still resting on the same evidence as before
+
+`FR-51` makes §13 Q4 (does voice matching hold up across recordings?) answerable by observation for the first time — the profile set is now inspectable, with sample counts. The 0.45 threshold remains uncalibrated; that has not changed.

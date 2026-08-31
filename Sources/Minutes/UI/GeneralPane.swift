@@ -10,6 +10,10 @@ struct GeneralPane: View {
     @State private var launchAtLogin = LoginItem.isEnabled
     @State private var loginError: String?
     @State private var audioBytes: Int64 = 0
+    @State private var voices: [SpeakerDirectory.Summary] = []
+    @State private var renamingVoice: String?
+    @State private var draftVoiceName = ""
+    @State private var confirmForgetAll = false
 
     var body: some View {
         PaneScaffold(title: "General", subtitle: "Where notes go, what is kept, and how Minutes starts.") {
@@ -132,16 +136,35 @@ struct GeneralPane: View {
                 }
             }
 
+            // FR-51. This section used to be one paragraph and a single
+            // destructive "Forget all": the app remembered voices and gave the user
+            // no way to see what it thought it knew, so a wrong match could only be
+            // corrected by recording a meeting that happened to contain that voice.
             VStack(alignment: .leading, spacing: 0) {
-                SectionHeading(text: "Remembered voices")
+                SectionHeading(text: "Remembered voices", trailing: AnyView(
+                    Group {
+                        if !voices.isEmpty {
+                            Button("Forget all") { confirmForgetAll = true }
+                                .buttonStyle(.borderless).font(.caption)
+                        }
+                    }
+                ))
                 Card {
                     VStack(alignment: .leading, spacing: Tok.s3) {
                         Text("When you rename a speaker, Minutes remembers that voice so it arrives named next time. This stays on this Mac and is never sent anywhere.")
                             .font(.caption).foregroundStyle(Tok.textSecondary)
-                        Button("Forget all remembered voices") {
-                            Task { await SpeakerDirectory.shared.forgetAll() }
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        if voices.isEmpty {
+                            Divider()
+                            Text("No voices remembered yet. Rename a speaker in a meeting and it will appear here.")
+                                .font(.caption).foregroundStyle(Tok.textSecondary)
+                        } else {
+                            ForEach(voices) { v in
+                                Divider()
+                                voiceRow(v)
+                            }
                         }
-                        .buttonStyle(.borderless).font(.caption)
                     }
                 }
             }
@@ -149,7 +172,80 @@ struct GeneralPane: View {
         .onAppear {
             launchAtLogin = LoginItem.isEnabled
             Task { audioBytes = await MeetingStore.shared.audioBytes() }
+            reloadVoices()
         }
+        .alert("Forget every remembered voice?", isPresented: $confirmForgetAll) {
+            Button("Cancel", role: .cancel) { }
+            Button("Forget all", role: .destructive) {
+                Task { await SpeakerDirectory.shared.forgetAll(); reloadVoices() }
+            }
+        } message: {
+            Text("\(voices.count) \(voices.count == 1 ? "voice" : "voices") will be forgotten. Speakers in meetings already written keep their names; future meetings will start from anonymous labels again.")
+        }
+    }
+
+    // MARK: - Remembered voices (FR-51)
+
+    @ViewBuilder
+    private func voiceRow(_ v: SpeakerDirectory.Summary) -> some View {
+        HStack(spacing: Tok.s4) {
+            Image(systemName: "waveform.circle")
+                .foregroundStyle(Tok.brand).frame(width: 20)
+
+            if renamingVoice == v.name {
+                TextField("Name", text: $draftVoiceName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 180)
+                    .onSubmit { commitRename(from: v.name) }
+                Button("Save") { commitRename(from: v.name) }
+                    .buttonStyle(.borderless).font(.caption)
+                Button("Cancel") { renamingVoice = nil }
+                    .buttonStyle(.borderless).font(.caption)
+                    .foregroundStyle(Tok.textSecondary)
+            } else {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(v.name).font(.body)
+                    // Provenance, so a match is judgeable: a one-sample voice is a
+                    // guess, a twelve-sample voice is established.
+                    Text("\(v.samples) \(v.samples == 1 ? "meeting" : "meetings") · last heard \(relative(v.updatedAt))")
+                        .font(.caption).foregroundStyle(Tok.textSecondary)
+                }
+                Spacer()
+                Button("Rename") {
+                    draftVoiceName = v.name
+                    renamingVoice = v.name
+                }
+                .buttonStyle(.borderless).font(.caption)
+                Button {
+                    Task { await SpeakerDirectory.shared.forget(name: v.name); reloadVoices() }
+                } label: {
+                    Image(systemName: "minus.circle").font(.caption)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Tok.textSecondary)
+                .help("Forget \(v.name)")
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func commitRename(from old: String) {
+        let new = draftVoiceName
+        renamingVoice = nil
+        Task {
+            await SpeakerDirectory.shared.rename(from: old, to: new)
+            reloadVoices()
+        }
+    }
+
+    private func reloadVoices() {
+        Task { voices = await SpeakerDirectory.shared.summaries() }
+    }
+
+    private func relative(_ d: Date) -> String {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        return f.localizedString(for: d, relativeTo: Date())
     }
 
     private func choose() {
