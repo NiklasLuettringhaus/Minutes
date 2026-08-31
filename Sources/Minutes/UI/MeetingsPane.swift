@@ -77,11 +77,18 @@ struct MeetingsPane: View {
                     Image(systemName: "exclamationmark.triangle.fill").font(.caption2)
                     Text("Failed").font(.caption2)
                 }.foregroundStyle(Tok.recording)
-            } else if !m.isComplete {
+            } else if app.inFlight.contains(m.id) {
+                // A spinner now means work is genuinely running, not merely that
+                // the record stopped short of `written`.
                 HStack(spacing: 4) {
                     ProgressView().controlSize(.small).scaleEffect(0.6)
                     Text(m.stage.displayName).font(.caption2).foregroundStyle(Tok.transcribing)
                 }
+            } else if !m.isComplete {
+                HStack(spacing: 4) {
+                    Image(systemName: "pause.circle").font(.caption2)
+                    Text("Interrupted").font(.caption2)
+                }.foregroundStyle(Tok.textSecondary)
             } else {
                 HStack(spacing: Tok.s2) {
                     ForEach(m.speakers.prefix(4), id: \.raw) { s in
@@ -106,8 +113,8 @@ struct MeetingsPane: View {
                     NSWorkspace.shared.open(folder.appendingPathComponent(f))
                 }
             }
-            if m.hasFailed {
-                Button("Retry transcription") {
+            if m.hasFailed || (!m.isComplete && !app.inFlight.contains(m.id)) {
+                Button(m.hasFailed ? "Retry transcription" : "Finish transcription") {
                     Task { await SessionCoordinator.shared.retry(meetingID: m.id) }
                 }
             }
@@ -312,8 +319,14 @@ struct MeetingDetail: View {
             SectionHeading(text: "Transcript")
             Card {
                 if meeting.utterances.isEmpty {
-                    Text("No speech was transcribed.").font(.caption)
+                    // An empty transcript has two very different causes, and saying
+                    // "no speech" for the second one is simply wrong.
+                    Text(meeting.stage < .transcribed
+                         ? "Not transcribed yet — this recording was interrupted before it finished."
+                         : "No speech was transcribed.")
+                        .font(.caption)
                         .foregroundStyle(Tok.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else {
                     VStack(alignment: .leading, spacing: Tok.s4) {
                         ForEach(blocks(), id: \.id) { b in

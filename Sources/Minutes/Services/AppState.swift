@@ -25,6 +25,12 @@ final class AppState: ObservableObject {
     @Published var lastError: MinutesError?
     /// A meeting the user has been offered but not yet answered (FR-12).
     @Published var pendingPrompt: DetectedMeeting?
+    /// Meetings actually in the pipeline right now — queued or running.
+    ///
+    /// The Meetings list used to infer "in progress" from `stage != .written`,
+    /// which is a claim about the record, not about the work. A session interrupted
+    /// by a quit therefore span a progress spinner forever with nothing behind it.
+    @Published private(set) var inFlight: Set<String> = []
     @Published private(set) var micAuthorized: Bool = false
     @Published private(set) var audioBytes: Int64 = 0
 
@@ -34,6 +40,7 @@ final class AppState: ObservableObject {
     func setSessionState(_ s: SessionState) { sessionState = s }
     func setMeetings(_ m: [Meeting]) { meetings = m }
     func setMicAuthorized(_ b: Bool) { micAuthorized = b }
+    func setInFlight(_ ids: Set<String>) { inFlight = ids }
     func setAudioBytes(_ n: Int64) { audioBytes = n }
 
     var elapsed: TimeInterval {
@@ -61,6 +68,10 @@ enum AppStateBridge {
     }
     static func notesFolder() async -> URL? {
         await MainActor.run { Preferences.shared.notesFolder() }
+    }
+
+    static func setInFlight(_ ids: Set<String>) async {
+        await MainActor.run { AppState.shared.setInFlight(ids) }
     }
 
     static func setProcessing(_ id: String?) async {

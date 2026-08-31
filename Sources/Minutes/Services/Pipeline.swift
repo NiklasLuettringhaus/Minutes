@@ -22,14 +22,44 @@ actor Pipeline {
     private let llm = FoundationModelsBackend()
 
     private var queue: [String] = []
+    private var current: String?
     private var isProcessing = false
 
     /// Queued serially: a Session may be recorded while another Meeting processes,
     /// but two model inferences never run concurrently (AD-14).
     func enqueue(meetingID: String) {
-        guard !queue.contains(meetingID) else { return }
+        guard !queue.contains(meetingID), current != meetingID else { return }
         queue.append(meetingID)
+        Task { await publishInFlight() }
         Task { await drain() }
+    }
+
+    /// Restarts anything a quit or crash left mid-pipeline (AD-8).
+    ///
+    /// Without this the staged design was only *theoretically* resumable: an
+    /// interrupted meeting sat at its last completed stage with no failure recorded
+    /// and nothing to advance it, so it read as permanently in-progress. A record
+    /// whose audio is already gone cannot be resumed, so it is failed explicitly
+    /// rather than left looking live.
+    func resumeInterrupted() async {
+        let store = MeetingStore.shared
+        for m in await store.loadAll() where !m.isComplete && !m.hasFailed {
+            if await store.hasAudio(id: m.id) {
+                Log.pipeline.info("resuming interrupted meeting \(m.id, privacy: .public)")
+                enqueue(meetingID: m.id)
+            } else {
+                _ = try? await store.update(id: m.id) {
+                    $0.failure = "Interrupted before the note was written, and the audio is no longer on disk."
+                }
+            }
+        }
+        await AppStateBridge.reloadMeetings()
+    }
+
+    private func publishInFlight() async {
+        var ids = Set(queue)
+        if let current { ids.insert(current) }
+        await AppStateBridge.setInFlight(ids)
     }
 
     var pending: Int { queue.count }
@@ -40,8 +70,12 @@ actor Pipeline {
         defer { isProcessing = false }
         while !queue.isEmpty {
             let id = queue.removeFirst()
+            current = id
+            await publishInFlight()
             await AppStateBridge.setProcessing(id)
             await run(meetingID: id)
+            current = nil
+            await publishInFlight()
         }
         await AppStateBridge.setProcessing(nil)
         // Release models once the queue drains (AD-14).

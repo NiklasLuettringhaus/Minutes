@@ -71,7 +71,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ModelCatalog.shared.refreshDownloadStates()
         DetectionService.shared.start()
 
-        Task { await AppStateBridge.reloadMeetings() }
+        Task {
+            await AppStateBridge.reloadMeetings()
+            // A meeting left mid-pipeline by a quit is picked up here rather than
+            // stranded at its last completed stage (AD-8).
+            await Pipeline.shared.resumeInterrupted()
+        }
 
         // First run opens the window so the user is guided to a working state
         // (FR-41). Afterwards it stays out of the way.

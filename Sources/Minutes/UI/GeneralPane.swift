@@ -5,6 +5,8 @@ import AppKit
 struct GeneralPane: View {
     @EnvironmentObject var app: AppState
     @EnvironmentObject var prefs: Preferences
+    /// Read on appearance, not once at init: the value can change outside the app
+    /// (System Settings, or the plist being removed).
     @State private var launchAtLogin = LoginItem.isEnabled
     @State private var loginError: String?
     @State private var audioBytes: Int64 = 0
@@ -116,6 +118,12 @@ struct GeneralPane: View {
                         if !LoginItem.isSupported {
                             Text("Available once Minutes is running from an app bundle.")
                                 .font(.caption).foregroundStyle(Tok.textSecondary)
+                        } else if LoginItem.usesLaunchAgent {
+                            // Says which mechanism and what to expect, rather than
+                            // silently behaving differently from the modern one.
+                            Text("Takes effect at your next login. This build is ad-hoc signed, so Minutes registers a login item in your own Library rather than appearing under Login Items in System Settings.")
+                                .font(.caption).foregroundStyle(Tok.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         if let loginError {
                             Text(loginError).font(.caption).foregroundStyle(Tok.recording)

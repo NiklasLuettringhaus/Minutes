@@ -55,6 +55,12 @@ enum Doctor {
         print("  downloaded:         \(downloaded)")
         print("  model store:        \(ModelStorage.base.path)")
 
+        section("Startup")
+        print("  bundle path:        \(Bundle.main.bundlePath)")
+        print("  SMAppService:       \(LoginItem.statusDescription)")
+        print("  toggle available:   \(LoginItem.isSupported)")
+        print("  registered:         \(LoginItem.isEnabled)")
+
         section("Output")
         let folder = await MainActor.run { Preferences.shared.notesFolder() }
         print("  notes folder:       \(folder?.path ?? "UNAVAILABLE")")
