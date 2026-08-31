@@ -1,0 +1,100 @@
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created, ready for development
+#   - in-progress: Developer actively working on implementation
+#   - review: Implementation complete, ready for review
+#   - done: Story completed
+
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+
+# Action Item Status:
+#   - open: Committed during a retrospective, not yet addressed
+#   - in-progress: Actively being worked on
+#   - done: Completed
+
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when its first story starts (via build's sprint sync)
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates the next story after the previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; the status view surfaces open ones
+generated: 08-31-2026 11:23
+last_updated: 08-31-2026 11:23
+project: Minutes
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+development_status:
+  epic-1: in-progress
+  1-1-project-scaffold-build-and-ad-hoc-signing-pipeline: done
+  1-2-menu-bar-presence-and-three-state-icon: review
+  1-3-start-and-stop-a-session-from-the-menu: done
+  1-4-microphone-stream-capture: done
+  1-5-system-audio-stream-capture-via-coreaudio-tap: done
+  1-6-meeting-record-store-and-staged-pipeline: done
+  1-7-local-transcription-with-whisperkit: done
+  1-8-local-speaker-attribution-and-chronological-merge: done
+  1-9-heuristic-metadata-backend: done
+  1-10-markdown-note-output: done
+  epic-1-retrospective: optional
+
+  epic-2: in-progress
+  2-1-main-window-shell-and-sidebar-navigation: review
+  2-2-model-catalogue-and-selection: review
+  2-3-model-download-with-determinate-progress: review
+  2-4-notes-folder-selection: review
+  2-5-first-run-setup-and-permission-requests: review
+  2-6-setup-checklist-with-live-derived-state: review
+  2-7-permission-state-visibility: review
+  2-8-test-playground: review
+  2-9-re-run-onboarding: review
+  epic-2-retrospective: optional
+
+  epic-3: in-progress
+  3-1-audio-process-enumeration-and-watched-app-prefix-matching: review
+  3-2-debounced-detection-prompt: review
+  3-3-accepting-a-prompt-starts-a-session: review
+  3-4-auto-stop-when-the-meeting-ends: review
+  3-5-suppression-per-app-and-globally: review
+  epic-3-retrospective: optional
+
+  epic-4: in-progress
+  4-1-diarize-the-system-stream: done
+  4-2-rename-a-speaker-label: review
+  4-3-speaker-profiles-across-meetings: review
+  epic-4-retrospective: optional
+
+  epic-5: in-progress
+  5-1-meetings-list: review
+  5-2-meeting-detail-view: review
+  5-3-edit-title-and-speaker-labels-from-the-library: review
+  5-4-retry-a-failed-transcription: review
+  5-5-delete-a-meeting: review
+  epic-5-retrospective: optional
+
+  epic-6: in-progress
+  6-1-graceful-degradation-to-mic-only: review
+  6-2-survive-output-device-changes-mid-session: review
+  6-3-long-session-durability-and-crash-safe-audio: review
+  6-4-transcription-failure-retains-audio: review
+  6-5-serial-processing-queue: review
+  6-6-session-status-and-window-access-in-the-menu: review
+  6-7-audio-retention-control: review
+  6-8-launch-at-login: review
+  epic-6-retrospective: optional
+
+  epic-7: in-progress
+  7-1-foundation-models-backend-behind-an-availability-check: review
+  7-2-decisions-and-action-items-extraction: review
+  7-3-metadata-provenance-in-the-note: done
+  epic-7-retrospective: optional

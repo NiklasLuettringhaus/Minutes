@@ -1,0 +1,230 @@
+<title>Minutes — Getting Started</title>
+<style>
+  :root{
+    --window:#F2F1F0; --card:#FFFFFF; --sidebar:#EDECEB;
+    --text:#1D1D1F; --text2:#86868B; --sep:#D8D7D5;
+    --accent:#12A594; --accent-hi:#0E8C7D; --rec:#E5484D; --busy:#F5A524;
+    --r-sm:4px; --r-md:6px; --r-lg:10px;
+    --s3:8px; --s4:12px; --s5:16px; --s6:20px; --s7:24px;
+    --sysfont:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --window:#1E1E1E; --card:#2A2A2C; --sidebar:#252527;
+      --text:#F5F5F7; --text2:#98989D; --sep:#3A3A3C;
+    }
+  }
+  :root[data-theme="dark"]{
+    --window:#1E1E1E; --card:#2A2A2C; --sidebar:#252527;
+    --text:#F5F5F7; --text2:#98989D; --sep:#3A3A3C;
+  }
+  body{margin:0;background:#8E8E93;font-family:var(--sysfont);color:var(--text);padding:28px;}
+  .wrap{max-width:1080px;margin:0 auto;}
+  .caption{color:#fff;font-size:12px;margin:0 0 10px 2px;opacity:.9}
+  .win{display:grid;grid-template-columns:212px 1fr;background:var(--window);
+    border-radius:11px;overflow:hidden;box-shadow:0 20px 46px rgba(0,0,0,.34);margin-bottom:30px}
+  /* --- sidebar --- */
+  .sb{background:var(--sidebar);border-right:1px solid var(--sep);padding:0 0 var(--s5)}
+  .tl{display:flex;gap:8px;padding:13px var(--s5) 18px}
+  .tl i{width:11px;height:11px;border-radius:50%;display:block}
+  .tl i:nth-child(1){background:#FF5F57}.tl i:nth-child(2){background:#FEBC2E}.tl i:nth-child(3){background:#28C840}
+  .grp{color:var(--text2);font-size:10.5px;font-weight:600;letter-spacing:.55px;
+    text-transform:uppercase;padding:14px var(--s5) 5px}
+  .nav{display:flex;align-items:center;gap:8px;margin:1px 8px;padding:5px 8px;
+    border-radius:var(--r-md);font-size:13px;color:var(--text)}
+  .nav.on{background:rgba(0,0,0,.09);font-weight:590}
+  @media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .nav.on{background:rgba(255,255,255,.13)}}
+  .nav svg{width:14px;height:14px;flex:0 0 14px;color:var(--text2)}
+  .nav.on svg{color:var(--accent)}
+  /* --- detail --- */
+  .dt{padding:var(--s6) var(--s7) var(--s7)}
+  h1{font-size:25px;margin:2px 0 3px;letter-spacing:-.35px}
+  .sub{color:var(--text2);font-size:12.5px;margin:0 0 var(--s6)}
+  h2{font-size:13px;margin:0 0 var(--s3) 2px;font-weight:600}
+  .card{background:var(--card);border-radius:var(--r-lg);padding:2px var(--s5);margin-bottom:var(--s5)}
+  .card.pad{padding:var(--s5)}
+  /* --- checklist row --- */
+  .row{display:flex;align-items:center;gap:var(--s4);padding:11px 0;border-bottom:1px solid var(--sep)}
+  .row:last-child{border-bottom:0}
+  .row.done{opacity:.55}
+  .ind{flex:0 0 19px;height:19px;display:grid;place-items:center}
+  .ind svg{width:19px;height:19px;color:var(--accent)}
+  .ord{width:19px;height:19px;border:1.4px solid var(--sep);border-radius:50%;
+    display:grid;place-items:center;font-size:10.5px;color:var(--text2);font-variant-numeric:tabular-nums}
+  .txt{flex:1;min-width:0}
+  .t{font-size:12.8px;font-weight:530;line-height:1.35}
+  .row.done .t{color:var(--text2);font-weight:450}
+  .st{font-size:11.2px;color:var(--text2);line-height:1.4;margin-top:1px}
+  .pill{flex:0 0 auto;display:flex;align-items:center;gap:4px;background:rgba(18,165,148,.15);
+    color:var(--accent);border-radius:9999px;padding:3px 10px;font-size:11px;font-weight:560}
+  .pill svg{width:10px;height:10px}
+  .btn{flex:0 0 auto;background:transparent;border:1px solid rgba(18,165,148,.5);color:var(--accent);
+    border-radius:var(--r-md);padding:4px 11px;font-size:11.5px;font-weight:550;font-family:inherit}
+  .btn.opt{border-color:var(--sep);color:var(--text2)}
+  .tag{font-size:10px;color:var(--text2);font-weight:450}
+  /* --- header w/ action --- */
+  .ch{display:flex;align-items:center;justify-content:space-between;margin-bottom:var(--s3);padding:0 2px}
+  .ch h2{margin:0}
+  .ghost{background:rgba(0,0,0,.055);border:0;color:var(--text2);border-radius:var(--r-sm);
+    padding:3px 9px;font-size:11px;font-family:inherit;display:flex;align-items:center;gap:5px}
+  @media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .ghost{background:rgba(255,255,255,.09)}}
+  .ok{display:flex;align-items:center;gap:6px;color:var(--accent);font-size:11.5px;font-weight:550;padding:9px 0 3px}
+  .ok svg{width:13px;height:13px}
+  /* --- playground --- */
+  .prime{width:100%;background:var(--accent);color:#fff;border:0;border-radius:var(--r-md);
+    padding:9px;font-size:13px;font-weight:590;font-family:inherit;display:flex;
+    align-items:center;justify-content:center;gap:7px;margin:var(--s4) 0}
+  .prime svg{width:14px;height:14px}
+  .hint{background:rgba(245,165,36,.11);color:#8a5a08;border-radius:var(--r-md);
+    padding:7px 11px;font-size:11.4px;display:flex;gap:7px;align-items:flex-start}
+  @media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .hint{color:#F5A524}}
+  .hint svg{width:12px;height:12px;flex:0 0 12px;margin-top:1px}
+  .res{border:1px solid var(--sep);border-radius:var(--r-md);padding:var(--s4);font-size:12px}
+  .meters{display:grid;gap:7px;margin:var(--s4) 0 0}
+  .m{display:flex;align-items:center;gap:9px;font-size:11px;color:var(--text2)}
+  .m b{flex:0 0 74px;font-weight:500;color:var(--text)}
+  .bar{flex:1;height:5px;background:var(--sep);border-radius:9999px;overflow:hidden}
+  .bar i{display:block;height:100%;border-radius:9999px;background:var(--accent)}
+  .chk{color:var(--accent);font-weight:600;font-variant-numeric:tabular-nums}
+  .bad{color:var(--rec);font-weight:600}
+  .quote{font-size:12.4px;line-height:1.5;padding:var(--s3) 0 var(--s4);color:var(--text)}
+  .facts{display:flex;flex-wrap:wrap;gap:6px;border-top:1px solid var(--sep);padding-top:var(--s3)}
+  .f{background:rgba(0,0,0,.05);border-radius:var(--r-sm);padding:3px 8px;font-size:10.8px;color:var(--text2);
+     font-variant-numeric:tabular-nums}
+  @media(prefers-color-scheme:dark){:root:not([data-theme="light"]) .f{background:rgba(255,255,255,.08)}}
+  .f.good{background:rgba(18,165,148,.14);color:var(--accent)}
+  .mb{display:flex;align-items:center;gap:5px;background:#111;color:#fff;border-radius:5px;
+    padding:3px 9px;font-size:11px;width:fit-content;margin-bottom:9px}
+  .mb svg{width:13px;height:13px}
+  .note{color:#fff;font-size:11.5px;opacity:.85;max-width:760px;line-height:1.55;margin:0 0 26px 2px}
+</style>
+<div class="wrap">
+
+<p class="note"><strong>Minutes — Getting Started pane.</strong> Two states of the same pane, following the FluidVoice setup pattern:
+checklist rows carry a state indicator, a title, a one-line reason, and either a dim <em>Done</em> badge or a live action.
+Satisfied rows recede. Below, the Test Playground — extended past the reference to report per-stream audio presence and
+measured throughput, because macOS offers no way to <em>query</em> system-audio permission.</p>
+
+<p class="caption">① Mid-setup — two rows outstanding. The "System audio" row is optional and explains the trade-off rather than reading as a failure.</p>
+<div class="win">
+  <div class="sb">
+    <div class="tl"><i></i><i></i><i></i></div>
+    <div class="grp">Setup</div>
+    <div class="nav on"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5 1.5 5.2v7.3h4.2V9.1h4.6v3.4h4.2V5.2z"/></svg> Getting Started</div>
+    <div class="grp">Configure</div>
+    <div class="nav"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 6h1.4v4H2zm3 -2.6h1.4v9.2H5zm3 -1.9h1.4v13H8zm3 2.4h1.4v8.2H11zm3 2.1h1.4v4H14z"/></svg> Transcription</div>
+    <div class="nav"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="2.1"/><path d="M8 2.2a5.8 5.8 0 0 0-5.8 5.8h1.6A4.2 4.2 0 0 1 8 3.8z"/></svg> Detection</div>
+    <div class="nav"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M7.2 1.5h1.6l.3 1.8 1.5.6 1.5-1 1.1 1.1-1 1.5.6 1.5 1.8.3v1.6l-1.8.3-.6 1.5 1 1.5-1.1 1.1-1.5-1-1.5.6-.3 1.8H7.2l-.3-1.8-1.5-.6-1.5 1-1.1-1.1 1-1.5-.6-1.5-1.8-.3V7.2l1.8-.3.6-1.5-1-1.5 1.1-1.1 1.5 1 1.5-.6z"/></svg> General</div>
+    <div class="grp">Activity</div>
+    <div class="nav"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 3h11v1.5h-11zm0 4h11v1.5h-11zm0 4h7v1.5h-7z"/></svg> Meetings</div>
+  </div>
+  <div class="dt">
+    <h1>Getting Started</h1>
+    <p class="sub">Records your meetings, transcribes them on this Mac, and writes Markdown.</p>
+
+    <div class="ch">
+      <h2>Quick Setup</h2>
+      <button class="ghost">↺ Run Onboarding Again</button>
+    </div>
+    <div class="card">
+      <div class="row done">
+        <div class="ind"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 1.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8m3.9 6.3-4.7 4.8a.9.9 0 0 1-1.3 0L5.9 10.6a.9.9 0 0 1 1.3-1.3l1.4 1.4 4.1-4.1a.9.9 0 0 1 1.2 1.3"/></svg></div>
+        <div class="txt"><div class="t">Transcription model ready</div>
+          <div class="st">Whisper large-v3-turbo is downloaded and loaded on the Neural Engine.</div></div>
+        <div class="pill"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M2 6.4 4.6 9 10 3.3"/></svg> Done</div>
+      </div>
+      <div class="row done">
+        <div class="ind"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 1.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8m3.9 6.3-4.7 4.8a.9.9 0 0 1-1.3 0L5.9 10.6a.9.9 0 0 1 1.3-1.3l1.4 1.4 4.1-4.1a.9.9 0 0 1 1.2 1.3"/></svg></div>
+        <div class="txt"><div class="t">Microphone access</div>
+          <div class="st">Needed to record your side of the conversation.</div></div>
+        <div class="pill"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M2 6.4 4.6 9 10 3.3"/></svg> Done</div>
+      </div>
+      <div class="row">
+        <div class="ind"><div class="ord">3</div></div>
+        <div class="txt"><div class="t">System audio capture <span class="tag">· optional</span></div>
+          <div class="st">Captures what the other people say. macOS asks the first time you record — without it, Minutes records only your side.</div></div>
+        <button class="btn">Run Test →</button>
+      </div>
+      <div class="row">
+        <div class="ind"><div class="ord">4</div></div>
+        <div class="txt"><div class="t">Notes folder</div>
+          <div class="st">Where the Markdown file for each meeting is written.</div></div>
+        <button class="btn">Choose Folder…</button>
+      </div>
+      <div class="row">
+        <div class="ind"><div class="ord">5</div></div>
+        <div class="txt"><div class="t">Test your setup <span class="tag">· optional</span></div>
+          <div class="st">Record five seconds and confirm the whole chain works before a real meeting.</div></div>
+        <button class="btn opt">Run Test →</button>
+      </div>
+    </div>
+
+    <h2>Test Playground</h2>
+    <div class="card pad">
+      <div class="hint"><svg viewBox="0 0 12 12" fill="currentColor"><path d="M6 .8 11.5 10.5H.5z"/></svg>
+        <span>Play something — a video or music — so Minutes can check it hears system audio.</span></div>
+      <button class="prime"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 10.4a2.6 2.6 0 0 0 2.6-2.6V3.6a2.6 2.6 0 1 0-5.2 0v4.2A2.6 2.6 0 0 0 8 10.4"/><path d="M12.4 7.4v.4a4.4 4.4 0 0 1-8.8 0v-.4H2.2v.4a5.8 5.8 0 0 0 5.1 5.7v1.4H5.6v1.4h4.8v-1.4H8.7v-1.4a5.8 5.8 0 0 0 5.1-5.7v-.4z"/></svg> Start Test</button>
+      <div class="meters">
+        <div class="m"><b>Microphone</b><div class="bar"><i style="width:62%"></i></div><span class="chk">✓</span></div>
+        <div class="m"><b>System audio</b><div class="bar"><i style="width:0%"></i></div><span class="bad">not tested</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<p class="caption">② After a successful test — every row satisfied, and the result reports throughput measured on this machine rather than a generic claim.</p>
+<div class="win" data-theme="dark">
+  <div class="sb">
+    <div class="tl"><i></i><i></i><i></i></div>
+    <div class="grp">Setup</div>
+    <div class="nav on"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.5 1.5 5.2v7.3h4.2V9.1h4.6v3.4h4.2V5.2z"/></svg> Getting Started</div>
+    <div class="grp">Configure</div>
+    <div class="nav"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 6h1.4v4H2zm3 -2.6h1.4v9.2H5zm3 -1.9h1.4v13H8zm3 2.4h1.4v8.2H11zm3 2.1h1.4v4H14z"/></svg> Transcription</div>
+    <div class="nav"><svg viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="2.1"/><path d="M8 2.2a5.8 5.8 0 0 0-5.8 5.8h1.6A4.2 4.2 0 0 1 8 3.8z"/></svg> Detection</div>
+    <div class="nav"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M7.2 1.5h1.6l.3 1.8 1.5.6 1.5-1 1.1 1.1-1 1.5.6 1.5 1.8.3v1.6l-1.8.3-.6 1.5 1 1.5-1.1 1.1-1.5-1-1.5.6-.3 1.8H7.2l-.3-1.8-1.5-.6-1.5 1-1.1-1.1 1-1.5-.6-1.5-1.8-.3V7.2l1.8-.3.6-1.5-1-1.5 1.1-1.1 1.5 1 1.5-.6z"/></svg> General</div>
+    <div class="grp">Activity</div>
+    <div class="nav"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 3h11v1.5h-11zm0 4h11v1.5h-11zm0 4h7v1.5h-7z"/></svg> Meetings</div>
+  </div>
+  <div class="dt">
+    <div class="mb"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M2 6h1.4v4H2zm3 -2.6h1.4v9.2H5zm3 -1.9h1.4v13H8zm3 2.4h1.4v8.2H11zm3 2.1h1.4v4H14z"/></svg> Minutes · Idle</div>
+    <h1>Getting Started</h1>
+    <p class="sub">Records your meetings, transcribes them on this Mac, and writes Markdown.</p>
+    <div class="ch"><h2>Quick Setup</h2><button class="ghost">↺ Run Onboarding Again</button></div>
+    <div class="card">
+      <div class="row done"><div class="ind"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 1.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8m3.9 6.3-4.7 4.8a.9.9 0 0 1-1.3 0L5.9 10.6a.9.9 0 0 1 1.3-1.3l1.4 1.4 4.1-4.1a.9.9 0 0 1 1.2 1.3"/></svg></div>
+        <div class="txt"><div class="t">Transcription model ready</div><div class="st">Whisper large-v3-turbo, on the Neural Engine.</div></div>
+        <div class="pill"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M2 6.4 4.6 9 10 3.3"/></svg> Done</div></div>
+      <div class="row done"><div class="ind"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 1.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8m3.9 6.3-4.7 4.8a.9.9 0 0 1-1.3 0L5.9 10.6a.9.9 0 0 1 1.3-1.3l1.4 1.4 4.1-4.1a.9.9 0 0 1 1.2 1.3"/></svg></div>
+        <div class="txt"><div class="t">Microphone access</div><div class="st">Needed to record your side of the conversation.</div></div>
+        <div class="pill"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M2 6.4 4.6 9 10 3.3"/></svg> Done</div></div>
+      <div class="row done"><div class="ind"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 1.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8m3.9 6.3-4.7 4.8a.9.9 0 0 1-1.3 0L5.9 10.6a.9.9 0 0 1 1.3-1.3l1.4 1.4 4.1-4.1a.9.9 0 0 1 1.2 1.3"/></svg></div>
+        <div class="txt"><div class="t">System audio capture</div><div class="st">Last test captured system audio. macOS revokes this when Minutes is rebuilt.</div></div>
+        <div class="pill"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M2 6.4 4.6 9 10 3.3"/></svg> Done</div></div>
+      <div class="row done"><div class="ind"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 1.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8m3.9 6.3-4.7 4.8a.9.9 0 0 1-1.3 0L5.9 10.6a.9.9 0 0 1 1.3-1.3l1.4 1.4 4.1-4.1a.9.9 0 0 1 1.2 1.3"/></svg></div>
+        <div class="txt"><div class="t">Notes folder</div><div class="st">~/Documents/Notes/Meetings</div></div>
+        <div class="pill"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M2 6.4 4.6 9 10 3.3"/></svg> Done</div></div>
+      <div class="row done"><div class="ind"><svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 1.6a8.4 8.4 0 1 0 0 16.8 8.4 8.4 0 0 0 0-16.8m3.9 6.3-4.7 4.8a.9.9 0 0 1-1.3 0L5.9 10.6a.9.9 0 0 1 1.3-1.3l1.4 1.4 4.1-4.1a.9.9 0 0 1 1.2 1.3"/></svg></div>
+        <div class="txt"><div class="t">Test your setup</div><div class="st">Passed 2 minutes ago.</div></div>
+        <div class="pill"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M2 6.4 4.6 9 10 3.3"/></svg> Done</div></div>
+      <div class="ok"><svg viewBox="0 0 16 16" fill="currentColor"><path d="M8 1.3a6.7 6.7 0 1 0 0 13.4A6.7 6.7 0 0 0 8 1.3m3.1 5-3.7 3.8a.7.7 0 0 1-1 0L4.8 8.5a.7.7 0 0 1 1-1l1.1 1.1 3.2-3.3a.7.7 0 0 1 1 1"/></svg> Setup complete.</div>
+    </div>
+
+    <h2>Test Playground</h2>
+    <div class="card pad">
+      <div class="res">
+        <div class="quote">“Okay so let's push the pricing page to next Thursday, and Mikkel is going to take the copy review.”</div>
+        <div class="meters" style="margin:0 0 12px">
+          <div class="m"><b>Microphone</b><div class="bar"><i style="width:71%"></i></div><span class="chk">✓ audio</span></div>
+          <div class="m"><b>System audio</b><div class="bar"><i style="width:48%"></i></div><span class="chk">✓ audio</span></div>
+        </div>
+        <div class="facts">
+          <span class="f good">Mic ✓</span><span class="f good">System ✓</span>
+          <span class="f">large-v3-turbo</span><span class="f">2.1 s for 5 s of audio</span>
+          <span class="f">≈ 6 min for a 30-min meeting</span>
+        </div>
+      </div>
+      <button class="prime" style="background:transparent;color:var(--accent);border:1px solid rgba(18,165,148,.5)">Run Again</button>
+    </div>
+  </div>
+</div>
+</div>
