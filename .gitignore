@@ -1,0 +1,7 @@
+.build/
+.swiftpm/
+*.xcodeproj
+Minutes.app/
+dist/
+_bmad/render/
+.DS_Store

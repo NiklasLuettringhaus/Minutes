@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Minutes</string>
+  <key>CFBundleDisplayName</key><string>Minutes</string>
+  <key>CFBundleIdentifier</key><string>dev.niklas.minutes</string>
+  <key>CFBundleExecutable</key><string>Minutes</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>LSMinimumSystemVersion</key><string>15.0</string>
+  <!-- Menu-bar-only: no Dock icon, no default window (FR-1). -->
+  <key>LSUIElement</key><true/>
+  <key>NSHumanReadableCopyright</key><string>Local-first meeting recorder.</string>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Minutes records your microphone so your side of a meeting appears in the transcript. Audio never leaves this Mac.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Minutes records system audio so the other participants appear in the transcript. Audio never leaves this Mac.</string>
+</dict>
+</plist>
