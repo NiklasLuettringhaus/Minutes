@@ -70,3 +70,52 @@ The user was away for this entire run. On return, the review surface in priority
 3. **§5 Non-Goals** — anything wrongly excluded, particularly Chrome and live transcription.
 4. **§12 Platform, Permissions and Signing** — whether an Apple Developer certificate is obtainable, which would remove most of this section's pain.
 5. **The product name** — "Minutes" was invented; it lives in one constant.
+
+---
+
+## 6. Increment 2 — mechanism notes (for architecture, not the PRD)
+
+Added 2026-08-31 alongside FR-49 to FR-54. The PRD states the capabilities; this is the technical-how the architecture spine will need, plus the evidence behind each one.
+
+### 6.1 What the two reconciliation defects actually were
+
+Both were found by the user, and both are the same class of mistake: a permissive read hiding a disagreement.
+
+**Records silently dropped.** `Meeting` used Swift's synthesised `Codable`, carrying a comment asserting that property defaults would fill missing keys. They do not — a missing key throws `keyNotFound` regardless of the default. Adding one field (`multipleInRoom`) made every record written before it undecodable, and the store's listing used `try?`, so five Meetings disappeared from the UI while intact on disk. The lesson for FR-54's last consequence: **a listing must report what it cannot read.** The fix was an explicit decoder in which only identity is required.
+
+**Notes claimed but absent.** Seven Meetings held `stage: written` and a `noteFilename` while two files existed in the Notes Folder. The writes had been discarded by a development sandbox; the pipeline recorded success because the write call returned. FR-53 exists because the record's claim and the filesystem are independent facts, and nothing was comparing them.
+
+### 6.2 FR-53 — how the check should work
+
+- Compare `noteFilename` against the Notes Folder *currently in effect*. Never resolve against a remembered path: a user who moves the folder has not broken their history.
+- The check is a display state derived on read, not a field written back into the record. Writing "note missing" into `meeting.json` would make a transient condition permanent.
+- Rewriting regenerates the Note from `meeting.json` through the existing writer. No re-transcription, no re-diarization, and no parsing of any surviving Note — AD-9 holds: the Note is a projection, and the record is the source of truth.
+- Deliberately **not** automatic. A Note deleted on purpose must stay deleted, so rewriting is a user action on a visible broken row.
+
+### 6.3 FR-54 — refresh scope
+
+Refresh re-reads the store and the folder; it does not touch models, permissions or audio. The one subtlety is that it must not become the only path to correctness: state that only updates on an explicit refresh is state the user has to know to distrust. Treat the button as a repair tool for out-of-band changes (Finder deletions), with the normal in-app paths still updating themselves.
+
+### 6.4 FR-49 / FR-50 — cost is the whole design constraint
+
+`MenuBarExtra`'s label is re-rendered by the system, so both a per-second timer and a continuous pulse are recurring work in the one component NFR-3 singles out. Two consequences:
+
+- The timer should be driven by a single coalesced tick, not by an animation-driven clock, and it must stop dead when Recording ends rather than idle at 1 Hz.
+- The pulse should be expressed as a bounded, slow opacity or scale cycle. §13 Q10 exists because this was never measured over a long Session; if it costs more than NFR-3 allows, the pulse degrades to a discrete two-frame indicator, which still satisfies "animate slightly".
+
+Neither may become the *carrier* of the Recording state — FR-2's silhouette-and-tint rule stands, so both remain confirmation for a state that is already legible without them (NFR-7, and greyscale menu bars).
+
+### 6.5 FR-52 — what the setting is actually selecting
+
+There is no model to configure, no key, and nothing to download; the choice is only *which of two local backends runs*, and one of them is unavailable on this machine. The pane's honest content on the target Mac is: Apple Intelligence is disabled, so titles, summaries, decisions and action items come from deterministic keyphrase extraction. Verified at runtime, not assumed:
+
+```
+SystemLanguageModel.default.availability
+  = unavailable(appleIntelligenceNotEnabled)
+```
+
+That is why §9.3 applies here rather than §9.2: this is a truthfulness requirement, not a cost one. The risk to avoid is a settings pane whose mere existence implies a configurable LLM.
+
+### 6.6 FR-51 — the data already exists
+
+Speaker Profiles already persist a name, a centroid, a sample count and a last-updated date, and the directory already exposes lookup, remember, forget-one and forget-all. FR-51 is therefore almost entirely a surface: the capability was built and left unreachable behind a single destructive "Forget all". Worth noting as a pattern — the previous increment shipped three features (delete, retry, rename) whose only entry point was a context menu the user never found.

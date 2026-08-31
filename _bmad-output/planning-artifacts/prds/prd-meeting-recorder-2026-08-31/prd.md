@@ -4,7 +4,11 @@ status: final
 created: 2026-08-31
 updated: 2026-08-31
 owner: Niklas
-mode: headless (-A)
+mode: headless (-A); increment 2 applied headless (-H update)
+revisions:
+  - 2026-08-31 increment 2 — first-use feedback after the build shipped. Adds FR-49
+    through FR-54 and amends FR-40. Every addition comes from the user operating
+    the built app, so this increment carries observation rather than inference.
 inputs:
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/brief.md
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/addendum.md
@@ -137,8 +141,27 @@ The menu provides entry to the main window's panes and to Quit.
 - The menu contains no more than 8 items in any single state; the menu stays scannable.
 - Opening Meetings or Settings from the menu brings the single main window to the front, focused, on the requested pane — never a second window.
 
+#### FR-49: Elapsed time is visible without opening the menu
+While Recording, the menu bar itself shows how long the Session has been running.
+
+**Consequences (testable):**
+- The elapsed time is readable from the menu bar with the menu closed, and advances at least once per second.
+- It disappears the moment Recording ends, so the menu bar never implies a Session that is not running.
+- Transcribing does not show a timer: elapsed time answers "how much have I recorded", which is not a question about processing.
+
+**Notes:**
+- FR-4 already required elapsed time *inside the open menu*, and that shipped. This is a separate requirement: the user's ask was to know the answer without clicking. Both hold.
+
+#### FR-50: The Recording indicator is animated
+While Recording, the menu bar indicator carries a slow pulse.
+
+**Consequences (testable):**
+- The pulse is confined to the Recording state. Idle and Transcribing do not animate.
+- Recording remains identifiable without the animation — the state is still carried by silhouette and tint per FR-2, so the pulse is confirmation, not the signal (NFR-7).
+- The animation is slow and low-amplitude enough to read as a status light rather than as something demanding attention.
+
 **Feature-specific NFRs:**
-- Idle CPU use attributable to the menu bar component is negligible (see NFR-3); the icon must not animate while Idle.
+- Idle CPU use attributable to the menu bar component is negligible (see NFR-3); the icon must not animate while Idle. The FR-50 pulse is permitted only because it is bounded to an active Session, and its cost must stay within NFR-3 for the Recording state too.
 
 ---
 
@@ -359,6 +382,20 @@ Naming a Remote Speaker creates a Speaker Profile so the same voice is labelled 
 **Notes:**
 - `[NOTE FOR PM]` FR-25 is the highest-uncertainty requirement in the PRD: it depends on voice-embedding similarity across recordings holding up in practice. It is genuinely load-bearing for UJ-3's "he does not do this twice" promise, so it stays in scope — but it is the first candidate to cut to v2 if it proves unreliable, and cutting it degrades the product gracefully to manual renaming per Meeting.
 
+#### FR-51: See and curate the remembered voices
+The set of Speaker Profiles is visible as a list, and each entry can be renamed or forgotten on its own.
+
+**Consequences (testable):**
+- Every remembered voice appears with the name it will apply, so the user can tell what Minutes thinks it knows without recording a Meeting to find out.
+- Each entry can be forgotten individually. "Forget all" remains, but is no longer the only option.
+- Each entry can be renamed, and the rename applies to the Profile — so the next Meeting containing that voice uses the corrected name.
+- An entry shows enough provenance to be judged: how many Meetings contributed to it, and when it was last matched.
+- The list states that Profiles never leave the Mac, in the same place the data is shown.
+
+**Notes:**
+- This closes a gap FR-25 left open. FR-25 created Profiles and FR-24 corrected a name *within a Meeting*, but the Profile set itself was write-only: the settings pane offered one destructive "Forget all remembered voices" and no way to see what would be lost.
+- `[ASSUMPTION: renaming a Profile does not retroactively relabel Meetings already written. Retro-editing was not requested, and it would rewrite Notes the user may have edited by hand.]`
+
 ---
 
 ### 4.6 Meeting Metadata
@@ -376,10 +413,11 @@ Every Meeting receives a title, a tag set, and a summary.
 - Metadata generation runs entirely on-device.
 
 #### FR-27: Prefer the LLM Backend when available
-When the on-device foundation model is available, it produces the Metadata.
+When the on-device foundation model is available, it produces the Metadata *by default*.
 
 **Consequences (testable):**
 - Backend availability is checked at run time, not assumed at build time.
+- **Amended (increment 2):** the preference is a default, not a rule. FR-52 lets the user pin the Heuristic Backend, and an explicit choice wins over availability.
 - When the model is unavailable — including because Apple Intelligence is disabled — the Heuristic Backend runs instead and the Meeting still completes.
 - Output is requested as a typed structure rather than parsed out of free text, so a malformed generation cannot corrupt a Note.
 - A Transcript too long for the model's context is handled by summarising in parts and combining, not truncated silently.
@@ -407,6 +445,19 @@ Every Note names its Metadata Backend.
 **Consequences (testable):**
 - The Note's frontmatter identifies the Backend and the Transcription Model used.
 - A reader can therefore tell whether a summary came from a language model or from keyphrase extraction — provenance is never ambiguous.
+
+#### FR-52: The Metadata Backend is visible and selectable in the app
+Settings names which Backend will produce Metadata, why, and lets the user pin the Heuristic Backend.
+
+**Consequences (testable):**
+- Settings states which Backend is active in plain language, and when the LLM Backend is unavailable it states the reason rather than only the outcome.
+- The user can force the Heuristic Backend even when the LLM Backend is available, because a deterministic summary is sometimes the one you want.
+- Choosing a Backend affects Meetings processed afterwards; it does not silently rewrite Metadata already derived.
+- No setting implies a cloud model, a model download, or an API key exists — because none do (§9.1).
+
+**Notes:**
+- Prompted by the user asking what performs summarisation and finding no setting for it. FR-30 recorded provenance in the *Note*, which is the wrong surface for the question "what is this app doing" — the Note is read after the fact, and only if you open it.
+- The honest content of this pane on the target machine is that Apple Intelligence is disabled, so summarisation is keyphrase extraction. §9.3 requires that be said, not softened.
 
 ---
 
@@ -456,6 +507,19 @@ Editing a Meeting's title or Speaker Labels updates its Note. Realizes UJ-3.
 - The Note is rewritten to reflect the change without creating a second file.
 - A title change that would change the filename either renames the file or leaves it stable — the behaviour is defined, not incidental, and never leaves two Notes for one Meeting.
 
+#### FR-53: A Meeting's Note is verified to exist, and a missing one can be rewritten
+Recording that a Note was written is not the same as the file being there. Minutes checks, and offers to fix.
+
+**Consequences (testable):**
+- A Meeting marked complete whose Note file is absent from the Notes Folder is shown as such, not as complete.
+- Such a Meeting can have its Note rewritten from the stored record, with no re-transcription and no loss of Speaker Labels or edits held in the record.
+- A Note deleted deliberately in Finder is not silently recreated; rewriting is a user action.
+- The check never parses the Note. A missing Note is reported and rewritten *from* the record, never inferred back *into* it (AD-9).
+- Moving the Notes Folder does not mark every past Meeting broken: the check is against the folder currently in effect, and its result is a display state, not a mutation of history.
+
+**Notes:**
+- Observed, not hypothesised. Seven Meetings held `stage: written` and a filename while two files existed on disk; the write had been discarded by a sandbox during development and nothing ever noticed. The requirement is that the app can tell the difference.
+
 ---
 
 ### 4.8 Library
@@ -500,6 +564,21 @@ The user can delete a Meeting, including its audio.
 - Deletion states what will be removed before removing it.
 - Deletion removes retained audio, so deletion is a real privacy action rather than a list-hiding one.
 - Whether the Note file is also deleted is explicit in the confirmation, never a surprise.
+- **Amended (increment 2):** deletion is reachable without discovering a context menu — a visible control in the Library, and the standard Delete key on a selected Meeting. A destructive action still requires the confirmation above; discoverability is not permission.
+- **Amended (increment 2):** more than one Meeting can be selected and deleted in one confirmed action, which is what "manage" means once a handful of test recordings exist.
+
+#### FR-54: Refresh the Library from disk
+The Library can be resynchronised with what is actually on disk.
+
+**Consequences (testable):**
+- An explicit refresh re-reads the Meeting store and the Notes Folder and updates every row's state, including FR-53's Note-present check.
+- A Meeting record removed outside the app disappears from the list after a refresh, rather than persisting until relaunch.
+- A Note deleted outside the app is reflected after a refresh.
+- Refresh is idempotent and destroys nothing: it changes what is displayed, never what is stored.
+- A Meeting record whose payload cannot be read is surfaced as unreadable, not omitted from the list. Silently skipping an unreadable record is how the list can be wrong without appearing wrong.
+
+**Notes:**
+- The last consequence is the lesson of a real defect: an unreadable record was skipped by a permissive load, so five Meetings vanished from the list while intact on disk. A list that quietly drops what it cannot parse is worse than one that shows a broken row.
 
 ---
 
@@ -624,7 +703,7 @@ These exist to stop the "let me also add the nearby thing" failure mode at epic,
 - **Export formats other than Markdown** — Markdown is the point.
 - **Localisation** — English UI. Transcription language follows whatever the model supports.
 - **Notarization, signing with a Developer ID, distribution** — see §12; no certificate exists.
-- **Recovery UI for crash-orphaned Sessions** — FR-9 requires the audio survive on disk; a polished recovery flow does not. Manual recovery is acceptable for v1.
+- ~~**Recovery UI for crash-orphaned Sessions**~~ — **brought into scope in increment 2.** The original reasoning (FR-9 keeps the audio; manual recovery is acceptable) understated the symptom: an interrupted Session showed a progress spinner forever, because the Library inferred "in progress" from the record's stage rather than from whether work was running. It read as a hang, not as something awaiting a manual step. Resume-on-launch, an explicit *Interrupted* state and a *Finish transcription* action are now built. FR-39's retry surface generalises to cover it, so no new FR was needed — but the scope line was wrong and is corrected here rather than left to contradict the code.
 
 ### 6.3 Build Order (walking skeleton first)
 
@@ -643,6 +722,14 @@ These exist to stop the "let me also add the nearby thing" failure mode at epic,
 `FR-25` (Speaker Profiles — highest technical uncertainty, see §13 Q4), `FR-27` (LLM Backend — the Heuristic Backend already satisfies FR-26 on this machine), `FR-48` (re-run onboarding).
 
 A Tier-0 build that works beats a Tier-2 build that half-works, and the tiers are ordered so that stopping after any tier leaves a coherent product.
+
+**Tier 4 — Increment 2, from first use.** Tiers 0-3 are built and shipping. These come from the user operating that build, so they are ordered by what was actually costing them something rather than by dependency.
+
+1. `FR-53` (verify the Note exists) and `FR-54` (refresh the Library) — a list that disagrees with the folder undermines trust in every other feature, and both defects behind these were real.
+2. `FR-40` amended (discoverable, multi-select delete) — the user could not find deletion at all.
+3. `FR-51` (curate remembered voices) — makes FR-25 correctable, which is also what makes §13 Q4 answerable by observation.
+4. `FR-49` (menu bar timer) and `FR-50` (animated indicator) — small, visible, and independent of everything above.
+5. `FR-52` (Backend visible and selectable) — closes the question the user asked; no dependency, so it can move if measurement (§13 Q11) changes the shape.
 
 ## 7. Success Metrics
 
@@ -782,6 +869,13 @@ Model-specific transcription throughput must be **measured on the target machine
 7. **Does the aggregate device need rebuilding when the default output device changes** mid-Session? Directly determines the FR-8 implementation.
 8. **Auto-stop reliability** — if input-release detection proves unreliable, FR-14 needs a fallback (an inactivity timeout, or a maximum Session length).
 
+Raised by increment 2:
+
+9. **How much menu bar width is acceptable for the FR-49 timer?** A running clock next to the icon competes with every other menu bar item on a laptop display. Informs FR-49; may need a shorter format, or an option to show it only past a threshold.
+10. **Does the FR-50 pulse survive NFR-3 over a two-hour Session?** A repeating animation in a `MenuBarExtra` label is redrawn by the system, and the cost was never measured. If it does not, the pulse becomes a slower or discrete indicator rather than a continuous one.
+11. **Should FR-52's Backend choice be per-Meeting rather than global?** A global toggle is simpler and matches the ask; retrying one Meeting with the other Backend is the plausible next want. Deferred, not decided.
+12. **Is FR-53's check cheap enough to run on every Library appearance**, or does it need to be tied to FR-54's explicit refresh? Depends on Meeting count and folder size; measure before choosing.
+
 ## 14. Assumptions Index
 
 Every inference made without user confirmation. The user was unavailable for this run, so this list is unusually long and should be read as the review surface.
@@ -798,6 +892,14 @@ Every inference made without user confirmation. The user was unavailable for thi
 - **§4.8, Library** — a browsing UI was not requested. It is inferred as necessary because FR-24 renaming and FR-39 retry need a surface, and the request did ask for "a small, clean UI".
 - **§4.9, FR-44 retention** — audio retention as a user choice was not requested; inferred from FR-19 retry needing audio and from privacy hygiene requiring an off switch.
 - **§4.9, FR-45 launch at login** — inferred from SM-4; a menu bar tool that must be launched manually will not survive.
+
+**Increment 2.** These carry materially less inference than the list above, because each one came from the user operating the built app rather than from reading the original request. What remains inferred:
+
+- **§4.1, FR-50 animation character** — "animate the red dot slightly" was the ask. That it should be a slow pulse rather than a blink, a spinner or a level meter is a reading of "slightly", chosen because a status light should not compete for attention.
+- **§4.5, FR-51 rename semantics** — that renaming a remembered voice does not retroactively relabel past Meetings. Not requested either way; chosen because the alternative rewrites Notes the user may have edited by hand.
+- **§4.5, FR-51 provenance fields** — that sample count and last-matched date are the useful things to show. Inferred from what makes a match judgeable, not from the request.
+- **§4.6, FR-52 pin-the-Heuristic-Backend** — the user asked what performs summarisation and where its settings are. That the answer should include an override, rather than only an explanation, is inferred from a deterministic summary being sometimes preferable.
+- **§4.8, FR-40 multi-select delete** — "mainly deleting them" was the ask. Multi-select is inferred from the plural and from the state the user is actually in (several test recordings), not stated.
 - **§4.9, FR-47 Test Playground scope** — that the playground should report per-Stream audio presence and measured throughput (rather than merely showing transcribed text as the reference product does) is inferred. It is justified by §12: there is no API to query system-audio permission, so this is the only way the user can confirm the app can do its job.
 - **§6.2** — Zoom/Meet/Discord excluded because the user named only Slack and Teams.
 - **§7** — all metric targets are set by inference. None was given.

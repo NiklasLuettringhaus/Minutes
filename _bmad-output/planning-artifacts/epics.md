@@ -1,5 +1,8 @@
 ---
 stepsCompleted: [1, 2, 3, 4]
+revisions:
+  - 2026-08-31 increment 2 — added Epic 8 (6 stories, FR-49 to FR-54 plus the
+    FR-40 amendment) headless. Existing epics and stories untouched and not renumbered.
 inputDocuments:
   - _bmad-output/planning-artifacts/prds/prd-meeting-recorder-2026-08-31/prd.md
   - _bmad-output/planning-artifacts/prds/prd-meeting-recorder-2026-08-31/addendum.md
@@ -13,7 +16,7 @@ inputDocuments:
 
 ## Overview
 
-This document decomposes the 48 functional requirements, 8 cross-cutting NFRs, the 21 architecture decisions and the two UX spines into 41 implementable stories across 7 epics. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
+This document decomposes the 54 functional requirements, 8 cross-cutting NFRs, the 21 architecture decisions and the two UX spines into 49 implementable stories across 8 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected here rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
 
 Every FR is covered by exactly one story — verified programmatically, see the FR Coverage Map.
 
@@ -205,7 +208,7 @@ From `DESIGN.md` and `EXPERIENCE.md`. The setup pattern is a direct user directi
 | FR-23 | T0 | 1.8 | FR-47 | T1 | 2.8 |
 | FR-24 | T2 | 4.2 | FR-48 | T3 | 2.9 |
 
-All 48 FRs covered exactly once; no FR appears in two stories.
+All 48 FRs of increment 1 covered exactly once; no FR appears in two stories. FR-49 to FR-54 are mapped in Epic 8's own coverage table.
 
 ## Epic List
 
@@ -216,6 +219,7 @@ All 48 FRs covered exactly once; no FR appears in two stories.
 5. **Epic 5: Meeting Library and Note Lifecycle** — 5 stories, tiers T2
 6. **Epic 6: Resilience and Settings** — 8 stories, tiers T1, T2
 7. **Epic 7: Metadata Intelligence** — 3 stories, tiers T1, T2, T3
+8. **Epic 8: Trust the List, See the State** — 6 stories, tier T4 (increment 2)
 
 
 ## Epic 1: Foundation and Walking Skeleton
@@ -1439,3 +1443,193 @@ So that I can tell an inference from a keyphrase extraction.
 
 - Provenance is never ambiguous (FR-30).
 - Pairs with story 7.2's timestamp references so derived content is checkable against the record.
+
+---
+
+## Epic 8: Trust the List, See the State
+
+*Increment 2 · Tier T4 · 6 stories · FR-49, FR-50, FR-51, FR-52, FR-53, FR-54 and the FR-40 amendment*
+
+**Why this epic exists.** Epics 1-7 are built and running on the target Mac. Every story below came from the user operating that build, which makes this the first epic in the project grounded in observation rather than inference. Two of the six close defects the user found; the rest close gaps where a capability was built but left unreachable.
+
+The epic has one theme, and it is worth naming because it explains the ordering: **the app knew things it did not show.** Speaker Profiles existed with no way to see them. The Metadata Backend was recorded in the Note but never in the app. Delete, retry and rename existed only behind a context menu. And the Meetings list reported state derived from the record rather than from reality, so it was confidently wrong twice. Stories 8.1 and 8.2 fix correctness; 8.3 to 8.6 fix reachability.
+
+### Story 8.1: A Meeting's Note is verified against the folder
+
+*Requirements: FR-53 · Tier T4*
+
+As a user,
+I want the app to notice when a note it claims to have written is not there,
+So that the Meetings list and my notes folder tell me the same story.
+
+**Acceptance Criteria:**
+
+**Given** a Meeting recorded as complete with a note filename
+**When** that file is absent from the Notes Folder currently in effect
+**Then** the Meeting is shown as missing its note rather than as complete
+**And** I can rewrite the note from the stored record without re-transcribing
+
+**And** each of the following holds:
+
+- A Meeting marked complete whose Note file is absent is shown as such, not as complete.
+- Rewriting loses no Speaker Labels or edits held in the record, and runs no model.
+- A Note deleted deliberately in Finder is not silently recreated — rewriting is a user action.
+- The check never parses the Note; a missing Note is rewritten *from* the record, never inferred back *into* it.
+- Changing the Notes Folder does not mark past Meetings broken; the check is against the folder in effect and its result is a display state, not a mutation.
+
+**Implementation constraints:**
+
+- Derive the missing-note condition on read. Writing it into `meeting.json` would make a transient filesystem condition permanent.
+- AD-9 holds without exception: the record is the source of truth and the Note is a projection.
+- Observed defect this closes: seven Meetings held `stage: written` with a filename while two files existed on disk. Nothing compared the two facts.
+
+### Story 8.2: Refresh the Library from disk
+
+*Requirements: FR-54 · Tier T4*
+
+As a user,
+I want a refresh that re-reads what is actually on disk,
+So that deleting something in Finder does not leave the app showing a stale list.
+
+**Acceptance Criteria:**
+
+**Given** I changed the Meeting store or the Notes Folder outside the app
+**When** I refresh the Library
+**Then** every row's state is re-derived, including story 8.1's note check
+**And** nothing is deleted, moved or rewritten as a side effect
+
+**And** each of the following holds:
+
+- A Meeting record removed outside the app disappears after a refresh rather than persisting until relaunch.
+- A Note deleted outside the app is reflected after a refresh.
+- Refresh is idempotent and destroys nothing: it changes what is displayed, never what is stored.
+- A Meeting record whose payload cannot be read is surfaced as unreadable, not omitted.
+
+**Implementation constraints:**
+
+- The unreadable-record rule is the point of the story, not a detail. A permissive `try?` in the store's listing once dropped five Meetings from the UI while they sat intact on disk; a list that silently discards what it cannot parse is wrong without appearing wrong.
+- Refresh must not become the only path to correctness. In-app changes keep updating themselves; this is a repair tool for out-of-band edits.
+
+### Story 8.3: Delete meetings without hunting for a context menu
+
+*Requirements: FR-40 (amended) · Tier T4*
+
+As a user,
+I want deleting meetings to be an obvious, repeatable action,
+So that clearing out a handful of test recordings is not a puzzle.
+
+**Acceptance Criteria:**
+
+**Given** one or more Meetings selected in the Library
+**When** I use the visible delete control or press the Delete key
+**Then** one confirmation enumerates exactly what will be removed across the whole selection
+**And** confirming removes the records and their retained audio
+
+**And** each of the following holds:
+
+- Deletion is reachable without discovering a context menu: a visible control, and the standard Delete key on a selection.
+- Multi-select delete is confirmed once, and the confirmation states the count and whether Note files are included.
+- The existing FR-40 guarantees are unchanged: audio is really removed, and Note deletion is explicit rather than a surprise.
+- Discoverability does not weaken confirmation — a destructive action still asks.
+
+**Implementation constraints:**
+
+- Keep the context menu. This adds a discoverable path; it does not move the old one.
+- The user did not find the existing delete at all, so the acceptance test is whether it is findable without being told.
+
+### Story 8.4: See and curate remembered voices
+
+*Requirements: FR-51 · Tier T4*
+
+As a user,
+I want to see which voices Minutes remembers and fix them individually,
+So that a wrong match is correctable without waiting for a meeting that happens to contain that voice.
+
+**Acceptance Criteria:**
+
+**Given** Minutes has remembered one or more voices
+**When** I open the remembered-voices list
+**Then** each voice appears with the name it will apply, its sample count and when it last matched
+**And** I can rename or forget any single entry
+
+**And** each of the following holds:
+
+- Every remembered voice is visible, so the user can tell what Minutes thinks it knows without recording a Meeting to find out.
+- Each entry can be forgotten individually; "Forget all" remains but is no longer the only option.
+- A rename applies to the Profile, so the next Meeting containing that voice uses the corrected name.
+- The list states, where the data is shown, that Profiles never leave the Mac.
+
+**Implementation constraints:**
+
+- The data and operations already exist — name, centroid, sample count, updated-at, plus lookup / remember / forget-one / forget-all. This story is a surface over a built capability.
+- A rename does not retroactively relabel written Meetings. That was not requested, and it would rewrite Notes the user may have edited by hand.
+- This also makes §13 Q4 (does voice matching hold up across recordings?) answerable by observation rather than argument.
+
+### Story 8.5: Elapsed time and a living recording indicator in the menu bar
+
+*Requirements: FR-49, FR-50 · Tier T4*
+
+As a user,
+I want to see how long I have been recording without opening the menu,
+So that a running session is obvious at a glance.
+
+**Acceptance Criteria:**
+
+**Given** a Session is Recording
+**When** I look at the menu bar with the menu closed
+**Then** the elapsed time is readable and advances at least once per second
+**And** the recording indicator carries a slow pulse
+
+**And** each of the following holds:
+
+- The timer disappears the moment Recording ends, so the menu bar never implies a Session that is not running.
+- Transcribing shows no timer — elapsed time answers "how much have I recorded", which is not a question about processing.
+- The pulse is confined to Recording; Idle and Transcribing do not animate.
+- Recording stays identifiable without the animation: silhouette and tint still carry the state (FR-2, NFR-7).
+
+**Implementation constraints:**
+
+- Cost is the design constraint. The menu bar label is re-rendered by the system, so drive the timer from one coalesced tick that stops dead when Recording ends — never leave a 1 Hz timer running while Idle (NFR-3).
+- Express the pulse as a bounded, slow opacity or scale cycle. If it exceeds NFR-3 over a long Session (§13 Q10), degrade to a discrete two-frame indicator, which still satisfies "animate slightly".
+- FR-4's in-menu timer already ships and stays. This is the closed-menu case, which is a different requirement.
+
+### Story 8.6: Say what writes the summaries, and let it be pinned
+
+*Requirements: FR-52 · Tier T4*
+
+As a user,
+I want the app to tell me what produces titles and summaries,
+So that I am not guessing whether an LLM is involved.
+
+**Acceptance Criteria:**
+
+**Given** I open the metadata settings
+**When** the LLM Backend is unavailable
+**Then** the pane names the active Backend and states the reason, not just the outcome
+**And** I can pin the Heuristic Backend even when the LLM Backend is available
+
+**And** each of the following holds:
+
+- The active Backend is stated in plain language, and unavailability is explained rather than hidden.
+- Pinning affects Meetings processed afterwards and does not silently rewrite Metadata already derived.
+- Nothing in the pane implies a cloud model, a download or an API key, because none exist.
+
+**Implementation constraints:**
+
+- Verified at runtime on the target machine: `SystemLanguageModel.default.availability = unavailable(appleIntelligenceNotEnabled)`. The honest content of this pane there is that summarisation is deterministic keyphrase extraction, and §9.3 requires saying so.
+- Amends FR-27: preferring the LLM Backend is a default, and an explicit user choice wins over availability.
+- The risk to avoid is a settings pane whose mere existence implies a configurable LLM. Fewer controls, more explanation.
+
+### Epic 8 FR Coverage
+
+| FR | Tier | Story |
+| --- | --- | --- |
+| FR-49 | T4 | 8.5 |
+| FR-50 | T4 | 8.5 |
+| FR-51 | T4 | 8.4 |
+| FR-52 | T4 | 8.6 |
+| FR-53 | T4 | 8.1 |
+| FR-54 | T4 | 8.2 |
+| FR-40 (amendment) | T4 | 8.3 |
+
+FR-40's original consequences remain covered by story 5.5; story 8.3 covers only the increment-2 amendment, so no FR is claimed by two stories.
