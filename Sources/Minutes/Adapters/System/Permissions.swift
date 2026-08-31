@@ -1,0 +1,92 @@
+import Foundation
+import AVFoundation
+import AppKit
+
+/// Two permissions with wildly asymmetric ergonomics (PRD §12).
+///
+/// The microphone has a real request API and a queryable state, so it is reported
+/// as fact. **System-audio capture has neither** — macOS exposes no way to request
+/// it directly or to query it. Its state can only be *inferred* from whether a
+/// capture actually produced audio, and the UI must never claim more certainty
+/// than that (FR-42).
+enum Permissions {
+
+    enum MicState {
+        case authorized, denied, notDetermined, restricted
+
+        var isAuthorized: Bool { self == .authorized }
+        var label: String {
+            switch self {
+            case .authorized: return "Granted"
+            case .denied: return "Denied"
+            case .notDetermined: return "Not yet requested"
+            case .restricted: return "Restricted by policy"
+            }
+        }
+    }
+
+    static func micState() -> MicState {
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized: return .authorized
+        case .denied: return .denied
+        case .restricted: return .restricted
+        case .notDetermined: return .notDetermined
+        @unknown default: return .notDetermined
+        }
+    }
+
+    static func requestMic() async -> Bool {
+        await AVCaptureDevice.requestAccess(for: .audio)
+    }
+
+    /// Inference, never a claim of certainty.
+    enum SystemAudioState {
+        /// A capture produced non-silent system audio.
+        case observedWorking
+        /// A capture ran and produced nothing.
+        case observedNotWorking
+        /// No capture has been attempted yet, so we genuinely do not know.
+        case unknown
+
+        var label: String {
+            switch self {
+            case .observedWorking: return "Last recording captured system audio"
+            case .observedNotWorking: return "Last recording captured no system audio"
+            case .unknown: return "Not tested yet"
+            }
+        }
+    }
+
+    @MainActor
+    static func systemAudioState() -> SystemAudioState {
+        switch Preferences.shared.lastSystemCaptureOK {
+        case .some(true): return .observedWorking
+        case .some(false): return .observedNotWorking
+        case nil: return .unknown
+        }
+    }
+
+    static let bundleID = "dev.niklas.minutes"
+
+    /// The app is ad-hoc signed, so consent is invalidated whenever the binary
+    /// changes. This is the single most likely cause of "it stopped working",
+    /// so the command is surfaced rather than buried (FR-42).
+    static let resetCommand = """
+        tccutil reset SystemAudioCaptureRequests \(bundleID)
+        tccutil reset Microphone \(bundleID)
+        """
+
+    static func openMicrophoneSettings() {
+        open("x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")
+    }
+
+    static func openSystemAudioSettings() {
+        // macOS files system-audio capture under its own privacy pane; fall back
+        // to the Privacy root if the specific anchor is not recognised.
+        open("x-apple.systempreferences:com.apple.preference.security?Privacy")
+    }
+
+    private static func open(_ s: String) {
+        if let u = URL(string: s) { NSWorkspace.shared.open(u) }
+    }
+}
