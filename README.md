@@ -10,10 +10,13 @@ traffic at run time — the only network use is downloading a transcription mode
 
 ```bash
 ./Scripts/build-app.sh
-open dist/Minutes.app
+open /Applications/Minutes.app
 ```
 
-That produces `dist/Minutes.app`, ad-hoc signed with the hardened runtime.
+That installs `/Applications/Minutes.app`, ad-hoc signed with the hardened
+runtime. The bundle is staged inside `.build/stage.noindex/` and removed after
+install, so exactly one copy exists on the machine — two would mean two
+Spotlight hits for the same app.
 Signing is part of the build, not packaging: macOS ties audio permission to the
 code signature, and an unsigned binary never even gets the prompt.
 
@@ -21,7 +24,7 @@ To verify the whole chain without clicking anything:
 
 ```bash
 # records 10s, transcribes, prints the resulting note
-./dist/Minutes.app/Contents/MacOS/Minutes --selftest 10
+/Applications/Minutes.app/Contents/MacOS/Minutes --selftest 10
 ```
 
 ## Using it

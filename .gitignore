@@ -3,5 +3,6 @@
 *.xcodeproj
 Minutes.app/
 dist/
+.build/stage.noindex/
 _bmad/render/
 .DS_Store

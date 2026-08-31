@@ -9,7 +9,8 @@ set -euo pipefail
 
 CONFIG="${CONFIG:-release}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP="$ROOT/dist/Minutes.app"
+STAGE="$ROOT/.build/stage.noindex"
+APP="$STAGE/Minutes.app"
 
 echo "==> swift build ($CONFIG)"
 cd "$ROOT"
@@ -18,7 +19,8 @@ BIN="$(swift build -c "$CONFIG" --show-bin-path)/Minutes"
 [ -x "$BIN" ] || { echo "!! binary not found at $BIN" >&2; exit 1; }
 
 echo "==> assembling bundle"
-rm -rf "$APP"
+rm -rf "$STAGE"
+mkdir -p "$STAGE"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Minutes"
 cp "$ROOT/Scripts/Info.plist" "$APP/Contents/Info.plist"
@@ -37,22 +39,25 @@ echo "==> signature"
 codesign -dv --verbose=2 "$APP" 2>&1 | grep -E 'Identifier|Signature|flags' || true
 
 # Install to /Applications so Spotlight indexes it and it behaves like an app.
-# A bundle living in dist/ with no icon is effectively unfindable — that is
-# exactly how it got lost the first time.
+# A bundle living in a build directory with no icon is effectively unfindable —
+# that is exactly how it got lost the first time.
 if [ "${INSTALL:-1}" = "1" ]; then
   DEST="/Applications/Minutes.app"
   if [ -w /Applications ]; then
     echo "==> installing to $DEST"
-    OPEN_AT_LOGIN_WAS_RUNNING=$(pgrep -x Minutes >/dev/null && echo yes || echo no)
-    [ "$OPEN_AT_LOGIN_WAS_RUNNING" = "yes" ] && osascript -e 'quit app "Minutes"' 2>/dev/null || true
+    osascript -e 'quit app "Minutes"' 2>/dev/null || true
     rm -rf "$DEST"
     cp -R "$APP" "$DEST"
     # Re-sign in place: copying can disturb the signature, and TCC keys off it.
     codesign --force --sign - --options runtime \
       --entitlements "$ROOT/Scripts/Minutes.entitlements" --timestamp=none "$DEST" 2>/dev/null
     APP="$DEST"
+    # Leave exactly one copy on the machine. Two bundles means two Spotlight
+    # hits for the same app, which is confusing and was a real complaint.
+    rm -rf "$STAGE"
+    rm -rf "$ROOT/dist"
   else
-    echo "!! /Applications not writable; leaving the app in dist/"
+    echo "!! /Applications not writable; the app is at $APP"
   fi
 fi
 
