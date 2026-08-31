@@ -24,6 +24,7 @@ final class Preferences: ObservableObject {
         static let removeFiller = "removeFillerWords"
         static let fillerWords = "fillerWords"
         static let customWatchedApps = "customWatchedApps"
+        static let showInDock = "showInDock"
     }
 
     /// Verified present in the live catalogue. Deliberately not the library's
@@ -45,6 +46,15 @@ final class Preferences: ObservableObject {
     }
     @Published var keepAudio: Bool {
         didSet { d.set(keepAudio, forKey: K.keepAudio) }
+    }
+    /// Off by default: FR-1 makes this a menu bar tool, and `LSUIElement` in
+    /// Info.plist starts it that way. The toggle overrides the activation policy at
+    /// runtime rather than the plist, so it takes effect without a relaunch.
+    @Published var showInDock: Bool {
+        didSet {
+            d.set(showInDock, forKey: K.showInDock)
+            DockVisibility.apply(showInDock)
+        }
     }
     /// On by default: a long meeting transcript is genuinely hard to read with
     /// every clause opening "um, uh, so".
@@ -88,6 +98,7 @@ final class Preferences: ObservableObject {
         detectionEnabled = d.object(forKey: K.detectionEnabled) as? Bool ?? true
         suppressedApps = d.stringArray(forKey: K.suppressedApps) ?? []
         keepAudio = d.object(forKey: K.keepAudio) as? Bool ?? true
+        showInDock = d.object(forKey: K.showInDock) as? Bool ?? false
         removeFillerWords = d.object(forKey: K.removeFiller) as? Bool ?? true
         fillerWords = d.stringArray(forKey: K.fillerWords) ?? FillerWords.defaults
         customWatchedApps = d.stringArray(forKey: K.customWatchedApps) ?? []

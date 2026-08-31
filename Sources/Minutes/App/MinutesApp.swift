@@ -63,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // location rather than costing the user a second 600 MB fetch.
         ModelStorage.adoptLegacyDownloads()
 
+        DockVisibility.apply(Preferences.shared.showInDock)
         Notifier.shared.configure()
         Task { await Notifier.shared.refreshAuthorization() }
         SessionCoordinator.shared.refreshMicAuthorization()

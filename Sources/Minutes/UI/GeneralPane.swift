@@ -81,6 +81,24 @@ struct GeneralPane: View {
             }
 
             VStack(alignment: .leading, spacing: 0) {
+                SectionHeading(text: "Dock")
+                Card {
+                    Toggle(isOn: Binding(
+                        get: { prefs.showInDock },
+                        set: { prefs.showInDock = $0 })) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Show Minutes in the Dock").font(.body)
+                            Text(prefs.showInDock
+                                 ? "Also appears in Command-Tab."
+                                 : "Menu bar only — no Dock icon, and not in Command-Tab.")
+                                .font(.caption).foregroundStyle(Tok.textSecondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 0) {
                 SectionHeading(text: "Startup")
                 Card {
                     VStack(alignment: .leading, spacing: Tok.s3) {
