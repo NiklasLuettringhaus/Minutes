@@ -1,0 +1,258 @@
+import Foundation
+
+/// AD-8 / AD-20: the staged, resumable pipeline.
+///
+/// `captured -> transcribed -> diarized -> attributed -> metadata -> written`
+///
+/// Stages are functions from inputs to an output value. They never write the
+/// Meeting record and never touch `stage` — only this type advances it, and only
+/// after a stage has returned successfully (AD-20). A failure therefore leaves
+/// the Meeting at its last completed stage with a reason, and can be resumed
+/// from exactly there.
+actor Pipeline {
+    static let shared = Pipeline()
+
+    private let transcriber: Transcribing = WhisperKitTranscriber()
+    private let diarizer = SpeakerKitDiarizerAdapter()
+    private let noteWriter: NoteWriting = NoteWriter()
+    private let heuristic = HeuristicBackend()
+    private let llm = FoundationModelsBackend()
+
+    private var queue: [String] = []
+    private var isProcessing = false
+
+    /// Queued serially: a Session may be recorded while another Meeting processes,
+    /// but two model inferences never run concurrently (AD-14).
+    func enqueue(meetingID: String) {
+        guard !queue.contains(meetingID) else { return }
+        queue.append(meetingID)
+        Task { await drain() }
+    }
+
+    var pending: Int { queue.count }
+
+    private func drain() async {
+        guard !isProcessing else { return }
+        isProcessing = true
+        defer { isProcessing = false }
+        while !queue.isEmpty {
+            let id = queue.removeFirst()
+            await AppStateBridge.setProcessing(id)
+            await run(meetingID: id)
+        }
+        await AppStateBridge.setProcessing(nil)
+        // Release models once the queue drains (AD-14).
+        await MLEngine.shared.unloadWhisper()
+    }
+
+    // MARK: - Run / resume
+
+    /// Advances a Meeting from wherever it is to `written`.
+    func run(meetingID id: String) async {
+        let store = MeetingStore.shared
+        guard var meeting = try? await store.load(id: id) else {
+            Log.pipeline.error("cannot load meeting \(id, privacy: .public)")
+            return
+        }
+
+        // Clear a prior failure before retrying (FR-39).
+        if meeting.failure != nil {
+            meeting = (try? await store.update(id: id) { $0.failure = nil }) ?? meeting
+        }
+
+        while let next = meeting.stage.next {
+            do {
+                try await perform(next, on: id)
+                // Only the Pipeline advances `stage`, and only after success (AD-20).
+                meeting = try await store.update(id: id) { $0.stage = next }
+                Log.pipeline.info("meeting \(id, privacy: .public) -> \(next.rawValue, privacy: .public)")
+            } catch {
+                let reason = (error as? MinutesError)?.localizedDescription ?? error.localizedDescription
+                _ = try? await store.update(id: id) { $0.failure = reason }
+                Log.pipeline.error("stage \(next.rawValue, privacy: .public) failed: \(reason, privacy: .public)")
+                await AppStateBridge.reloadMeetings()
+                return
+            }
+            await AppStateBridge.reloadMeetings()
+        }
+
+        // Audio retention is the user's call (FR-44).
+        let keep = await AppStateBridge.keepAudio()
+        if !keep { try? await store.deleteAudio(id: id) }
+        await AppStateBridge.finished(meetingID: id)
+    }
+
+    private func perform(_ stage: Stage, on id: String) async throws {
+        switch stage {
+        case .captured:
+            return  // produced by capture, never by the pipeline
+        case .transcribed:
+            try await transcribeStage(id)
+        case .diarized:
+            try await diarizeStage(id)
+        case .attributed:
+            try await attributeStage(id)
+        case .metadata:
+            try await metadataStage(id)
+        case .written:
+            try await writeStage(id)
+        }
+    }
+
+    // MARK: - Stages
+
+    private func transcribeStage(_ id: String) async throws {
+        let store = MeetingStore.shared
+        let model = await AppStateBridge.model()
+        var utterances: [Utterance] = []
+
+        // The Mic Stream is the Local Speaker, structurally and without inference (AD-11).
+        if let mic = await store.audioURL(id: id, stream: .mic) {
+            for s in try await transcriber.transcribe(url: mic, model: model) {
+                utterances.append(Utterance(start: s.start, end: s.end, text: s.text,
+                                            speaker: .local, origin: .mic))
+            }
+        }
+        // System Stream segments start unassigned; diarization names them next.
+        if let sys = await store.audioURL(id: id, stream: .system) {
+            for s in try await transcriber.transcribe(url: sys, model: model) {
+                utterances.append(Utterance(start: s.start, end: s.end, text: s.text,
+                                            speaker: SpeakerLabelID.remote(0), origin: .system))
+            }
+        }
+        guard !utterances.isEmpty else {
+            throw MinutesError.transcriptionFailed("No speech was found in the recording.")
+        }
+        _ = try await store.update(id: id) {
+            $0.utterances = utterances.sorted { $0.start < $1.start }
+            $0.transcriptionModel = model
+        }
+    }
+
+    private func diarizeStage(_ id: String) async throws {
+        let store = MeetingStore.shared
+        guard let sys = await store.audioURL(id: id, stream: .system) else {
+            // Mic-only Session: nothing to diarize, and that is not a failure.
+            _ = try await store.update(id: id) { $0.diarizationSucceeded = false }
+            return
+        }
+        do {
+            let (spans, centroids) = try await diarizer.diarizeFull(url: sys)
+            guard !spans.isEmpty else {
+                _ = try await store.update(id: id) { $0.diarizationSucceeded = false }
+                return
+            }
+            // Try to name each remote cluster from a stored Speaker Profile (FR-25).
+            var names: [String: String] = [:]
+            var inferred: [String] = []
+            for (idx, centroid) in centroids {
+                if let known = await SpeakerDirectory.shared.match(centroid: centroid) {
+                    names[SpeakerLabelID.remote(idx).raw] = known
+                    inferred.append(SpeakerLabelID.remote(idx).raw)
+                }
+            }
+            let json = try JSONEncoder().encode(centroids.mapValues { $0 })
+            try MeetingStore.atomicWrite(json, to: await store.directory(for: id)
+                .appendingPathComponent("centroids.json"))
+
+            _ = try await store.update(id: id) { m in
+                m.diarizationSucceeded = true
+                for (k, v) in names { m.speakerNames[k] = v }
+                m.inferredSpeakers = inferred
+                // Stash spans for the attribute stage.
+                m.utterances = Self.assign(spans: spans, to: m.utterances)
+            }
+        } catch {
+            // AD-17: degrade to a single Speaker label rather than fail the Meeting (FR-22).
+            Log.pipeline.error("diarization failed, degrading: \(error.localizedDescription, privacy: .public)")
+            _ = try await store.update(id: id) { $0.diarizationSucceeded = false }
+        }
+    }
+
+    /// Assigns each System Stream Utterance to the diarized speaker whose span
+    /// overlaps it most.
+    static func assign(spans: [DiarizedSpan], to utterances: [Utterance]) -> [Utterance] {
+        utterances.map { u in
+            guard u.origin == .system else { return u }
+            var best: (idx: Int, overlap: TimeInterval)? = nil
+            for s in spans {
+                let o = min(u.end, s.end) - max(u.start, s.start)
+                guard o > 0 else { continue }
+                if best == nil || o > best!.overlap { best = (s.speakerIndex, o) }
+            }
+            var c = u
+            if let b = best { c.speaker = SpeakerLabelID.remote(b.idx) }
+            return c
+        }
+    }
+
+    private func attributeStage(_ id: String) async throws {
+        let store = MeetingStore.shared
+        let localName = await AppStateBridge.localSpeakerName()
+        _ = try await store.update(id: id) { m in
+            m.speakerNames[SpeakerLabelID.local.raw] = localName
+            // Give every unnamed remote cluster a stable anonymous label.
+            var counter = 1
+            for s in m.speakers where !s.isLocal {
+                if m.speakerNames[s.raw] == nil {
+                    m.speakerNames[s.raw] = "Speaker \(counter)"
+                    counter += 1
+                }
+            }
+            // AD-4: sort by the shared session clock.
+            m.utterances.sort { $0.start < $1.start }
+        }
+    }
+
+    private func metadataStage(_ id: String) async throws {
+        let store = MeetingStore.shared
+        let meeting = try await store.load(id: id)
+
+        // AD-12: prefer the LLM, fall back to the deterministic backend. The
+        // fallback is NOT an error here — it is the expected path on this machine.
+        var result: MeetingMetadata
+        if await llm.isAvailable() {
+            do {
+                result = try await llm.derive(from: meeting.utterances, names: meeting.speakerNames)
+            } catch {
+                Log.pipeline.info("LLM metadata failed, using heuristic: \(error.localizedDescription, privacy: .public)")
+                result = try await heuristic.derive(from: meeting.utterances, names: meeting.speakerNames)
+            }
+        } else {
+            result = try await heuristic.derive(from: meeting.utterances, names: meeting.speakerNames)
+        }
+
+        // No Meeting is ever left untitled (FR-26).
+        if result.title.trimmingCharacters(in: .whitespaces).isEmpty {
+            result.title = MeetingMetadata.fallback(date: meeting.startedAt, app: meeting.triggeringApp).title
+        }
+        _ = try await store.update(id: id) { $0.metadata = result }
+    }
+
+    private func writeStage(_ id: String) async throws {
+        let store = MeetingStore.shared
+        let meeting = try await store.load(id: id)
+        guard let folder = await AppStateBridge.notesFolder() else {
+            throw MinutesError.notesFolderUnavailable
+        }
+        let filename = try noteWriter.write(meeting: meeting, into: folder)
+        _ = try await store.update(id: id) { $0.noteFilename = filename }
+    }
+
+    // MARK: - Note rewrite on edit (FR-35)
+
+    /// Re-renders the Note after a title or speaker change, without re-running
+    /// transcription or diarization (FR-24).
+    func rewriteNote(meetingID id: String) async {
+        let store = MeetingStore.shared
+        guard let meeting = try? await store.load(id: id),
+              meeting.stage == .written,
+              let folder = await AppStateBridge.notesFolder() else { return }
+        do {
+            let filename = try noteWriter.write(meeting: meeting, into: folder)
+            _ = try? await store.update(id: id) { $0.noteFilename = filename }
+        } catch {
+            Log.pipeline.error("note rewrite failed: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+}
