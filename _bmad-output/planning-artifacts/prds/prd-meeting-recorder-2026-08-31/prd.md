@@ -9,6 +9,11 @@ revisions:
   - 2026-08-31 increment 2 — first-use feedback after the build shipped. Adds FR-49
     through FR-54 and amends FR-40. Every addition comes from the user operating
     the built app, so this increment carries observation rather than inference.
+  - 2026-08-31 increment 3 — summarisation intelligence becomes a chosen, installable
+    capability rather than an assumed one. Adds FR-55 through FR-61, amends FR-26,
+    FR-27 and FR-52, and amends NFR-1 for the first time in the project's life.
+    Preceded by a spike (planning-artifacts/spikes/spike-local-llm-2026-08-31.md)
+    and a review (prds/.../review-llm-key-proposal.md).
 inputs:
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/brief.md
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/addendum.md
@@ -83,7 +88,13 @@ Downstream artifacts must use these terms verbatim. No synonyms anywhere.
 - **Utterance** — one contiguous span of speech: start time, end time, text, and exactly one Speaker Label.
 - **Transcription Model** — a selectable local Whisper model variant, with a size on disk and a speed/accuracy character.
 - **Metadata** — the derived, non-transcript content of a Meeting: title, tags, summary, decisions, action items, and the name of the Metadata Backend that produced them.
-- **Metadata Backend** — the component producing Metadata. Exactly one of **LLM Backend** (Apple on-device foundation model) or **Heuristic Backend** (deterministic local extraction). Never both for one Meeting.
+- **Metadata Backend** — the component producing Metadata. Exactly one per Meeting, never two. **Revised in increment 3** from a two-member set to four, because "the LLM Backend" stopped being a single thing:
+  - **Heuristic Backend** — deterministic local extraction. Always available. Produces title and tags; no longer produces a summary (FR-55).
+  - **Apple Backend** — Apple's on-device foundation model. Available only when Apple Intelligence is switched on.
+  - **Local Model Backend** — a language model the user downloads, running on this Mac. Requires the Metal toolchain (FR-58).
+  - **Remote Backend** — a language model reached over the network with a user-supplied key. Off by default; the only Backend that transmits anything (FR-59).
+- **Summarisation Backend** — a Metadata Backend capable of producing a summary, decisions and action items: the Apple, Local Model and Remote Backends. The Heuristic Backend is a Metadata Backend but not a Summarisation Backend, and that distinction is what FR-55 gates on.
+- **Prerequisite** — a condition the app can detect but cannot satisfy on the user's behalf: Apple Intelligence being switched on, the Metal toolchain being installed, a key being present. Reported with the reason and the remedy, never as a bare unavailability (FR-58).
 - **Note** — the single Markdown file written for a Meeting: YAML frontmatter, then Metadata, then Transcript.
 - **Notes Folder** — the user-chosen directory where Notes are written.
 - **Detection** — passive observation of which applications hold the audio input device, used to recognise that a meeting is underway.
@@ -405,19 +416,28 @@ The set of Speaker Profiles is visible as a list, and each entry can be renamed 
 **Functional Requirements:**
 
 #### FR-26: Derive Metadata for every Meeting
-Every Meeting receives a title, a tag set, and a summary.
+Every Meeting receives a title and a tag set. A summary, decisions and action items are produced only when a Summarisation Backend capable of them is available.
 
 **Consequences (testable):**
 - No Meeting is ever left untitled; a fallback title derived from date, time and detected application is always available.
 - Tags are a small set (target 3-6), lowercase and consistent enough to be usable for filtering across Meetings.
-- Metadata generation runs entirely on-device.
+- Metadata generation runs on-device unless a Remote Summarisation Backend is configured and consented for that Meeting (FR-59, NFR-1).
+- **Amended (increment 3):** the summary is no longer guaranteed. With no capable Backend, the Note carries the Transcript, the title and the tags, and omits the summary, decisions and action items sections entirely rather than filling them with sentence extracts. See FR-55.
 
-#### FR-27: Prefer the LLM Backend when available
-When the on-device foundation model is available, it produces the Metadata *by default*.
+**Notes:**
+- The title guarantee is deliberately kept while the summary guarantee is dropped. A Meeting with no title is unfindable; a Meeting with no summary is merely less useful, and an honestly absent summary beats a misleading one (§9.3).
+
+#### FR-27: Apple's on-device foundation model is one available Backend
+When the on-device foundation model is available, it can produce the Metadata. It is no longer the only path to a real summary.
 
 **Consequences (testable):**
 - Backend availability is checked at run time, not assumed at build time.
-- **Amended (increment 2):** the preference is a default, not a rule. FR-52 lets the user pin the Heuristic Backend, and an explicit choice wins over availability.
+- **Amended (increment 2):** the preference is a default, not a rule. FR-52 lets the user pin a Backend, and an explicit choice wins over availability.
+- **Amended (increment 3):** this Backend is one entry in the Summarisation Backend list (FR-56), not a privileged tier. When it is unavailable the reason is stated and actionable (FR-58) rather than silently falling through.
+- When it is unavailable *because Apple Intelligence is switched off* — as opposed to the device being ineligible — the app says so and says where to turn it on. Those two cases are distinguishable at run time and must not be reported identically.
+
+**Notes:**
+- Demoted from "the LLM Backend" on the user's explicit instruction: *"Lets not rely on apple intelligence for this. But keep it as a possibility."* The demotion is the requirement.
 - When the model is unavailable — including because Apple Intelligence is disabled — the Heuristic Backend runs instead and the Meeting still completes.
 - Output is requested as a typed structure rather than parsed out of free text, so a malformed generation cannot corrupt a Note.
 - A Transcript too long for the model's context is handled by summarising in parts and combining, not truncated silently.
@@ -447,7 +467,7 @@ Every Note names its Metadata Backend.
 - A reader can therefore tell whether a summary came from a language model or from keyphrase extraction — provenance is never ambiguous.
 
 #### FR-52: The Metadata Backend is visible and selectable in the app
-Settings names which Backend will produce Metadata, why, and lets the user pin the Heuristic Backend.
+Settings names which Backend will produce Metadata and why. **Amended (increment 3):** the two-way choice becomes a selection from the Summarisation Backend list (FR-56), and the precedence rule is stated in FR-57 rather than implied by availability.
 
 **Consequences (testable):**
 - Settings states which Backend is active in plain language, and when the LLM Backend is unavailable it states the reason rather than only the outcome.
@@ -458,6 +478,18 @@ Settings names which Backend will produce Metadata, why, and lets the user pin t
 **Notes:**
 - Prompted by the user asking what performs summarisation and finding no setting for it. FR-30 recorded provenance in the *Note*, which is the wrong surface for the question "what is this app doing" — the Note is read after the fact, and only if you open it.
 - The honest content of this pane on the target machine is that Apple Intelligence is disabled, so summarisation is keyphrase extraction. §9.3 requires that be said, not softened.
+
+#### FR-55: Derived content appears only when something real produced it
+The summary, decisions and action items are gated on a Summarisation Backend that can genuinely produce them.
+
+**Consequences (testable):**
+- With no capable Backend selected or available, the Note contains the Transcript, the title and the tags, and the summary, decisions and action items sections are absent — not empty-with-a-heading, and never filled with extracted sentences.
+- The Library's meeting detail says why those sections are missing and links to where that is fixed.
+- Keyphrase extraction continues to produce the **title and tags**, which it does adequately. It no longer produces a summary.
+- A Meeting summarised earlier by a different Backend keeps its summary. Changing this setting never retroactively strips or rewrites content already derived.
+
+**Notes:**
+- This is the increment's one uncontested improvement, and it stands on its own: it makes the product more honest today at no cost. §9.3 already required that absence be represented honestly rather than as invented content; the sentence-extract summary was in breach of that and read convincingly enough to be believed.
 
 ---
 
@@ -665,6 +697,82 @@ The user can re-enter the first-run flow after initial setup. Realizes UJ-4.
 - The window fits comfortably on a laptop display without scrolling in its default state, and is keyboard-navigable.
 - The sidebar is the only navigation; the app must not accumulate a second window for settings or library.
 
+---
+
+### 4.10 Summarisation Intelligence
+
+**Description:** A pane that treats summarisation the way §4.4 treats transcription — a small set of real choices, each explaining what it is for, what it costs and what it requires, with installation and readiness visible in the same place. Introduced in increment 3 on the user's instruction not to depend on Apple Intelligence while keeping it available. Realizes the same "small, clean UI for selecting models" ask that produced FR-17, applied to the second kind of model in the product.
+
+**Functional Requirements:**
+
+#### FR-56: Choose a Summarisation Backend from a curated list
+One pane lists every way the app can summarise, in a shape a reader can compare.
+
+**Consequences (testable):**
+- Three families are represented: Apple's on-device model, a downloadable local model, and a remote model reached with a user-supplied key.
+- Each entry states what it is for in plain language before it states anything technical, and carries its provider, its size or cost, and its readiness — mirroring FR-17's row anatomy rather than inventing a second visual language.
+- No two entries render with the same display name. The increment-1 defect where 22 model IDs collapsed into 12 indistinguishable names must not recur.
+- The list of downloadable local models is built from a live registry at run time, never from a hardcoded list, because the ecosystem's model names move faster than a release cycle.
+- Selecting an entry that is not installed offers installation; it does not silently select something else.
+- The pane never implies a capability the machine does not have. An entry whose prerequisite is missing is shown as blocked with the reason (FR-58), not hidden and not offered.
+
+#### FR-57: Backend precedence is stated, not inferred
+With several Backends possible, which one runs is defined and visible.
+
+**Consequences (testable):**
+- The order is: an explicit user selection first; then availability among the remaining Backends; then no summary at all (FR-55).
+- The pane states which Backend will run for the *next* Meeting, not merely which is selected — those differ when a selection is unavailable.
+- Two settings can no longer contradict each other silently: if a selection is impossible, the pane says so and says what will happen instead.
+
+**Notes:**
+- Written because increment 2's FR-52 created a second setting that could disagree with availability, and a third Backend would have made the ordering undocumented. The review flagged this before it shipped.
+
+#### FR-58: Prerequisites are detected, explained and actionable
+A Backend the app cannot use says why, and says what would fix it.
+
+**Consequences (testable):**
+- Every unavailable Backend gives a reason the user can act on, not a bare "unavailable".
+- Apple's model distinguishes *Apple Intelligence is switched off* from *this device is ineligible*, because only one of those is fixable and the app can tell them apart at run time.
+- The local model path detects a missing Metal toolchain and states the exact command that installs it. This is a verified, currently-unmet prerequisite on the target machine, not a hypothetical: `xcodebuild -showComponent MetalToolchain` reports `uninstalled`, and without it MLX cannot execute a single token.
+- A missing prerequisite is reported *before* a multi-gigabyte download, not after.
+- Prerequisite state is re-read when the pane appears, so fixing it outside the app is reflected without a relaunch — the same rule FR-46 already applies to permissions.
+
+#### FR-59: A remote Backend requires a key, and consent per Meeting
+The remote option exists, is off by default, and never sends anything the user has not agreed to send for that Meeting.
+
+**Consequences (testable):**
+- No remote request is ever made until the user has both entered a key and consented for that Meeting. Configuring a key is not consent.
+- The consent moment names what will be sent — the Transcript — and who will receive it, and shows the participants whose speech it contains.
+- Audio is never transmitted under any configuration. Neither are Speaker Profiles. Only Transcript text.
+- The key is stored in the system Keychain, never in preferences, never in the Notes Folder, never in a log, and is not readable back into the UI after saving.
+- Removing the key stops all remote capability immediately and leaves previously generated summaries and their provenance untouched.
+- An empty or near-empty Transcript is never sent. A silent recording must not become a paid request.
+- The pane states, where the key is entered, that this is the only feature in the app that transmits anything, and that meeting participants have not consented to it.
+
+**Notes:**
+- `[NOTE FOR PM]` The reviewer's finding stands and is recorded rather than resolved: a Transcript contains colleagues' speech, and in an EU employment context an individual cannot establish a lawful basis for sending it to a third-party processor on their colleagues' behalf. The product's contribution is to make the act explicit, per-Meeting, and off by default. It cannot make it lawful. If a company-approved vendor with a data processing agreement exists, that is the endpoint to configure.
+
+#### FR-60: Cost and duration are shown before they are incurred
+Neither money nor a long wait arrives unannounced.
+
+**Consequences (testable):**
+- Before a remote request, an estimated token count and cost is shown, derived from the actual Transcript.
+- A running total of remote spend is visible in the pane, so cost is observable rather than discovered on a statement.
+- For a local model, the pane shows a measured duration for this Mac once measured, and says plainly when it has not been measured yet rather than showing an estimate dressed as a measurement — the distinction FR-17's speed card already draws.
+- A local model download shows real progress. The registry's download reporting is continuous, so a coarse indeterminate spinner is not acceptable here.
+
+#### FR-61: Summarisation never blocks the Note
+A Backend that fails, times out, or is offline costs the user nothing that was already earned.
+
+**Consequences (testable):**
+- Any Backend failure — unreachable network, rejected key, exhausted quota, timeout, model load failure, out-of-memory — still writes the Note with the Transcript, title and tags, and records the failure on the Meeting.
+- The Note is never blocked on a network call.
+- A failed summarisation is retryable without re-transcribing, reusing the stored Transcript (the FR-39 pattern).
+- Transcription and summarisation models are never resident simultaneously; the pipeline unloads one before loading the other (NFR-4).
+- Provenance stays truthful across every path: each Note names the Backend that actually produced its Metadata, including the specific local model or remote model identifier, and a Note written by one Backend is never relabelled by a later change of setting (FR-30, §9.3).
+
+---
+
 ## 5. Non-Goals (Explicit)
 
 These exist to stop the "let me also add the nearby thing" failure mode at epic, story and code level.
@@ -731,6 +839,13 @@ A Tier-0 build that works beats a Tier-2 build that half-works, and the tiers ar
 4. `FR-49` (menu bar timer) and `FR-50` (animated indicator) — small, visible, and independent of everything above.
 5. `FR-52` (Backend visible and selectable) — closes the question the user asked; no dependency, so it can move if measurement (§13 Q11) changes the shape.
 
+**Tier 5 — Increment 3, summarisation as a chosen capability.** Ordered so the honest-by-default change lands first and the expensive, contested one lands last. A stop after any step leaves a coherent product.
+
+1. `FR-55` (no summary unless something real produced it) plus the `FR-26` amendment — independent of every other item here, improves the product immediately, and removes a misleading artefact the user is reading today. **Ship this even if nothing else in Tier 5 is built.**
+2. `FR-56`, `FR-57`, `FR-58` (the pane, precedence, prerequisites) — the surface and its honesty rules. FR-58 must precede any download work: it is what stops a multi-gigabyte fetch on a machine that cannot run the result.
+3. `FR-60`'s local half and `FR-61` (progress, measured duration, never block the Note) — the local model path made usable and safe.
+4. `FR-59` and `FR-60`'s remote half — the key, per-Meeting consent, cost display. Last on purpose: it is the only part that transmits anything, carries the reviewer's unresolved consent finding, and is worth building only if the local path proves insufficient.
+
 ## 7. Success Metrics
 
 Stakes are personal-utility, so these are deliberately few and mostly binary. The honest overall test: **three weeks after it is built, is it still enabled at login?**
@@ -756,12 +871,14 @@ Stakes are personal-utility, so these are deliberately few and mostly binary. Th
 
 ## 8. Cross-Cutting NFRs
 
-- **NFR-1: On-device only.** All inference — transcription, Diarization, Metadata — executes locally. No audio, Transcript, or Metadata is transmitted anywhere, ever. Model downloads are the sole permitted network activity, are user-initiated, and target only the model repositories.
+- **NFR-1: On-device by default; egress only by explicit, per-use consent.** All inference — transcription, Diarization, Metadata — executes locally unless the user has deliberately configured a Remote Summarisation Backend and consented for that Meeting. Audio and Diarization never leave the device under any configuration. Model downloads and, when configured, Remote Summarisation requests are the only permitted network activity; both are user-initiated.
+
+  **Amended in increment 3.** This previously read "No audio, Transcript, or Metadata is transmitted anywhere, ever." That absolute is retired deliberately and in the open, because FR-59 makes a Transcript transmissible. Three parts of it survive as invariants and are *not* negotiable: audio never leaves the device; Speaker Profiles never leave the device (§9.1); and nothing leaves without the user having both configured it and consented to it. The default configuration transmits nothing, and a build with no key entered is still literally zero-egress.
 - **NFR-2: Apple Silicon, macOS 15+.** Targets Apple Silicon; deployment target no lower than macOS 14.4 for audio-capture permission reasons, and 15.0+ preferred. Intel is unsupported.
 - **NFR-3: Negligible idle cost.** While Idle, CPU use is effectively zero apart from Detection polling, which itself must be cheap enough not to affect battery life measurably.
 - **NFR-4: Bounded memory.** Memory during Capture is flat with respect to Session duration. Peak memory during transcription is bounded by the chosen model and does not risk system pressure on a 24 GB machine; two models never load concurrently (FR-20).
 - **NFR-5: Failure is visible and non-destructive.** No failure path silently discards audio, a Transcript, or a Note. Every failure surfaces a reason and leaves the underlying data recoverable.
-- **NFR-6: Verifiable egress.** The zero-egress claim must be verifiable by an outside observer with a network monitor, not merely asserted in documentation.
+- **NFR-6: Verifiable egress.** The egress claim must be verifiable by an outside observer with a network monitor, not merely asserted in documentation. **Amended in increment 3:** the claim being verified is now conditional rather than absolute, which makes it *harder* to state and therefore more important to state precisely. With no Remote Backend configured, a network monitor must observe zero traffic outside user-initiated model downloads. With one configured, it must observe traffic only to the configured endpoint, only when a Meeting was sent, and never carrying audio.
 - **NFR-7: Accessible enough to trust.** Session state is conveyed by shape as well as colour (FR-2). Settings and Library are keyboard-navigable and legible at default system font sizes in light and dark mode.
 - **NFR-8: Plain-text durability.** Notes remain fully useful if the app is deleted. No proprietary index, database or sidecar is required to read a Note.
 
@@ -776,7 +893,7 @@ Stakes are personal-utility, so these are deliberately few and mostly binary. Th
 
 ### 9.2 Cost
 
-- Zero run-time cost is a design constraint, not an outcome — it is what makes a tool with no business model sustainable.
+- Zero run-time cost is a design constraint, not an outcome — it is what makes a tool with no business model sustainable. **Amended in increment 3:** it remains the constraint on every path the app ships enabled. A Remote Summarisation Backend has a per-use cost, so it is off by default, must never become the default, and FR-60 requires the cost be shown before it is incurred. A user who never enters a key never pays anything.
 - Disk is the only real resource cost: models (hundreds of MB to ~1.5 GB) plus retained audio. Both must be visible and clearable (FR-44).
 
 ### 9.3 Honesty of derived content
@@ -876,6 +993,14 @@ Raised by increment 2:
 11. **Should FR-52's Backend choice be per-Meeting rather than global?** A global toggle is simpler and matches the ask; retrying one Meeting with the other Backend is the plausible next want. Deferred, not decided.
 12. **Is FR-53's check cheap enough to run on every Library appearance**, or does it need to be tied to FR-54's explicit refresh? Depends on Meeting count and folder size; measure before choosing.
 
+Raised by increment 3:
+
+13. **Is a 4-bit local model in the 3-6 GB class actually good enough at meeting summarisation?** Unanswered, and unanswerable until the Metal toolchain is installed — the spike could not generate a single token. This is the question the whole increment rests on: if the answer is no, FR-59's remote path stops being optional. Informs FR-56's curated list and FR-60's measured figures.
+14. **What is the peak resident memory for a 9B 4-bit model plus KV cache on a two-hour Transcript**, and does NFR-4 hold on 24 GB? Determines the largest model the curated list may offer, and whether long Transcripts need the FR-27 chunking contract regardless of Backend.
+15. **Which local model family?** The spike found `Qwen3.5`, `Qwen3.6` and `Qwen3.8` conversions all present on `mlx-community`, with download counts favouring older Llama and Qwen builds. The list must be built from a live query (FR-56), but the *curation* still needs a judgement, and that judgement needs Q13's measurement first.
+16. **Does the Metal toolchain prerequisite survive distribution?** It is a build-time dependency here. Whether a user of a built app needs it too depends on the metallib being correctly bundled as a resource — which the current build script does not do. Informs FR-58 and the build pipeline.
+17. **Which remote endpoint, if any?** Left open deliberately. If Spirii has an approved vendor under a data processing agreement, that is the answer and it changes FR-59's consent copy. If not, the honest answer may be that FR-59 should not ship at all.
+
 ## 14. Assumptions Index
 
 Every inference made without user confirmation. The user was unavailable for this run, so this list is unusually long and should be read as the review surface.
@@ -900,6 +1025,14 @@ Every inference made without user confirmation. The user was unavailable for thi
 - **§4.5, FR-51 provenance fields** — that sample count and last-matched date are the useful things to show. Inferred from what makes a match judgeable, not from the request.
 - **§4.6, FR-52 pin-the-Heuristic-Backend** — the user asked what performs summarisation and where its settings are. That the answer should include an override, rather than only an explanation, is inferred from a deterministic summary being sometimes preferable.
 - **§4.8, FR-40 multi-select delete** — "mainly deleting them" was the ask. Multi-select is inferred from the plural and from the state the user is actually in (several test recordings), not stated.
+
+**Increment 3.** The direction here was explicit — *"Lets not rely on apple intelligence for this. But keep it as a possibitly. We should add a settings page for this intellingene for summarisation similar to the model selection for transcription. We could allow local download, or the key."* — so the assumptions are about shape, not intent. A spike replaced several would-be assumptions with measurements; those are in the spike report, not here.
+
+- **§4.6, FR-55 gating scope** — that keyphrase extraction keeps producing *titles and tags* while losing the *summary*. The instruction said "raw transcript and title setting etc. for the basic", which reads as keeping the cheap useful parts; tags were not mentioned either way. Chosen because the observed title quality is adequate and the observed summary quality is not.
+- **§4.10, FR-56 three families** — that Apple's model, a downloadable local model and a remote key are the right three entries. The first two were named by the user; grouping them as one comparable list rather than three separate settings is inferred from "similar to the model selection for transcription".
+- **§4.10, FR-59 consent granularity** — that consent is per-Meeting rather than a single global switch. Not requested; inferred from the reviewer's finding that a Transcript contains other people's speech, and deliberately more restrictive than the user asked for.
+- **§4.10, FR-60 cost display** — that showing an estimate before sending is required rather than optional. Inferred from §9.2 naming zero cost as a constraint; the alternative is discovering spend after the fact.
+- **§8, NFR-1 amendment wording** — that audio and Speaker Profiles remain absolute never-transmit invariants while Transcript text becomes conditional. The user asked for a key option and said nothing about what may travel; this is the narrowest amendment that permits the feature.
 - **§4.9, FR-47 Test Playground scope** — that the playground should report per-Stream audio presence and measured throughput (rather than merely showing transcribed text as the reference product does) is inferred. It is justified by §12: there is no API to query system-audio permission, so this is the only way the user can confirm the app can do its job.
 - **§6.2** — Zoom/Meet/Discord excluded because the user named only Slack and Teams.
 - **§7** — all metric targets are set by inference. None was given.

@@ -19,6 +19,7 @@ colors:
   # --- Literal. Semantics the system does not provide. Only three. ---
   state-recording:     '#E5484D'
   state-transcribing:  '#F5A524'
+  state-blocked:       '#B26A00'   # added increment 3 — a capability the machine cannot do yet, and the egress marker. Deliberately NOT state-recording (reserved) and darker than state-transcribing so the two never read as the same signal.
   brand-accent:        '#12A594'
   brand-accent-hover:  '#0E8C7D'
 typography:
@@ -33,6 +34,7 @@ typography:
   metric:         { note: 'macOS .caption, monospaced digits — elapsed time, durations, timestamps, file sizes' }
   transcript:     { note: 'macOS .body — transcript text; NOT monospaced, it is prose' }
   transcript-ts:  { note: 'macOS .caption, monospaced digits, Color.secondary — transcript timestamps' }
+  mono-inline:    { note: 'macOS .caption, monospaced — a model identifier or a shell command shown inline. Added increment 3: PRD FR-58 requires a remedy be specific enough to paste.' }
 rounded:
   sm: '4px'
   md: '6px'
@@ -48,6 +50,14 @@ spacing:
   '6': '20px'
   '7': '24px'
   '8': '32px'
+  # The numeric scale was referenced by checklist-row and others from the start but
+  # never declared. Written down in increment 3 rather than left implicit.
+  1: '2px'
+  2: '4px'
+  3: '8px'
+  4: '12px'
+  5: '16px'
+  8: '32px'
   card-padding: '16px'
   card-gap: '16px'
   row-gap: '8px'
@@ -96,6 +106,33 @@ components:
     tint: '{colors.brand-accent}'
     radius: '{rounded.md}'
     note: 'One per pane, maximum. "Start Test", "Download".'
+  backend-row:
+    min-height: '44px'
+    padding: '{spacing.4} {spacing.card-padding}'
+    selection: 'radio, one active; the active row is unambiguously selected, not merely check-marked'
+    title:    '{typography.row-title}'
+    subtitle: '{typography.row-subtitle}'
+    technical-id: '{typography.mono-inline} @ {colors.text-secondary}'
+    separator: '{colors.separator} hairline between rows, inset to text origin, none after the last'
+    note: 'Anatomy is intentionally identical to the Transcription pane model row (behavioural spec in EXPERIENCE.md § "Model row") — PRD FR-56 asked for the pane to be "similar to the model selection for transcription". Divergence is a defect unless the underlying thing differs; the one intended divergence is the Blocked readiness state.'
+    family-heading: '{typography.card-heading}, one per family: "On this Mac, built in" / "On this Mac, downloaded" / "Somewhere else"'
+    readiness:
+      ready:       { label: 'Ready',        treatment: '{components.pill-done}' }
+      download:    { label: 'Download',     treatment: '{components.button-row-action}' }
+      needs-key:   { label: 'Needs a key',  treatment: '{components.button-row-action}' }
+      blocked:     { label: 'Blocked',      treatment: '{components.blocked-note} — no action control at all' }
+    order: 'purpose in plain language, then provider, then technical id, then cost (disk size or per-meeting estimate), then readiness'
+  blocked-note:
+    background: 'none'
+    foreground: '{colors.text-secondary}'
+    glyph: 'exclamationmark.triangle — {colors.state-blocked}'
+    body: '{typography.row-subtitle} — states the prerequisite AND the remedy'
+    remedy: '{typography.mono-inline} when the remedy is a command'
+    note: 'Occupies the trailing slot where a button would be, so the reader meets the reason before reaching for an action. Never focusable, never selectable — a blocked capability must not be choosable (PRD FR-58).'
+  egress-marker:
+    applies-to: 'the "Somewhere else" family heading and the key-entry card only'
+    treatment: '{colors.state-blocked} left rule at 2px, no fill'
+    note: 'The single visual signal in the product that means "this leaves your Mac". Used nowhere else, so it never becomes decoration. Deliberately not {colors.state-recording} — that colour means Recording and nothing else.'
   progress-download:
     style: 'determinate linear'
     tint: '{colors.brand-accent}'
@@ -188,6 +225,12 @@ The de-emphasis is the whole point: a user opening Setup should see what is left
 
 **`{components.speaker-chip}`** — the Local Speaker chip is brand-tinted, Remote Speakers are neutral grey. This single visual difference encodes the product's core structural claim: one of these labels is a fact, the others are inferences. An auto-applied name from a Speaker Profile is prefixed to mark it as inferred (PRD FR-25).
 
+**`{components.backend-row}`** — the Summaries pane's row, and a deliberate copy of the Transcription pane's model row. The user's instruction was that this pane be "similar to the model selection for transcription", so shared anatomy is a requirement and not a convenience: a reader who has learned one row has learned both. It adds one thing the model row never needed — a `Blocked` readiness state — and groups rows under family headings so that *where the work happens* is legible before any individual row is read.
+
+**`{components.blocked-note}`** — what sits where a button would sit, when the app cannot do the thing. It carries the prerequisite and the remedy, and it is not focusable, because a blocked capability must not be selectable. This component exists because of a specific failure: in increment 2 the app knew that Apple Intelligence was switched off, knew that was why summaries were weak, and said none of it — the user had to ask. A reason with no remedy is only half of it, so a remedy that is a command renders as one.
+
+**`{components.egress-marker}`** — a 2px rule in `{colors.state-blocked}`, used on exactly two elements: the "Somewhere else" family heading and the key-entry card. It is the only mark in the product that means *this leaves your Mac*. Its scarcity is its meaning; the moment it appears anywhere else it stops working. Deliberately not `{colors.state-recording}`, which is reserved for Recording alone.
+
 **`{components.progress-download}`** — determinate, always. PRD FR-18 explicitly forbids an indeterminate spinner for a model download, because a 600 MB download behind a spinner is indistinguishable from a hang.
 
 ## Do's and Don'ts
@@ -198,6 +241,9 @@ The de-emphasis is the whole point: a user opening Setup should see what is left
 - Let standard controls keep `{colors.control-accent}`, the user's own accent.
 - Reserve `{colors.state-recording}` exclusively for Recording.
 - Differentiate the three menu bar icon states by silhouette as well as tint.
+- State a blocked capability's reason **and** its remedy, in the row itself. If the remedy is a command, show the command.
+- Reserve `{components.egress-marker}` for the two elements that involve transmission, and nothing else.
+- Mirror the Transcription model row's anatomy in the Summaries pane. A second visual language for the same job is a defect.
 - Put card headings outside the card.
 - Use monospaced digits for anything that ticks or counts.
 - Give every checklist and model row a one-line reason it exists.

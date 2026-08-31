@@ -1,6 +1,8 @@
 ---
 stepsCompleted: [1, 2, 3, 4]
 revisions:
+  - 2026-08-31 increment 3 — added Epic 9 (7 stories, FR-55 to FR-61) headless, after
+    a review and a spike. Epics 1-8 untouched and not renumbered.
   - 2026-08-31 increment 2 — added Epic 8 (6 stories, FR-49 to FR-54 plus the
     FR-40 amendment) headless. Existing epics and stories untouched and not renumbered.
 inputDocuments:
@@ -16,7 +18,7 @@ inputDocuments:
 
 ## Overview
 
-This document decomposes the 54 functional requirements, 8 cross-cutting NFRs, the 21 architecture decisions and the two UX spines into 49 implementable stories across 8 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected here rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
+This document decomposes the 61 functional requirements, 8 cross-cutting NFRs, the 27 architecture decisions and the two UX spines into 56 implementable stories across 9 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
 
 Every FR is covered by exactly one story — verified programmatically, see the FR Coverage Map.
 
@@ -220,6 +222,7 @@ All 48 FRs of increment 1 covered exactly once; no FR appears in two stories. FR
 6. **Epic 6: Resilience and Settings** — 8 stories, tiers T1, T2
 7. **Epic 7: Metadata Intelligence** — 3 stories, tiers T1, T2, T3
 8. **Epic 8: Trust the List, See the State** — 6 stories, tier T4 (increment 2)
+9. **Epic 9: Summarisation You Choose and Can Trust** — 7 stories, tier T5 (increment 3)
 
 
 ## Epic 1: Foundation and Walking Skeleton
@@ -1633,3 +1636,235 @@ So that I am not guessing whether an LLM is involved.
 | FR-40 (amendment) | T4 | 8.3 |
 
 FR-40's original consequences remain covered by story 5.5; story 8.3 covers only the increment-2 amendment, so no FR is claimed by two stories.
+
+---
+
+## Epic 9: Summarisation You Choose and Can Trust
+
+*Increment 3 · Tier T5 · 7 stories · FR-55 … FR-61*
+
+**Why this epic exists.** The user asked what produced the summaries, found no setting, and learned the answer was keyphrase extraction — sentence selection dressed as a summary. Their instruction was specific: *"lets only enable that if we can actually use an llm for it… The user may supply an LMM key to get summaries, better titles etc."*, then, after review, *"Lets not rely on apple intelligence for this. But keep it as a possibitly… We could allow local download, or the key."*
+
+Two things happened between the request and this epic, and both shape it. A **review** (`prds/…/review-llm-key-proposal.md`) found that a cloud key contradicts NFR-1 and NFR-6 outright and carries a consent problem an individual cannot solve for their colleagues — so the key is last, not first. A **spike** (`spikes/spike-local-llm-2026-08-31.md`) proved the local path works and found a hard prerequisite that is *currently unmet*: the Xcode Metal toolchain is uninstalled, and without it MLX cannot execute a single token.
+
+The epic's theme is the inverse of Epic 8's. Epic 8 was *the app knew things it did not show*. This one is **the app must not pretend to a capability it does not have** — and when it lacks one, it must say which, why, and what would fix it.
+
+**Ordering is load-bearing.** Story 9.1 ships alone and improves the product immediately. 9.6 must precede any download work. 9.7 is last because it is the only part that transmits anything.
+
+### Story 9.1: A summary appears only when something real produced it
+
+*Requirements: FR-55, FR-26 (amended) · Tier T5*
+
+As a user,
+I want no summary rather than a fake one,
+So that what I read in a note is something I can act on.
+
+**Acceptance Criteria:**
+
+**Given** no summarising backend is available or selected
+**When** a meeting's note is written
+**Then** it contains the transcript, the title and the tags
+**And** the summary, decisions and action items sections are absent entirely
+
+**And** each of the following holds:
+
+- Sections are omitted, not rendered empty with a heading, and never filled with sentences extracted from the transcript.
+- Keyphrase extraction still produces the title and tags, which it does adequately.
+- The meeting detail says why those sections are missing and links to where that is fixed.
+- A meeting summarised earlier by a different backend keeps its summary. Changing the setting never retroactively strips or rewrites derived content.
+- No meeting is ever left untitled — FR-26's title guarantee survives while its summary guarantee does not.
+
+**Implementation constraints:**
+
+- Ship this independently of every other story in the epic. It costs nothing, depends on nothing, and removes a misleading artefact the user is reading today.
+- §9.3 already required that absence be represented honestly rather than as invented content. The extract summary was in breach and read convincingly enough to be believed, which is what made it worse than nothing.
+
+### Story 9.2: Capability is a value with a reason and a remedy
+
+*Requirements: FR-58 (foundation) · Tier T5*
+
+As a developer,
+I want a backend to report why it cannot run and what would fix it,
+So that no part of the UI has to guess and no reason gets lost.
+
+**Acceptance Criteria:**
+
+**Given** any summarisation backend
+**When** its readiness is queried
+**Then** it returns `.ready`, `.needsDownload(bytes:)`, `.needsKey`, or `.blocked(reason:remedy:)`
+**And** every readiness state in the UI maps to exactly one of those cases
+
+**And** each of the following holds:
+
+- `remedy` is structured enough to render as a shell command where the remedy is a command.
+- Apple's backend distinguishes *Apple Intelligence is switched off* from *this device is ineligible*. Both are detectable at run time and only one is fixable.
+- Capability is computed on demand and not cached across a pane appearance, so a prerequisite fixed outside the app is reflected without a relaunch.
+- A `.blocked` backend can never be selected — the type makes the invalid state unrepresentable rather than relying on a UI guard.
+
+**Implementation constraints:**
+
+- AD-22. This story exists because `isAvailable() -> Bool` was adequate for one optional backend and is not adequate for three.
+- Do this before 9.3: the pane cannot be built honestly on top of a Bool.
+
+### Story 9.3: Backend precedence is one pure function
+
+*Requirements: FR-57, FR-52 (amended) · Tier T5*
+
+As a user,
+I want to know which backend will actually run for my next meeting,
+So that two settings can never quietly disagree.
+
+**Acceptance Criteria:**
+
+**Given** a user selection and the current capabilities
+**When** the app decides what will summarise the next meeting
+**Then** one pure function returns the backend and the reason
+**And** the pane displays exactly what that function returned
+
+**And** each of the following holds:
+
+- The order is: explicit user selection if ready; else the first ready backend in a fixed preference order; else no summariser.
+- The pane states which backend will run for the *next* meeting, which differs from the selection whenever a selection has become unavailable.
+- When a selection is impossible, the pane says so and says what will happen instead — it never silently substitutes.
+- The function is unit-tested over every combination of selection and capability, including all-blocked.
+
+**Implementation constraints:**
+
+- AD-23. Increment 2's FR-52 created a setting that could disagree with availability; a third backend would have made the ordering undocumented. The review caught this before it shipped.
+
+### Story 9.4: The Summaries pane
+
+*Requirements: FR-56 · Tier T5*
+
+As a user,
+I want to compare the ways this app can summarise, the way I compare transcription models,
+So that I can pick one knowing what it costs and what it needs.
+
+**Acceptance Criteria:**
+
+**Given** the Summaries pane
+**When** I read it
+**Then** three families are grouped under headings: on this Mac built in, on this Mac downloaded, somewhere else
+**And** each row states what it is for before it states anything technical
+
+**And** each of the following holds:
+
+- Row anatomy matches the Transcription pane's model row. A second visual language for the same job is a defect.
+- Each row carries provider, technical identifier, cost (disk size or per-meeting estimate) and readiness.
+- No two rows render with the same display name — the increment-1 defect where 22 model IDs collapsed into 12 indistinguishable names must not recur.
+- The downloadable list is built from a live registry at run time, never hardcoded.
+- Selecting an uninstalled entry offers installation and does not silently select something else.
+- A blocked row shows its reason where a button would be, and is not selectable.
+
+**Implementation constraints:**
+
+- The user asked for this pane to be "similar to the model selection for transcription", so shared anatomy is a requirement rather than a convenience.
+- AD-13 extended: the spike found `Qwen3.5`, `Qwen3.6` and `Qwen3.8` conversions all live on `mlx-community`. A list written from memory would have been wrong the day it was written.
+
+### Story 9.5: A local model, downloaded and run on this Mac
+
+*Requirements: FR-60 (local half), FR-61 · Tier T5*
+
+As a user,
+I want a real summary from a model on my own machine,
+So that I get one without depending on Apple Intelligence or sending anything away.
+
+**Acceptance Criteria:**
+
+**Given** a curated local model and an installed prerequisite
+**When** I choose it
+**Then** it downloads with determinate progress showing bytes and percentage
+**And** it summarises a meeting entirely on this Mac
+
+**And** each of the following holds:
+
+- Download progress is determinate. The registry reports continuous progress, so an indeterminate spinner would discard information the app already has.
+- A failed or cancelled download leaves no partial model that could later load as valid.
+- Duration is shown as measured on this Mac, or as not measured yet — never an estimate presented as a measurement.
+- The transcription model is unloaded before the summarisation model loads; the two are never resident together.
+- A long transcript is chunked and combined rather than truncated, using the contract FR-27 already defines.
+- Any failure — model load, out of memory, timeout — still writes the note with transcript, title and tags, and records the failure.
+- A failed summarisation is retryable without re-transcribing.
+- The note's frontmatter names the specific model that produced its metadata.
+
+**Implementation constraints:**
+
+- AD-25: one download mechanism and one storage root for both kinds of model. The spike verified `HubApi(downloadBase:)` honours an explicit root, so this is configuration rather than a fight with the library.
+- AD-26: memory is the binding constraint. A 4-bit 9B model is roughly 6 GB resident plus KV cache that grows with transcript length; a two-hour meeting is the case to bound on 24 GB.
+- Verified API shape: `LLMModelFactory.shared.loadContainer(hub:configuration:progressHandler:)` → `container.perform { ctx in }` → `ctx.processor.prepare(input:)` → `MLXLMCommon.generate(input:parameters:context:)` returning an `AsyncStream` of chunks.
+- **Quality and speed are unmeasured.** The spike could not generate a token. No throughput or quality figure may be asserted until measured on real audio.
+
+### Story 9.6: Prerequisites are detected before anything is downloaded
+
+*Requirements: FR-58 · Tier T5*
+
+As a user,
+I want to be told my machine cannot run something before I download three gigabytes,
+So that a missing prerequisite costs me a sentence instead of twenty minutes.
+
+**Acceptance Criteria:**
+
+**Given** the Metal toolchain is not installed
+**When** I open the Summaries pane
+**Then** every local model row is blocked, with the reason and the exact command that fixes it
+**And** no download is offered
+
+**And** each of the following holds:
+
+- The remedy is specific enough to paste: `xcodebuild -downloadComponent MetalToolchain`, not "install the Metal toolchain".
+- Apple's row states *Apple Intelligence is switched off* and where to turn it on, distinctly from *this device is ineligible*.
+- Prerequisite state is re-read when the pane appears, so fixing it outside the app needs no relaunch.
+- The shipped app bundle contains the metallib. A machine where the build succeeded must not hit the spike's runtime error.
+
+**Implementation constraints:**
+
+- AD-27, and this is measured rather than hypothetical: `xcodebuild -showComponent MetalToolchain` reports `uninstalled` on the target machine right now, and MLX fails with `Failed to load the default metallib`.
+- Binds the build as well as the app: `Scripts/build-app.sh` must copy SPM resource bundles into `Minutes.app/Contents/Resources/`, which it currently does not do.
+- **Must land before story 9.5's download work.** Reversing the order means shipping the exact failure this story prevents.
+
+### Story 9.7: A remote model, with a key and consent per meeting
+
+*Requirements: FR-59, FR-60 (remote half) · Tier T5*
+
+As a user,
+I want the option of a better summary from a remote model,
+So that I can choose it deliberately, for one meeting at a time, knowing what leaves my Mac.
+
+**Acceptance Criteria:**
+
+**Given** a saved key
+**When** a meeting could be summarised remotely
+**Then** I am asked for that meeting specifically, and told the recipient, the transcript length, the estimated cost, and the participants whose speech it contains
+**And** nothing is sent unless I agree
+
+**And** each of the following holds:
+
+- Entering a key does not enable sending. Configuring is not consenting, and the copy says so.
+- There is no "always send" affordance. A per-meeting decision that can be permanently switched off is not a per-meeting decision.
+- Audio is never transmitted. Neither are speaker profiles. Only transcript text.
+- The key lives in the Keychain, never in preferences, the notes folder or a log, and is never rendered back after saving.
+- Removing the key stops all remote capability immediately and leaves existing summaries and their provenance untouched.
+- An empty or near-empty transcript is never sent — a silent recording must not become a paid request.
+- Estimated cost is shown before the request; a running total of spend is visible in the pane.
+- Any failure — unreachable, 401, 429, quota, timeout — still writes the note with transcript, title and tags, and records the failure. The note is never blocked on a network call.
+- The note names the provider and model that produced its metadata, and a note written by one backend is never relabelled by a later setting change.
+
+**Implementation constraints:**
+
+- AD-24: one chokepoint whose input type cannot express audio, a file URL or a speaker profile, so "audio never leaves" is enforced by the signature rather than by review.
+- **Last in the epic, and genuinely optional.** Build it only if story 9.5's measured quality proves insufficient.
+- `[NOTE FOR PM]` The reviewer's consent finding is recorded, not resolved: in an EU employment context an individual cannot establish a lawful basis for sending colleagues' speech to a third-party processor on their behalf. The product can make the act explicit, per-meeting and off by default. It cannot make it lawful. If an employer-approved vendor under a data processing agreement exists, that is the endpoint to configure — and PRD §13 Q17 leaves open whether this story should ship at all.
+
+### Epic 9 FR Coverage
+
+| FR | Tier | Story |
+| --- | --- | --- |
+| FR-55 | T5 | 9.1 |
+| FR-56 | T5 | 9.4 |
+| FR-57 | T5 | 9.3 |
+| FR-58 | T5 | 9.2 (foundation), 9.6 (surface) |
+| FR-59 | T5 | 9.7 |
+| FR-60 | T5 | 9.5 (local), 9.7 (remote) |
+| FR-61 | T5 | 9.5 |
+
+FR-58 and FR-60 are each split across two stories on purpose: FR-58's capability *type* must exist before its *presentation* can be honest, and FR-60's local and remote halves are separated so the remote half can be dropped without losing the local one. Amended requirements (FR-26, FR-52) stay owned by their original stories; the amendments are covered here.

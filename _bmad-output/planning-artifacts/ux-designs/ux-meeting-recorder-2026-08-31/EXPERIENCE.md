@@ -51,8 +51,10 @@ SETUP
   Getting Started        → checklist, playground, re-run onboarding
 CONFIGURE
   Transcription          → model selection + download
+  Summaries              → summarisation backend selection, download, key
   Detection              → watched apps, suppression, master toggle
-  General                → notes folder, your name, retention, launch at login
+  General                → notes folder, your name, retention, launch at login,
+                           remembered voices, Dock
 ACTIVITY
   Meetings               → the library
 ```
@@ -143,6 +145,35 @@ The product's only diagnostic, and the reason the pattern was worth borrowing. m
 - The pane states once, plainly: "Downloading a model is the only time Minutes uses the network."
 - An interrupted download leaves no partial model that could later load as valid (PRD FR-18). The row returns to the un-downloaded state and says the download was interrupted.
 
+### Backend row (Summaries pane, PRD FR-56 … FR-60)
+
+Deliberately the **same anatomy** as the model row above, not a second visual language — the user asked for this pane to be "similar to the model selection for transcription", and the point of a shared pattern is that a reader who has understood one row has understood the other. Where it differs, it differs because the underlying thing differs.
+
+- Rows are radio-selection, one active, grouped by family with a heading per family: **On this Mac, built in** · **On this Mac, downloaded** · **Somewhere else**. The third heading is worded to make egress legible before any label mentions a key.
+- Each row states, in this order: what it is *for* in plain language, then the provider, then the technical identifier, then its cost — disk size for a local model, an estimated per-meeting price for a remote one.
+- **Readiness is a first-class column, not a footnote.** A row is in exactly one of: `Ready` · `Download` · `Blocked` · `Needs a key`. `Blocked` is the state that did not exist on the Transcription pane and is the most important one here.
+- A `Blocked` row states the prerequisite and the remedy inline, and is **never** offered as selectable. It shows the reason where a `Download` button would be, so the reader learns why before reaching for an action. Two real cases: Apple Intelligence switched off, and the Metal toolchain not installed.
+- A blocked prerequisite is shown **before** any download is offered. A multi-gigabyte fetch on a machine that cannot execute the result is the failure this rule exists to prevent (PRD FR-58).
+- Download progress is determinate with bytes and percentage, reusing `{components.progress-download}`. The local-model registry reports continuous progress, so an indeterminate spinner here would be a regression against available information.
+- Duration is `measured on this Mac` or `not measured yet` — never an estimate presented as a measurement, exactly as the model row requires.
+- The pane names, once and near the top, which backend will run **for the next meeting** — which is not always the one selected, when a selection has become unavailable (PRD FR-57).
+
+### Key entry (Summaries pane, PRD FR-59)
+
+The only place in the product where anything leaves the machine, and the copy carries that weight rather than hiding it.
+
+- A single obscured field, a `Save` action, and after saving the key is **never** rendered back — not masked, not truncated. Only "a key is saved" and `Remove`.
+- Adjacent, not in a disclosure: what gets sent (transcript text), what never does (audio, speaker profiles), and who receives it.
+- Entering a key does **not** enable sending. It makes sending possible. This distinction is load-bearing and the copy states it.
+- A running total of spend sits in this card, so cost is observed rather than discovered.
+
+### Send consent (per meeting, PRD FR-59)
+
+- Consent is per meeting and is asked at the moment of sending, never pre-granted by a global switch.
+- The ask names the recipient, the transcript length, the estimated cost, and **the participants whose speech it contains** — pulled from the meeting's own speaker labels. Seeing the names is the point.
+- Declining is free and leaves the note with transcript, title and tags (PRD FR-55, FR-61).
+- There is no "always send" checkbox. A per-meeting decision that can be permanently switched off is not a per-meeting decision.
+
 ### Meetings list and detail (PRD §4.8)
 
 - Reverse-chronological rows: title, date, duration `{typography.metric}`, and `{components.speaker-chip}`s.
@@ -184,6 +215,24 @@ Three degradations, each of which must be visible (PRD NFR-5, FR-7):
 1. **System audio unavailable** → record Mic-only, say so in the menu, in the window banner, and in the Note's frontmatter.
 2. **Diarization unavailable or failed** → the whole System Stream becomes one `Speaker` label rather than failing the Meeting (PRD FR-22). The Note records it.
 3. **LLM Backend unavailable** → the Heuristic Backend runs. The Note names the backend that ran (PRD FR-30). This is **not** surfaced as a warning — it is the expected path on this machine, and treating it as an error would be dishonest.
+
+### Capability readiness (PRD FR-58)
+
+A fourth state family, added in increment 3. The product already distinguishes *working*, *degraded* and *failed*; this adds **blocked**, which is none of those: nothing has gone wrong, and the machine simply cannot do the thing yet.
+
+| State | Means | Shows |
+| --- | --- | --- |
+| `Ready` | usable now | the selection control |
+| `Download` | usable after a fetch | size and a determinate download |
+| `Needs a key` | usable after configuration | what to configure, and what sending means |
+| `Blocked` | not usable until something outside the app changes | the prerequisite **and** the remedy, no action button |
+
+Rules that apply to all four:
+
+- A blocked capability is never silently hidden. Hiding it means the user asks "why can't this app do X" and gets no answer, which is what happened with Apple Intelligence in increment 2 — the app knew the reason and never said it.
+- A blocked capability is never silently substituted either. Falling through to a lesser backend without saying so is how a keyphrase extract came to be read as a summary.
+- The remedy must be specific enough to act on. "Install the Metal toolchain" is not a remedy; `xcodebuild -downloadComponent MetalToolchain` is.
+- Readiness is re-read when the pane appears, so fixing a prerequisite outside the app is reflected without relaunching — the same rule the checklist already applies to permissions.
 
 ### Empty, loading, error
 
@@ -279,6 +328,27 @@ Never block the start of a recording on a permission dialog. A meeting is happen
 8. **Resolution:** all rows satisfied, "Setup complete." He closes the window and does not open it for weeks.
 9. **Edge case:** if the System meter stays flat, the result says `System ✗` with the reason and the reset command — the failure is diagnosed, not merely reported.
 
+### KF-6. Niklas gets a real summary without depending on Apple Intelligence *(PRD FR-55 … FR-61)*
+
+The flow that this increment exists for. Niklas has read four meeting notes whose "summary" was four sentences copied out of the transcript, and has decided he would rather have none.
+
+1. He opens **Summaries** and reads, at the top, which backend will run for his next meeting: *Keyphrase extraction — titles and tags only, no summary.* That sentence is the first honest answer the product has given him on this subject.
+2. The list shows three families. **Apple's on-device model** is `Blocked`: *Apple Intelligence is switched off. Turn it on in System Settings › Apple Intelligence & Siri.* He notes it and moves on — he has already decided not to depend on it.
+3. **On this Mac, downloaded** offers three sizes with real disk figures. The middle one is `Blocked` too, and gives the reason he could not have guessed: *Needs Xcode's Metal toolchain.* `xcodebuild -downloadComponent MetalToolchain`. The app does not offer him a 3 GB download it knows cannot run.
+4. He installs the toolchain, returns to the pane, and the rows are now `Download` — he did not relaunch, and nothing told him to.
+5. He downloads the middle model with a real progress bar, records a five-minute meeting, and reads a summary written by a model on his own machine. The note's frontmatter names that model.
+6. **Somewhere else** is still `Needs a key`, unused. Nothing has left his Mac at any point in this flow, and the pane says so.
+
+**The climax is step 3** — the moment the app tells him something he could not have found out himself, instead of failing quietly or offering a download that would have wasted twenty minutes and three gigabytes.
+
+### KF-7. Niklas considers sending a transcript away, and sees who is in it *(PRD FR-59)*
+
+1. He has entered a key. He records the Spirii all-hands.
+2. At the moment of sending, the ask names the recipient, the transcript length, the estimated cost — and lists the participants whose speech it contains. Thirty-seven names.
+3. He declines. The note keeps its transcript, title and tags.
+
+**The climax is the list of names.** The decision is not "do I want a better summary"; it is "am I sending thirty-seven colleagues' words to a vendor". The interface's job is to make sure that is the question being answered, and this is the one flow where the product deliberately makes an action harder rather than easier.
+
 ### KF-5. A transcription fails and nothing is lost *(PRD FR-19, FR-39)*
 
 1. **Entry:** a Session stops; transcription fails (interrupted model download).
@@ -293,6 +363,19 @@ Never block the start of a recording on a permission dialog. A meeting is happen
 2. **Notification action reliability while another app is fullscreen** — Slack huddles are often fullscreen; if actionable notifications are suppressed in Do Not Disturb or fullscreen, KF-1 breaks and the menu bar becomes the only path. Needs a real test.
 3. **Whether "Never for Slack" belongs on the notification** — it is the right place for it, but a mis-click is destructive to the feature's value. Possibly needs an undo affordance in Detection.
 4. **Speaker chip inline rename in the detail header** assumes few enough speakers to fit. Behaviour above ~6 speakers is unspecified.
+
+## Open Questions — increment 3
+
+- **How many local models should the curated list offer?** Three sizes is the working assumption, mirroring the Transcription pane's shape. Depends on PRD §13 Q13 (is a 4-bit model in this class good enough at all) and cannot be settled before that is measured.
+- **Where does the per-meeting send consent live?** A sheet on the Meetings detail, or a notification like the Detection Prompt? The Detection Prompt precedent argues for a notification, but consent to transmit is a heavier decision than consent to record and probably deserves the window.
+- **Does the Summaries pane need its own Test Playground?** FR-47's pattern turned an unanswerable permission question into an empirical one. The same argument applies to "is this model's summary any good", and the answer is a sample summary of a real past meeting. Not yet a requirement.
+
+## Assumptions — increment 3
+
+- Grouping the three backend families under headings, rather than presenting one flat list of every option, is inferred from the Transcription pane's readability problem in increment 1: a flat list of comparable-looking rows was the exact failure the user reported.
+- `Blocked` as a first-class readiness state, shown rather than hidden, is inferred from the Apple Intelligence incident — the app held the reason and never surfaced it. Not requested.
+- The `{components.egress-marker}` being used on exactly two elements is a judgement about scarcity, not a stated requirement. If it spreads, it stops meaning anything.
+- No "always send" affordance is a deliberate restriction beyond what the user asked for.
 
 ## Assumptions
 

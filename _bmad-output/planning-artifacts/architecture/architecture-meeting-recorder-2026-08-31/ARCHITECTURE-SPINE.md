@@ -7,7 +7,7 @@ paradigm: 'layered ports-and-adapters with a staged, resumable pipeline'
 scope: 'The whole Minutes application: menu bar control, dual-stream capture, detection, transcription, diarization, metadata, Markdown output, library, settings.'
 status: final
 created: '2026-08-31'
-updated: '2026-08-31'
+updated: 2026-08-31
 binds: [FR-1..FR-48, NFR-1..NFR-8]
 sources:
   - ../../prds/prd-meeting-recorder-2026-08-31/prd.md
@@ -120,17 +120,21 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 - **Prevents:** a future refactor that diarizes a mixed stream and loses the room/far-end distinction; and the original rule's failure mode of asserting an identity the audio does not support
 - **Rule:** The **place** of a voice is never inferred: a Mic Stream Utterance is always an in-room voice and a System Stream Utterance is always a remote voice, and neither may ever be relabelled across that boundary. **Identity** is separate. Diarization runs on **both** streams. If the Mic Stream yields exactly one voice it is the Local Speaker, and that inference is safe. If it yields more than one, each becomes an anonymous in-room label and **no voice may be claimed as the Local Speaker** — the user names themselves once, and `SpeakerDirectory` remembers the voice thereafter. Every Utterance carries its origin stream so the distinction survives into the data and the UI (`components.speaker-chip` in DESIGN.md renders the three places distinctly).
 
-### AD-12 — Metadata is a port with two implementations; the deterministic one is the floor
+### AD-12 — Metadata is a port with several implementations; the deterministic one is the floor
 
-- **Binds:** FR-26, FR-27, FR-28, FR-29, FR-30
+- **Binds:** FR-26, FR-27, FR-28, FR-29, FR-30, FR-55, FR-56, FR-61
 - **Prevents:** an LLM-only design that cannot title a meeting on the machine it was built for, and untestable metadata
-- **Rule:** `MetadataBackend` is a protocol. `HeuristicBackend` is pure, deterministic, dependency-free, and always available — it is the fallback and the unit-test target. `FoundationModelsBackend` is selected only after a run-time availability check and must use guided generation into a typed structure, never free-text parsing. Every Meeting records which backend ran.
+- **Rule:** `MetadataBackend` is a protocol. `HeuristicBackend` is pure, deterministic, dependency-free, and always available — it is the floor and the unit-test target. Every other implementation is selected only after a run-time availability check, must produce a typed structure rather than parsed free text, and every Meeting records which backend ran.
+- **Amended (increment 3):** the port now has four implementations, not two — `Heuristic`, `FoundationModels`, `LocalLLM`, `Remote`. Two consequences follow, and they are the whole reason the amendment is worth writing down rather than treating as more of the same:
+  1. **The floor is no longer a summariser.** `HeuristicBackend` produces a title and tags and *not* a summary (FR-55), so the port splits into `MetadataBackend` (all four) and `Summarizing` (the other three). "Is a summary possible" becomes a type-level question rather than a runtime guess.
+  2. **Availability is no longer a Bool.** With one optional backend, `isAvailable() -> Bool` was sufficient. With three it must carry a reason and a remedy, because FR-58 requires an unavailable backend to explain itself. See AD-22.
 
-### AD-13 — Transcription Model identifiers are never hardcoded
+### AD-13 — Model identifiers are never hardcoded
 
-- **Binds:** FR-17, FR-18
+- **Binds:** FR-17, FR-18, FR-56
 - **Prevents:** a stale model list that silently offers identifiers the library no longer serves
 - **Rule:** The model catalogue is obtained from the library at run time (`recommendedModels()` locally, `fetchAvailableModels()` when online). Only the *default* identifier is a constant. *(Verified: real identifiers are `openai_whisper-`-prefixed; the published docs list bare names and is wrong.)*
+- **Extended (increment 3):** the same rule binds the summarisation model list. The spike found `Qwen3.5`, `Qwen3.6` and `Qwen3.8` conversions all live on `mlx-community` — a list written from memory would have been wrong on the day it was written. `LLMModelFactory.shared.modelRegistry` is the run-time source, with curation applied on top of it rather than in place of it.
 
 ### AD-14 — Serial ML execution
 
@@ -180,6 +184,42 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 - **Prevents:** read-modify-write clobbering — Capture writing `systemStreamCaptured`, Diarize writing `diarizationFailed` and Metadata writing `backend` can each silently drop the others' fields if adapters persist the whole record
 - **Rule:** Adapters never write `meeting.json`. They return typed results. `MeetingStore` performs all reads and writes, applies field-level updates, and is the only holder of the atomic-write path (AD-10). One serial access point per Meeting.
 
+### AD-22 — Capability is a value with a reason and a remedy, never a Bool
+
+- **Binds:** FR-56, FR-57, FR-58
+- **Prevents:** the failure that produced this increment — the app knowing exactly why it could not summarise and having nowhere to put that knowledge
+- **Rule:** A backend reports `Capability`, not `Bool`: `.ready`, `.needsDownload(bytes:)`, `.needsKey`, or `.blocked(reason:remedy:)`. `remedy` is structured enough to render as a command where the remedy *is* a command. Every UI state in EXPERIENCE.md's readiness table maps to exactly one case, and a `.blocked` backend is never selectable. Capability is computed on demand, never cached across a pane appearance, so a prerequisite fixed outside the app is picked up without a relaunch.
+
+### AD-23 — Backend precedence is a pure function, evaluated in one place
+
+- **Binds:** FR-52, FR-57
+- **Prevents:** two settings that can silently disagree, and an ordering that lives only in whichever branch was written first
+- **Rule:** One function maps `(user selection, capabilities) → (backend to run, why)`. It is pure, unit-tested against every combination, and is the only code that decides. The order is: explicit user selection if `.ready`; else the first `.ready` backend in a fixed preference order; else no summariser. The UI displays *what this function returns*, which is why the pane can state which backend will run for the next Meeting rather than only which is selected.
+
+### AD-24 — Egress is a single chokepoint, and audio never reaches it
+
+- **Binds:** FR-59, NFR-1, NFR-6
+- **Prevents:** the amended NFR-1 decaying into "some code somewhere makes requests", and any future path that transmits more than was agreed
+- **Rule:** Exactly one type in the app may open a network connection for summarisation. It accepts Transcript text and nothing else — its input type cannot express audio, a file URL, or a Speaker Profile, so "audio never leaves" is enforced by the signature rather than by review. It refuses to send without both a stored key and a consent token for that specific Meeting. It is the only place the key is read, and the key is read from the Keychain at the moment of use and never held. NFR-6 stays verifiable because there is exactly one place to look.
+
+### AD-25 — Model storage and download are one mechanism for both kinds of model
+
+- **Binds:** FR-18, FR-56, FR-60
+- **Prevents:** a second downloader with its own directory layout, its own progress reporting and its own partial-file bug
+- **Rule:** `ModelStorage` owns the download root for transcription *and* summarisation models, in sibling directories under one base. The spike verified `HubApi(downloadBase:)` honours an explicit root, so this is a configuration choice rather than a fight with the library. A failed or cancelled download leaves no partial model that could later load as valid — the rule already in force for transcription models, restated because the failure mode is identical and the code is new.
+
+### AD-26 — Summarisation memory is bounded by unloading transcription first
+
+- **Binds:** NFR-4, FR-61
+- **Prevents:** a 24 GB machine under memory pressure holding a Whisper model and a 6 GB language model at once
+- **Rule:** AD-14's serial ML execution extends to summarisation: the transcription model is unloaded before a summarisation model loads, and the two are never resident together. Because summarisation runs after transcription in AD-8's stage order this is achievable, but it is an explicit sequencing requirement and not a happy accident. A long Transcript's KV cache growth is bounded by the same chunk-and-combine contract FR-27 already defines, applied regardless of which backend is running.
+
+### AD-27 — The Metal toolchain is a detected prerequisite, not an assumption `[ADOPTED]`
+
+- **Binds:** FR-58
+- **Prevents:** offering a multi-gigabyte download on a machine that cannot execute a single token of the result
+- **Rule:** MLX requires a compiled `metallib`, which `mlx-swift` builds at build time from `mlx-generated` sources — it ships no prebuilt one. The `LocalLLM` backend therefore reports `.blocked` unless the metallib is present, checked before any download is offered. Two consequences bind the build as well as the app: the build script must copy SPM resource bundles into `Minutes.app/Contents/Resources/`, which AD-16's current script does not do; and the developer machine needs `xcodebuild -downloadComponent MetalToolchain`, which is *currently uninstalled* here. Marked `[ADOPTED]` because it is a measured property of the toolchain, not a choice.
+
 ## Consistency Conventions
 
 | Concern | Convention |
@@ -214,7 +254,10 @@ Verified on the target machine on 2026-08-31.
 | Default Transcription Model | `openai_whisper-large-v3-v20240930_turbo_632MB` |
 | Diarization models | pyannote v4 community-1 via `argmaxinc/speakerkit-coreml` (lazy, first `diarize()`) |
 | UI | SwiftUI (`MenuBarExtra`, `NavigationSplitView`) |
-| Local LLM (optional) | `FoundationModels` — run-time availability check, expected unavailable on this host |
+| Apple on-device LLM (optional) | `FoundationModels` — run-time availability check. **Verified unavailable on this host:** `appleIntelligenceNotEnabled`, i.e. eligible hardware with the feature declined at Setup Assistant |
+| Local downloadable LLM (increment 3) | `ml-explore/mlx-swift-examples` exact `2.29.1` (products `MLXLLM`, `MLXLMCommon`) → `mlx-swift` `0.31.6`. Adds `swift-transformers` 1.0.x and `GzipSwift` 6.0.1 transitively; no conflict with the argmax graph, which vendors its own dependencies |
+| Metal toolchain | **required by the above and currently `uninstalled`** — `xcodebuild -downloadComponent MetalToolchain`. See AD-27 |
+| Candidate summarisation models | sizes fetched live, not estimated: `Qwen3.5-4B-MLX-4bit` 3.03 GB · `Llama-3.1-8B-Instruct-4bit` 4.52 GB · `Qwen3.5-9B-MLX-4bit` 5.95 GB. Curation pending PRD §13 Q13 |
 | Build/packaging | `swift build` + `Scripts/build-app.sh` (assemble + ad-hoc `codesign`) |
 
 ## Structural Seed
@@ -293,6 +336,8 @@ Minutes/
 | Note output (FR-31…35) | `Adapters/Persistence/NoteWriter` | AD-9, AD-10 |
 | Library (FR-36…40) | `UI/MeetingsPane`, `Adapters/Persistence/MeetingStore` | AD-9, AD-8 |
 | Setup / settings (FR-41…48) | `UI/GettingStartedPane` + panes | AD-16, EXPERIENCE.md § Permission Choreography |
+| Library management (FR-49…54) | `UI/MeetingsPane`, `UI/GeneralPane`, `Services/AppState` | AD-9, AD-8, AD-21 |
+| Summarisation intelligence (FR-55…61) | `Adapters/Metadata/*`, `Services/SummarizerCatalog`, `Adapters/System/KeyStore`, `UI/SummariesPane` | AD-12, AD-22, AD-23, AD-24, AD-25, AD-26, AD-27 |
 
 ## Deferred
 
@@ -304,3 +349,7 @@ Minutes/
 - **Distribution, notarization, auto-update.** Excluded by PRD §5. AD-16 stops at a locally installed ad-hoc signed bundle.
 - **Model eviction policy.** FR-44 exposes disk use and removal; an automatic policy is deferred — the user decides.
 - **Global hotkey.** EXPERIENCE.md defers it to v2; it would add a permission surface and a conflict UI.
+- **Which local model, and whether a 4-bit model in the 3-6 GB class is good enough at all.** AD-12 fixes the port and AD-13 fixes where the list comes from; the curation is a story-level decision that cannot be made before PRD §13 Q13 is measured — and it cannot be measured until AD-27's prerequisite is installed. This is the increment's critical path.
+- **Which remote endpoint, and whether the remote backend should ship.** AD-24 fixes the chokepoint and its contract, so the shape is settled whatever the answer. Whether to build it depends on the local path's measured quality and on whether an employer-approved vendor under a data processing agreement exists (PRD §13 Q17). The architecture is deliberately indifferent to the answer.
+- **Streaming summarisation output.** The spike confirmed the local path returns an `AsyncStream` of chunks, so partial output is available. Whether the UI shows a summary assembling itself is a UX decision with no architectural consequence — the port returns a completed structure either way (AD-12's typed-output rule).
+- **Prompt design and its versioning.** Summary quality will depend heavily on the prompt, and a changed prompt changes output for the same Transcript. Whether the prompt version belongs in the Note's provenance alongside the model identifier is deferred until there is a prompt worth versioning.
