@@ -68,8 +68,10 @@ Downstream artifacts must use these terms verbatim. No synonyms anywhere.
 - **Session** — the live act of recording a Meeting, from Capture start to Capture stop. A Session becomes a Meeting once it has been transcribed.
 - **Capture** — acquisition of audio during a Session. Always two Streams.
 - **Stream** — one of exactly two audio sources in a Capture: the **Mic Stream** (local microphone, attributed to the Local Speaker) or the **System Stream** (all other applications' audio output, containing Remote Speakers).
-- **Local Speaker** — the person at the machine. Attributed structurally from the Mic Stream, never inferred. Default label `Me`.
-- **Remote Speaker** — any other participant, present only in the System Stream. Identified by Diarization as an anonymous label (`Speaker 1`, `Speaker 2`, …) until renamed.
+- **Local Speaker** — the person at the machine. Certain only when the Mic Stream held a single voice; default label `Me`.
+- **In-Room Speaker** — a voice in the Mic Stream when it held more than one, i.e. someone physically with the user. Anonymous (`In-room 1`, `In-room 2`, …) until renamed; the app does not guess which one is the Local Speaker.
+- **Remote Speaker** — a participant on the far end, present only in the System Stream. Anonymous (`Speaker 1`, `Speaker 2`, …) until renamed.
+- **Place** — whether a voice was in the room or remote. Derived from which Stream carried it, so it is structural and never inferred — unlike identity.
 - **Speaker Label** — the display name for a Local or Remote Speaker in a Note. User-editable.
 - **Speaker Profile** — a persisted association between a voice and a Speaker Label, used to reapply a name in later Meetings.
 - **Diarization** — splitting the System Stream into time segments per Remote Speaker.
@@ -306,20 +308,26 @@ A Session that stops while another Meeting is transcribing is not lost.
 
 **Functional Requirements:**
 
-#### FR-21: Attribute the Mic Stream to the Local Speaker
-All Utterances derived from the Mic Stream carry the Local Speaker's Speaker Label.
+#### FR-21: Attribute the Mic Stream to in-room voices
+All Utterances derived from the Mic Stream are attributed to an in-room voice — the Local Speaker when the Mic Stream held a single voice, otherwise an anonymous In-Room Speaker.
+
+*Revised 2026-08-31 on user correction: the microphone is not necessarily the user. In a meeting room it captures the user and whoever is beside them, and attributing all of it to the Local Speaker puts colleagues' words in the user's mouth.*
 
 **Consequences (testable):**
-- No Mic Stream Utterance is ever attributed to a Remote Speaker.
+- No Mic Stream Utterance is ever attributed to a Remote Speaker, and no System Stream Utterance is ever attributed to an in-room voice. This is structural and cannot be wrong.
+- When the Mic Stream contains exactly one voice, it is the Local Speaker. This attribution cannot be wrong either.
+- When the Mic Stream contains more than one voice, each becomes a distinct In-Room Speaker and **none is claimed to be the Local Speaker**.
+- The Meeting records that the room held several people, and the Note discloses it.
 - The Local Speaker Label defaults to `Me` and is user-editable in Settings.
-- This attribution involves no model inference and cannot be wrong.
+- Naming an In-Room Speaker — including naming oneself — creates a Speaker Profile, so the same voice is recognised in later Meetings (FR-25).
 
-#### FR-22: Diarize the System Stream into Remote Speakers
-Utterances derived from the System Stream are assigned Remote Speaker labels by on-device Diarization.
+#### FR-22: Diarize both Streams
+Utterances are assigned speaker labels by on-device Diarization, run separately on each Stream: the System Stream yields Remote Speakers, and the Mic Stream yields the Local Speaker or In-Room Speakers per FR-21.
 
 **Consequences (testable):**
 - Diarization runs entirely on-device with no network access.
-- A System Stream with a single speaker yields one Remote Speaker label, not several.
+- Each Stream is diarized independently; a speaker found in one Stream is never merged with one found in the other.
+- A Stream with a single speaker yields one label, not several.
 - The number of Remote Speakers is determined from the audio; the user is not required to state it in advance.
 - Diarization failure degrades to a single `Speaker` label for the whole System Stream rather than failing the Meeting.
 

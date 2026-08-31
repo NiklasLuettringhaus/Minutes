@@ -112,11 +112,13 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 - **Prevents:** a truncated Note or a corrupt `meeting.json` after a crash or a full disk
 - **Rule:** Write to a temporary file in the destination directory, `fsync`, then atomically replace. Applies to Notes, `meeting.json`, and Speaker Profiles. Never write in place.
 
-### AD-11 — Speaker attribution is structural for the Local Speaker, inferred only for Remote
+### AD-11 — Where a voice was is structural; who it is may be inferred
+
+*Amended 2026-08-31 after a user correction: "My microphone is not always me. I might have the mic but be in a meeting room with others." The original rule assigned every Mic Stream Utterance to the Local Speaker without inference, which in a conference room attributes colleagues' words to the user — strictly worse than an anonymous label.*
 
 - **Binds:** FR-21, FR-22, FR-23, FR-25
-- **Prevents:** a future refactor that diarizes a mixed stream and thereby turns a certainty into a guess
-- **Rule:** Mic Stream Utterances are assigned the Local Speaker without inference, always. Diarization runs on the System Stream **only**. The merged Transcript marks each Utterance's provenance so the distinction survives into the data and into the UI (rendered via the `components.speaker-chip` token in DESIGN.md).
+- **Prevents:** a future refactor that diarizes a mixed stream and loses the room/far-end distinction; and the original rule's failure mode of asserting an identity the audio does not support
+- **Rule:** The **place** of a voice is never inferred: a Mic Stream Utterance is always an in-room voice and a System Stream Utterance is always a remote voice, and neither may ever be relabelled across that boundary. **Identity** is separate. Diarization runs on **both** streams. If the Mic Stream yields exactly one voice it is the Local Speaker, and that inference is safe. If it yields more than one, each becomes an anonymous in-room label and **no voice may be claimed as the Local Speaker** — the user names themselves once, and `SpeakerDirectory` remembers the voice thereafter. Every Utterance carries its origin stream so the distinction survives into the data and the UI (`components.speaker-chip` in DESIGN.md renders the three places distinctly).
 
 ### AD-12 — Metadata is a port with two implementations; the deterministic one is the floor
 
