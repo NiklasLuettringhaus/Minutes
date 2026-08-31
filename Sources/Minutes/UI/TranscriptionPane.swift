@@ -38,11 +38,11 @@ struct TranscriptionPane: View {
             fillerCard
 
             VStack(alignment: .leading, spacing: 0) {
-                SectionHeading(text: "All variants", trailing: AnyView(
+                SectionHeading(text: "Every available build", trailing: AnyView(
                     Group {
                         if catalog.isRefreshing { ProgressView().controlSize(.small) }
                         else {
-                            Button(showAll ? "Hide" : "Show \(catalog.allEntries.count)") {
+                            Button(showAll ? "Hide" : "Show all \(catalog.allEntries.count)") {
                                 showAll.toggle()
                                 if showAll && catalog.offlineOnly {
                                     Task { await catalog.refreshFromNetwork() }
@@ -61,8 +61,13 @@ struct TranscriptionPane: View {
                     }
                 } else {
                     Card {
-                        Text("The five above cover every real trade-off. The rest are older or intermediate builds of the same models.")
-                            .font(.caption).foregroundStyle(Tok.textSecondary)
+                        VStack(alignment: .leading, spacing: Tok.s2) {
+                            Text("You don't need this.")
+                                .font(.caption.weight(.semibold))
+                            Text("The \(spelled(catalog.entries.count)) models above already cover every real trade-off. The other \(max(catalog.allEntries.count - catalog.entries.count, 0)) are older releases and re-compressed copies of those same models \u{2014} \"large-v2\", \"large-v2 turbo\" and \"large-v3\" are all the same Whisper model at different vintages and sizes. Open this only if you want to pin one specific build by name.")
+                                .font(.caption).foregroundStyle(Tok.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
             }
@@ -71,6 +76,11 @@ struct TranscriptionPane: View {
             if catalog.allEntries.isEmpty { catalog.loadLocalRecommendations() }
             catalog.refreshDownloadStates()
         }
+    }
+
+    private func spelled(_ n: Int) -> String {
+        let words = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
+        return n < words.count ? words[n] : String(n)
     }
 
     // MARK: - Row
