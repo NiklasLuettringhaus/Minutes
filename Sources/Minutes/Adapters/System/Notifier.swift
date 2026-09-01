@@ -94,7 +94,13 @@ final class Notifier: NSObject, ObservableObject, UNUserNotificationCenterDelega
     func askToRecord(_ app: DetectedMeeting) {
         let c = UNMutableNotificationContent()
         c.title = "\(app.appName) is using your microphone"
-        c.body = "Record this meeting?"
+        // Says where the buttons are, because under Banner style macOS hides the
+        // notification's own actions until it is hovered. The panel is the
+        // actionable surface; this is the durable record of the ask.
+        c.body = "Record this meeting? Answer in the panel at the top right, or hover here."
+        // Outlives a banner's few seconds so the ask is still reachable in
+        // Notification Centre after the panel has timed out.
+        c.interruptionLevel = .timeSensitive
         c.categoryIdentifier = Category.detect
         c.userInfo = ["bundleID": app.bundleID, "appName": app.appName]
         post(c, id: "detect-\(app.bundleID)")

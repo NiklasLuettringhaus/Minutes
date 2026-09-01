@@ -37,6 +37,16 @@ final class StreamFileWriter {
     private(set) var framesWritten: AVAudioFramePosition = 0
     private(set) var peak: Float = 0
 
+    /// When true, silence is written instead of the captured audio.
+    ///
+    /// Applied here, on the writer's own thread, rather than in the capture
+    /// callback — the real-time audio thread is not the place for a flag it has to
+    /// branch on. Silence rather than dropped frames, so the two streams stay on
+    /// one clock and Utterance timestamps remain comparable across them (AD-4).
+    /// This is a privacy convenience, not a security boundary: at the moment of
+    /// muting, up to one buffer already in the ring may still reach disk.
+    var isMuted = false
+
     init(url: URL, format: AVAudioFormat, ring: RingBuffer) {
         self.url = url
         self.format = format
@@ -130,9 +140,12 @@ final class StreamFileWriter {
             dst.update(from: p.baseAddress!, count: frames * channels)
             for i in 0..<(frames * channels) { localPeak = max(localPeak, abs(p[i])) }
         }
-        peak = max(peak * 0.85, localPeak)
+        peak = isMuted ? 0 : max(peak * 0.85, localPeak)
 
         guard let out = convert(src, using: converter) else { return }
+        if isMuted, let ch = out.floatChannelData?[0] {
+            ch.update(repeating: 0, count: Int(out.frameLength))
+        }
         guard out.frameLength > 0 else { return }
         do {
             try file.write(from: out)

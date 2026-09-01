@@ -111,8 +111,15 @@ struct MenuBarContent: View {
             case .recording(let since, let degraded):
                 // Disabled items, not headers, so VoiceOver reads them in order.
                 Text("Recording — \(Fmt.duration(Date().timeIntervalSince(since)))")
-                Text(degraded ? "Mic only ⚠" : "Mic + system audio")
+                Text(app.micMuted ? "Your mic is muted — far end only"
+                                  : (degraded ? "Mic only ⚠" : "Mic + system audio"))
                 Divider()
+                // Muting in Slack or Teams stops their outgoing stream, not the
+                // macOS input device, so this is the only switch that stops Minutes
+                // recording the room around you.
+                Button(app.micMuted ? "Unmute My Microphone" : "Mute My Microphone") {
+                    SessionCoordinator.shared.setMicMuted(!app.micMuted)
+                }
                 Button("Stop Recording") { Task { await SessionCoordinator.shared.stop() } }
 
             case .transcribing(_, let title):

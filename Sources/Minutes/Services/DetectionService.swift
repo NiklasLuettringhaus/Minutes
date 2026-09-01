@@ -55,8 +55,14 @@ final class DetectionService: ObservableObject {
 
     /// Seconds the input device must stay held before we prompt, so notification
     /// sounds and device probes do not trigger it (FR-12).
-    private static let debounce: TimeInterval = 4.0
-    private static let pollInterval: TimeInterval = 2.0
+    ///
+    /// Tuned down from 4.0s debounce / 2.0s poll after the first real huddle, where
+    /// the prompt took up to 6s and the user described it as slow. The risk a long
+    /// debounce guards against is a spurious prompt from a brief device probe — but
+    /// the watch list is only Slack and Teams, and neither acquires the *input*
+    /// device to play a notification sound. 3.5s worst case is the trade.
+    private static let debounce: TimeInterval = 2.5
+    private static let pollInterval: TimeInterval = 1.0
 
     @Published private(set) var activeApps: [DetectedMeeting] = []
 
@@ -125,13 +131,19 @@ final class DetectionService: ObservableObject {
             promptedThisSession.insert(h.bundleID)
             Log.detection.info("prompting for \(h.bundleID, privacy: .public)")
             AppState.shared.pendingPrompt = h
-            // Two channels, chosen by whether the first one can actually arrive.
-            // Posting only a notification meant a denied permission silently
-            // disabled detection outright.
+            // The panel is the prompt, and the notification is a record of it.
+            //
+            // This was the other way round until the first real huddle, where the
+            // notification arrived with no visible buttons and the user had to go
+            // and start recording by hand. macOS shows notification actions only
+            // when the banner is hovered or expanded, and under Banner style it
+            // auto-dismisses before most people get there — so the one channel
+            // carrying the Record button was the one channel that might never show
+            // it. The panel has real buttons, is non-activating exactly like the
+            // notification, and does not depend on a System Settings alert style.
+            PromptPanel.shared.present(h)
             if Notifier.shared.canDeliver {
                 Notifier.shared.askToRecord(h)
-            } else {
-                PromptPanel.shared.present(h)
             }
         }
     }

@@ -51,6 +51,9 @@ final class AppState: ObservableObject {
     /// selection, so a deep link sets this and clears it rather than reaching into
     /// someone else's `@State` (AD-7: views call intents, they do not mutate).
     @Published var paneRequest: String?
+    /// Whether the Mic Stream is muted for the running Session. Reset on stop —
+    /// a mute is a decision about one meeting, not a persisted preference.
+    @Published private(set) var micMuted: Bool = false
     @Published private(set) var micAuthorized: Bool = false
     @Published private(set) var audioBytes: Int64 = 0
 
@@ -60,6 +63,7 @@ final class AppState: ObservableObject {
     func setSessionState(_ s: SessionState) { sessionState = s }
     func setMeetings(_ m: [Meeting]) { meetings = m }
     func setMicAuthorized(_ b: Bool) { micAuthorized = b }
+    func setMicMuted(_ b: Bool) { micMuted = b }
     func setInFlight(_ ids: Set<String>) { inFlight = ids }
     func setMissingNotes(_ ids: Set<String>) { missingNotes = ids }
     func advancePulse() { pulsePhase = (pulsePhase + 1) % 4 }

@@ -64,6 +64,16 @@ final class MicCapture {
         Log.audio.info("mic capture started sr=\(fmt.sampleRate) ch=\(fmt.channelCount)")
     }
 
+    /// FR-10-adjacent: muting the microphone in Slack or Teams stops *their*
+    /// outgoing stream; the macOS input device stays live and this capture keeps
+    /// reading it. In the first real meeting that meant a conversation happening
+    /// beside the user was recorded and transcribed throughout. This is the switch
+    /// that does what muting in the meeting app looks like it should do.
+    var isMuted: Bool {
+        get { writer?.isMuted ?? false }
+        set { writer?.isMuted = newValue }
+    }
+
     func stop() -> TimeInterval {
         guard isRunning else { return 0 }
         engine.inputNode.removeTap(onBus: 0)

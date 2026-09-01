@@ -11,6 +11,9 @@ final class SessionCoordinator: ObservableObject {
     private var startedAt: Date?
     /// Only a Session started from a Detection Prompt may be auto-stopped (FR-14).
     private(set) var autoStopBundleID: String?
+    /// Whether this Session was started by hand rather than from a Prompt. Decides
+    /// whether the meeting ending stops the recording or asks about it.
+    private var wasManualStart = false
     private var tickTimer: Timer?
 
     private init() {}
@@ -62,10 +65,22 @@ final class SessionCoordinator: ObservableObject {
         capture = cap
         currentMeetingID = id
         startedAt = Date()
-        autoStopBundleID = app?.bundleID
 
-        if let app {
-            _ = try? await store.update(id: id) { $0.triggeringApp = app.appName }
+        // A manual start during a meeting is still a meeting.
+        //
+        // `autoStopBundleID` used to be set only from a Detection Prompt, so a
+        // Session the user started by hand was permanently ineligible for
+        // auto-stop. In the first real huddle the prompt's buttons never appeared,
+        // the user started recording manually, the huddle ended — and nothing
+        // noticed, because the Session had no associated app. Adopting whichever
+        // watched app is holding the input right now fixes that without weakening
+        // FR-14: the Session is genuinely tied to that meeting either way.
+        let associated = app ?? DetectionService.appsUsingAudioInput().first
+        autoStopBundleID = associated?.bundleID
+        wasManualStart = (app == nil)
+
+        if let associated {
+            _ = try? await store.update(id: id) { $0.triggeringApp = associated.appName }
         }
 
         // The icon turns Recording only once audio is actually being captured (FR-3).
@@ -83,6 +98,9 @@ final class SessionCoordinator: ObservableObject {
         capture = nil
         currentMeetingID = nil
         autoStopBundleID = nil
+        wasManualStart = false
+        AppState.shared.setMicMuted(false)
+        StopPanel.shared.dismiss()
 
         let store = MeetingStore.shared
         _ = try? await store.update(id: id) { m in
@@ -109,10 +127,22 @@ final class SessionCoordinator: ObservableObject {
     }
 
     /// Called by detection when the triggering app releases the input device (FR-14).
+    /// FR-14. A Session the *app* started stops itself; a Session the *user*
+    /// started asks first, because stopping something someone chose to start is
+    /// their call. What must not happen — and did — is neither.
     func autoStopIfTriggered(by bundleID: String) async {
         guard isRecording, let trigger = autoStopBundleID, bundleID.hasPrefix(trigger) else { return }
-        Log.session.info("auto-stopping session for \(bundleID, privacy: .public)")
-        await stop()
+        let name = AppState.shared.meeting(id: currentMeetingID ?? "")?.triggeringApp
+            ?? DetectionService.watched.first { trigger.hasPrefix($0.bundleIDPrefix) }?.displayName
+            ?? "The meeting"
+
+        if wasManualStart {
+            Log.session.info("meeting ended, asking whether to stop \(bundleID, privacy: .public)")
+            StopPanel.shared.present(appName: name)
+        } else {
+            Log.session.info("auto-stopping session for \(bundleID, privacy: .public)")
+            await stop()
+        }
     }
 
     // MARK: - Editing (FR-24, FR-35, FR-38)
@@ -227,6 +257,13 @@ final class SessionCoordinator: ObservableObject {
     private func stopTicking() {
         tickTimer?.invalidate(); tickTimer = nil
         AppState.shared.resetPulse()
+    }
+
+    /// FR-10-adjacent. Published through AppState so the menu can show the state
+    /// rather than only set it.
+    func setMicMuted(_ muted: Bool) {
+        capture?.isMicMuted = muted
+        AppState.shared.setMicMuted(muted)
     }
 
     /// Live capture level, for the self-test and the Test Playground meters.

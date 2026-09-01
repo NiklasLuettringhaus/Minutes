@@ -78,6 +78,14 @@ final class DualStreamCapture: Capturing {
             systemCaptured: produced)
     }
 
+    /// Mutes only the Mic Stream. The System Stream — the far end of the meeting —
+    /// keeps recording, which is the whole point: you stop contributing the room
+    /// without losing the meeting.
+    var isMicMuted: Bool {
+        get { mic.isMuted }
+        set { mic.isMuted = newValue }
+    }
+
     func level(for stream: StreamKind) -> Float {
         switch stream {
         case .mic: return mic.level
