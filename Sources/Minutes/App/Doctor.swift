@@ -55,6 +55,25 @@ enum Doctor {
         print("  downloaded:         \(downloaded)")
         print("  model store:        \(ModelStorage.base.path)")
 
+        section("Voices")
+        let voices = await SpeakerDirectory.shared.summaries()
+        let enrolled = voices.first { $0.isEnrolled }
+        print("  your voice:         \(enrolled == nil ? "not enrolled" : "enrolled")")
+        if let e = enrolled {
+            let secs = e.speechSeconds.map { String(format: "%.1f s of speech", $0) } ?? "unknown length"
+            print("  enrolled as:        \(e.name) (\(secs), \(e.updatedAt))")
+        } else {
+            print("  → several voices on the mic will stay unattributed. Record one in Getting Started.")
+        }
+        print("  remembered:         \(voices.filter { !$0.isEnrolled }.count)")
+        for v in voices where !v.isEnrolled {
+            print("    · \(v.name) — \(v.samples) meeting(s)")
+        }
+        // Never print a centroid. The counts are diagnosable; the vectors are the
+        // sensitive part (PRD §9.1).
+        print("  match threshold:    \(VoiceMatch.sameSpeakerThreshold) (calibrated 2026-09-01, not a setting)")
+        print("  ambiguity margin:   \(VoiceMatch.ambiguityMargin)")
+
         section("Startup")
         print("  bundle path:        \(Bundle.main.bundlePath)")
         print("  SMAppService:       \(LoginItem.statusDescription)")

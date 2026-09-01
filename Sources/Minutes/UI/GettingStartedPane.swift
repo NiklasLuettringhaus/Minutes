@@ -8,6 +8,7 @@ struct GettingStartedPane: View {
     @EnvironmentObject var app: AppState
     @EnvironmentObject var prefs: Preferences
     @ObservedObject var playground = TestPlayground.shared
+    @ObservedObject var enrolment = VoiceEnrolment.shared
     @ObservedObject var catalog = ModelCatalog.shared
     @ObservedObject var notifier = Notifier.shared
     @Binding var selection: MainWindow.Pane
@@ -34,6 +35,7 @@ struct GettingStartedPane: View {
                 header
                 quickSetup
                 testPlayground
+                voiceEnrolment
                 howItWorks
             }
             .padding(Tok.paneMargin)
@@ -49,6 +51,9 @@ struct GettingStartedPane: View {
         catalog.refreshDownloadStates()
         SessionCoordinator.shared.refreshMicAuthorization()
         Task { await Notifier.shared.refreshAuthorization() }
+        // Live-derived, like every other row: whether a voice is enrolled is read
+        // from the store on appearance, never from a stored completion flag (FR-46).
+        Task { await VoiceEnrolment.shared.refresh() }
         refreshToken += 1
     }
 
@@ -196,6 +201,31 @@ struct GettingStartedPane: View {
                         DonePill(label: "Passed") { runTest() }
                             .help("Run the test again")
                     } else { RowActionButton(title: "Run Test") { runTest() } }
+                }
+
+                RowDivider()
+
+                // 7 — Voice enrolment. Optional, and last: rows never reorder, and
+                // renumbering a shipped row to put the newest thing first would
+                // disturb a surface the user already knows. Prominence comes from
+                // being in this checklist rather than in a settings pane (FR-62).
+                ChecklistRow(
+                    ordinal: 7,
+                    title: "Your voice",
+                    subtitle: enrolment.isEnrolled
+                        ? "Recorded. When several people share your microphone, Minutes can tell which voice is yours."
+                        : "Minutes can tell which voice in the room is yours instead of leaving it unattributed.",
+                    isSatisfied: enrolment.isEnrolled,
+                    isOptional: true
+                ) {
+                    if enrolment.isEnrolled {
+                        DonePill(label: "Recorded") { selection = .general }
+                            .help("See or delete it under General › Remembered voices")
+                    } else {
+                        RowActionButton(title: "Record Voice", showsChevron: false) {
+                            runEnrolment()
+                        }
+                    }
                 }
 
                 if requiredSatisfied {
@@ -352,6 +382,148 @@ struct GettingStartedPane: View {
         .background(Tok.separator.opacity(0.35), in: RoundedRectangle(cornerRadius: Tok.rSm))
     }
 
+
+    // MARK: - Voice enrolment (FR-62)
+
+    /// Deliberately the Test Playground's card, not a new shape. The Playground
+    /// already taught the user what a countdown, a level meter and a result made
+    /// of measured facts mean — that the app is about to listen and will then say
+    /// what it actually heard. Enrolment makes exactly that promise.
+    ///
+    /// One meter, not two. Enrolment never opens the System Stream, so a System
+    /// meter would misdescribe what is being read.
+    private var voiceEnrolment: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionHeading(text: "Your voice")
+            Card {
+                switch enrolment.phase {
+                case .idle:
+                    if let e = enrolment.enrolled {
+                        enrolledState(e)
+                    } else {
+                        enrolmentPitch
+                    }
+
+                case .recording(let remaining):
+                    StateBanner(kind: .recording,
+                                text: "Recording… \(remaining)s. Keep talking, and let nobody else talk.")
+                    micMeter.padding(.top, Tok.s4)
+                    Button("Cancel") { enrolment.cancel() }
+                        .buttonStyle(.bordered)
+                        .padding(.top, Tok.s4)
+                        .help("Stops the recording. Nothing is stored.")
+
+                case .analysing:
+                    StateBanner(kind: .transcribing, text: "Working out your voice fingerprint on this Mac…")
+                    micMeter.padding(.top, Tok.s4)
+
+                case .done(let r):
+                    // Facts, not a verdict. No score, no "good sample!".
+                    VStack(alignment: .leading, spacing: Tok.s4) {
+                        StateBanner(kind: .info, text: "Your voice is recorded. The recording itself has been deleted.")
+                        HStack(spacing: Tok.s3) {
+                            FactChip(text: String(format: "%.0f s of speech", r.speechSeconds), good: true)
+                            FactChip(text: r.voicesFound == 1 ? "one voice" : "\(r.voicesFound) voices",
+                                     good: r.voicesFound == 1)
+                        }
+                        enrolmentFooter
+                        Button("Re-record") { runEnrolment() }
+                            .buttonStyle(.bordered).tint(Tok.brand)
+                    }
+
+                case .failed(let reason, let recovery):
+                    VStack(alignment: .leading, spacing: Tok.s4) {
+                        StateBanner(kind: .degraded, text: reason)
+                        if let recovery {
+                            Text(recovery).font(.caption).foregroundStyle(Tok.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Text("Nothing was stored.")
+                            .font(.caption).foregroundStyle(Tok.textSecondary)
+                        Button {
+                            runEnrolment()
+                        } label: {
+                            Label("Try Again", systemImage: "mic.fill")
+                                .frame(maxWidth: .infinity).padding(.vertical, 3)
+                        }
+                        .buttonStyle(.borderedProminent).tint(Tok.brand)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Said before the user starts, not after: how long, what is kept, what is
+    /// deleted, and the one thing they have to do (talk, alone).
+    private var enrolmentPitch: some View {
+        VStack(alignment: .leading, spacing: Tok.s4) {
+            Text("""
+                When you are in a room with other people, your microphone picks up all of them. \
+                Minutes can separate those voices but cannot tell which one is you — so it leaves \
+                them unattributed rather than guessing.
+                """)
+                .font(.caption).foregroundStyle(Tok.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Read anything out loud for about \(Int(VoiceEnrolment.captureSeconds)) seconds — a paragraph of an email is fine. Talk normally, and let nobody else talk over you.")
+                .font(.body)
+                .fixedSize(horizontal: false, vertical: true)
+
+            enrolmentFooter
+
+            Button {
+                runEnrolment()
+            } label: {
+                Label("Record my voice", systemImage: "mic.fill")
+                    .frame(maxWidth: .infinity).padding(.vertical, 3)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Tok.brand)
+            .disabled(enrolment.isRunning)
+
+            micMeter
+        }
+    }
+
+    private func enrolledState(_ e: SpeakerDirectory.Summary) -> some View {
+        VStack(alignment: .leading, spacing: Tok.s4) {
+            StateBanner(kind: .info, text: "Minutes knows your voice.")
+            HStack(spacing: Tok.s3) {
+                if let s = e.speechSeconds {
+                    FactChip(text: String(format: "%.0f s of speech", s), good: true)
+                }
+                FactChip(text: "recorded \(relative(e.updatedAt))")
+            }
+            enrolmentFooter
+            HStack(spacing: Tok.s4) {
+                Button("Re-record") { runEnrolment() }
+                    .buttonStyle(.bordered).tint(Tok.brand)
+                Text("Re-recording replaces the fingerprint you have now.")
+                    .font(.caption2).foregroundStyle(Tok.textSecondary)
+            }
+            Button("See it under General") { selection = .general }
+                .buttonStyle(.borderless).font(.caption)
+        }
+    }
+
+    /// The privacy statement, in the place the thing is created — plainly, and
+    /// without either softening it or dramatising it (PRD §9.1).
+    private var enrolmentFooter: some View {
+        Text("Minutes keeps a fingerprint of your voice on this Mac — a few hundred numbers, which cannot be played back. The recording itself is deleted as soon as the fingerprint is made. Neither ever leaves this Mac, and one click deletes it under General.")
+            .font(.caption2).foregroundStyle(Tok.textSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var micMeter: some View {
+        LevelMeter(label: "Microphone", level: enrolment.micLevel, status: nil)
+    }
+
+    private func relative(_ d: Date) -> String {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        return f.localizedString(for: d, relativeTo: Date())
+    }
+
     // MARK: - How it works
 
     private var howItWorks: some View {
@@ -380,6 +552,10 @@ struct GettingStartedPane: View {
 
     private func runTest() {
         Task { await playground.run(); refresh() }
+    }
+
+    private func runEnrolment() {
+        Task { await enrolment.run(); refresh() }
     }
 
     private func chooseFolder() {

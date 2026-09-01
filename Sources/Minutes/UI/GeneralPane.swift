@@ -14,6 +14,7 @@ struct GeneralPane: View {
     @State private var renamingVoice: String?
     @State private var draftVoiceName = ""
     @State private var confirmForgetAll = false
+    @State private var confirmDeleteEnrolled = false
 
     var body: some View {
         PaneScaffold(title: "General", subtitle: "Where notes go, what is kept, and how Minutes starts.") {
@@ -43,10 +44,10 @@ struct GeneralPane: View {
                     HStack(spacing: Tok.s4) {
                         TextField("Me", text: Binding(
                             get: { prefs.localSpeakerName },
-                            set: { prefs.localSpeakerName = $0.isEmpty ? "Me" : $0 }))
+                            set: { setLocalName($0) }))
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 200)
-                        Text("Used for everything recorded from your microphone.")
+                        Text("Used for everything Minutes knows is you.")
                             .font(.caption).foregroundStyle(Tok.textSecondary)
                         Spacer()
                     }
@@ -160,13 +161,13 @@ struct GeneralPane: View {
                 ))
                 Card {
                     VStack(alignment: .leading, spacing: Tok.s3) {
-                        Text("When you rename a speaker, Minutes remembers that voice so it arrives named next time. This stays on this Mac and is never sent anywhere.")
+                        Text("When you rename a speaker, Minutes remembers that voice so it arrives named next time. Your own voice appears here too if you recorded it in Getting Started. All of this stays on this Mac and is never sent anywhere, under any setting.")
                             .font(.caption).foregroundStyle(Tok.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
 
                         if voices.isEmpty {
                             Divider()
-                            Text("No voices remembered yet. Rename a speaker in a meeting and it will appear here.")
+                            Text("No voices remembered yet. Rename a speaker in a meeting and it will appear here, or record your own voice in Getting Started.")
                                 .font(.caption).foregroundStyle(Tok.textSecondary)
                         } else {
                             ForEach(voices) { v in
@@ -183,20 +184,107 @@ struct GeneralPane: View {
             Task { audioBytes = await MeetingStore.shared.audioBytes() }
             reloadVoices()
         }
+        .alert("Delete your recorded voice?", isPresented: $confirmDeleteEnrolled) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                Task { await VoiceEnrolment.shared.delete(); reloadVoices() }
+            }
+        } message: {
+            // States what changes and what does not. A user deleting a fingerprint
+            // may reasonably expect history to change, and it does not (FR-51's
+            // rule, restated because the expectation is reasonable).
+            Text("The voice fingerprint is removed from this Mac. Meetings already written keep the names they have. In future meetings where several people share your microphone, Minutes will go back to leaving those voices unattributed rather than naming you.")
+        }
         .alert("Forget every remembered voice?", isPresented: $confirmForgetAll) {
             Button("Cancel", role: .cancel) { }
             Button("Forget all", role: .destructive) {
                 Task { await SpeakerDirectory.shared.forgetAll(); reloadVoices() }
             }
         } message: {
-            Text("\(voices.count) \(voices.count == 1 ? "voice" : "voices") will be forgotten. Speakers in meetings already written keep their names; future meetings will start from anonymous labels again.")
+            // A destructive action enumerates what it destroys (FR-40). "3 voices
+            // will be forgotten" hides the one that matters, so the enrolled voice
+            // is named separately from the count of colleagues.
+            Text(forgetAllMessage)
         }
     }
 
-    // MARK: - Remembered voices (FR-51)
+    // MARK: - Remembered voices (FR-51, FR-64)
 
+    private var forgetAllMessage: String {
+        let colleagues = voices.filter { !$0.isEnrolled }.count
+        let plural = colleagues == 1 ? "voice" : "voices"
+        let base = "Speakers in meetings already written keep their names; future meetings will start from anonymous labels again."
+        if voices.contains(where: \.isEnrolled) {
+            if colleagues == 0 {
+                return "Your own recorded voice will be deleted. \(base)"
+            }
+            return "Your own recorded voice will be deleted, along with \(colleagues) remembered \(plural). \(base)"
+        }
+        return "\(colleagues) \(plural) will be forgotten. \(base)"
+    }
+
+    /// The enrolled voice is the **same row** with a different glyph and a badge —
+    /// not its own section and not its own card. The user's own voice and a
+    /// remembered colleague's voice are the same kind of thing, stored the same
+    /// way, in the same place; the only distinction worth drawing is which one is
+    /// you (FR-64).
     @ViewBuilder
     private func voiceRow(_ v: SpeakerDirectory.Summary) -> some View {
+        if v.isEnrolled {
+            enrolledVoiceRow(v)
+        } else {
+            rememberedVoiceRow(v)
+        }
+    }
+
+    @ViewBuilder
+    private func enrolledVoiceRow(_ v: SpeakerDirectory.Summary) -> some View {
+        HStack(spacing: Tok.s4) {
+            Image(systemName: "person.wave.2.fill")
+                .foregroundStyle(Tok.brand).frame(width: 20)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: Tok.s3) {
+                    Text(prefs.localSpeakerName).font(.body)
+                    Text("You")
+                        .font(.caption2)
+                        .foregroundStyle(Tok.brand)
+                        .padding(.horizontal, Tok.s3)
+                        .padding(.vertical, 2)
+                        .background(Tok.brand.opacity(0.15), in: Capsule())
+                }
+                // Provenance, so an enrolled fingerprint is judgeable in the way
+                // a colleague's meeting count makes theirs judgeable.
+                Text(enrolledProvenance(v))
+                    .font(.caption).foregroundStyle(Tok.textSecondary)
+                // No rename here: this name is owned by "Your name in transcripts"
+                // above, and two places to edit one name is the defect avoided.
+                Text("Recorded from the microphone. Change the name under “Your name in transcripts”.")
+                    .font(.caption2).foregroundStyle(Tok.textSecondary)
+            }
+            Spacer()
+            Button("Re-record") { app.paneRequest = MainWindow.Pane.gettingStarted.rawValue }
+                .buttonStyle(.borderless).font(.caption)
+            Button {
+                confirmDeleteEnrolled = true
+            } label: {
+                Image(systemName: "minus.circle").font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(Tok.textSecondary)
+            .help("Delete your recorded voice")
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func enrolledProvenance(_ v: SpeakerDirectory.Summary) -> String {
+        var parts: [String] = []
+        if let s = v.speechSeconds { parts.append(String(format: "%.0f s of audio", s)) }
+        parts.append("recorded \(relative(v.updatedAt))")
+        return parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private func rememberedVoiceRow(_ v: SpeakerDirectory.Summary) -> some View {
         HStack(spacing: Tok.s4) {
             Image(systemName: "waveform.circle")
                 .foregroundStyle(Tok.brand).frame(width: 20)
@@ -248,7 +336,24 @@ struct GeneralPane: View {
     }
 
     private func reloadVoices() {
-        Task { voices = await SpeakerDirectory.shared.summaries() }
+        Task {
+            voices = await SpeakerDirectory.shared.summaries()
+            // Keeps the Getting Started row honest without it having to poll.
+            await VoiceEnrolment.shared.refresh()
+        }
+    }
+
+    /// The enrolled profile's label is not its own to own — it is the user's
+    /// display name, which lives in Preferences. Renaming there renames it here,
+    /// so the voices list can never show a stale name for the one entry whose
+    /// name it does not own.
+    private func setLocalName(_ raw: String) {
+        let name = raw.isEmpty ? "Me" : raw
+        prefs.localSpeakerName = name
+        Task {
+            await SpeakerDirectory.shared.syncEnrolledName(to: name)
+            reloadVoices()
+        }
     }
 
     private func relative(_ d: Date) -> String {

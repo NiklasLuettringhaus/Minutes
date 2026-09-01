@@ -169,6 +169,19 @@ struct Meeting: Codable, Sendable, Identifiable {
     /// the app to discover it had been AirPods.
     var micDevice: String?
     var systemSource: String?
+    /// True when the Local Speaker was identified by matching the user's enrolled
+    /// voice against the in-room voices, rather than by the structural certainty
+    /// of a single voice on the microphone (FR-63).
+    ///
+    /// The distinction is recorded because the two are not equally reliable and
+    /// the transcript renders them identically. One cannot be wrong; the other is
+    /// a measurement. AD-11 exists to stop the second being presented as the
+    /// first, so the detail pane says which it was (FR-65).
+    var localIdentifiedByEnrolment: Bool = false
+    /// How close that match was, when there was one. Shown as a fact and never
+    /// settable — no control anywhere in the app writes a distance (FR-65).
+    var localMatchDistance: Float?
+
     /// Speaker Labels the user has excluded from the Note for this Meeting.
     ///
     /// Deliberately per-Meeting and never automatic. In-room voices are usually
@@ -201,6 +214,8 @@ struct Meeting: Codable, Sendable, Identifiable {
         self.transcriptionModel = nil
         self.micDevice = nil
         self.systemSource = nil
+        self.localIdentifiedByEnrolment = false
+        self.localMatchDistance = nil
         self.excludedSpeakers = []
         self.utterances = []
         self.speakerNames = [SpeakerLabelID.local.raw: "Me"]
@@ -231,6 +246,8 @@ struct Meeting: Codable, Sendable, Identifiable {
         transcriptionModel = try c.decodeIfPresent(String.self, forKey: .transcriptionModel)
         micDevice = try c.decodeIfPresent(String.self, forKey: .micDevice)
         systemSource = try c.decodeIfPresent(String.self, forKey: .systemSource)
+        localIdentifiedByEnrolment = try c.decodeIfPresent(Bool.self, forKey: .localIdentifiedByEnrolment) ?? false
+        localMatchDistance = try c.decodeIfPresent(Float.self, forKey: .localMatchDistance)
         excludedSpeakers = try c.decodeIfPresent([String].self, forKey: .excludedSpeakers) ?? []
         utterances = try c.decodeIfPresent([Utterance].self, forKey: .utterances) ?? []
         speakerNames = try c.decodeIfPresent([String: String].self, forKey: .speakerNames)
@@ -270,6 +287,43 @@ struct Meeting: Codable, Sendable, Identifiable {
     }
 
     func isInferred(_ id: SpeakerLabelID) -> Bool { inferredSpeakers.contains(id.raw) }
+
+    /// What the app's claim about this voice actually rests on (FR-65).
+    ///
+    /// Three of the four cases mean "no identity was claimed", and they are kept
+    /// apart because they are not the same statement: a structural fact, a
+    /// measurement, an honest anonymous label, and speech nothing could place.
+    enum Basis: Equatable {
+        /// The microphone held one voice. Cannot be wrong.
+        case structural
+        /// Matched against the user's enrolled voice, at this distance.
+        case enrolmentMatch(distance: Float?)
+        /// In the room, and the app does not claim to know who.
+        case inRoomAnonymous
+        /// Mic speech no diarized span covered, with several voices present.
+        case inRoomUnplaceable
+        /// The far end of the call, split by diarization.
+        case remote
+
+        var isClaim: Bool {
+            switch self {
+            case .structural, .enrolmentMatch: return true
+            case .inRoomAnonymous, .inRoomUnplaceable, .remote: return false
+            }
+        }
+    }
+
+    func basis(for id: SpeakerLabelID) -> Basis {
+        if id == .inRoomUnidentified { return .inRoomUnplaceable }
+        switch id.place {
+        case .you:
+            return localIdentifiedByEnrolment
+                ? .enrolmentMatch(distance: localMatchDistance)
+                : .structural
+        case .room:   return .inRoomAnonymous
+        case .remote: return .remote
+        }
+    }
 
     /// Distinct speakers in transcript order of first appearance.
     var speakers: [SpeakerLabelID] {

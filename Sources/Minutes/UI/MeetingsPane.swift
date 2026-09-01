@@ -368,7 +368,8 @@ struct MeetingDetail: View {
                             } else {
                                 SpeakerChip(name: meeting.displayName(for: s),
                                             place: s.place,
-                                            isInferred: meeting.isInferred(s))
+                                            isInferred: meeting.isInferred(s),
+                                            basis: meeting.basis(for: s))
                                 if true {
                                     Button("Rename") {
                                         draftName = meeting.displayName(for: s)
@@ -378,6 +379,14 @@ struct MeetingDetail: View {
                                 }
                                 if meeting.isInferred(s) {
                                     Text("recognised automatically — check it is right")
+                                        .font(.caption2).foregroundStyle(Tok.textSecondary)
+                                }
+                                // FR-65: a claim states its basis. The two ways a
+                                // voice becomes "you" render identically in the
+                                // transcript and must not render identically here —
+                                // one cannot be wrong, the other is a measurement.
+                                if let note = basisNote(for: s) {
+                                    Text(note)
                                         .font(.caption2).foregroundStyle(Tok.textSecondary)
                                 }
                                 Spacer()
@@ -514,7 +523,8 @@ struct MeetingDetail: View {
                                 HStack(spacing: Tok.s3) {
                                     Text(Fmt.timestamp(b.start)).font(.caption).monospacedDigit()
                                         .foregroundStyle(Tok.textSecondary)
-                                    SpeakerChip(name: b.name, place: b.place, isInferred: b.isInferred)
+                                    SpeakerChip(name: b.name, place: b.place,
+                                                isInferred: b.isInferred, basis: b.basis)
                                 }
                                 // Transcript text is prose, not code — never monospaced.
                                 Text(b.text).font(.body).fixedSize(horizontal: false, vertical: true)
@@ -542,6 +552,9 @@ struct MeetingDetail: View {
                     if meeting.multipleInRoom {
                         FactChip(text: "Several people in the room")
                     }
+                    if meeting.localIdentifiedByEnrolment {
+                        FactChip(text: "You identified by voice", good: true)
+                    }
                 }
                 Text("Everything above was produced on this Mac.")
                     .font(.caption2).foregroundStyle(Tok.textSecondary)
@@ -551,12 +564,36 @@ struct MeetingDetail: View {
 
     // MARK: - Helpers
 
+    /// What the app's claim about this speaker rests on, in one line.
+    ///
+    /// Three of the five cases are refusals to claim an identity, and they render
+    /// as ordinary text with no warning glyph — the app declining to guess is the
+    /// product working, and dressing it as a failure would push a reader toward
+    /// wanting the guess back. Only the two claims are annotated, because only a
+    /// claim can be wrong.
+    private func basisNote(for s: SpeakerLabelID) -> String? {
+        switch meeting.basis(for: s) {
+        case .structural:
+            return "your microphone held a single voice, so this is certain"
+        case .enrolmentMatch(let d):
+            if let d {
+                return String(format: "recognised from your recorded voice (distance %.2f — lower is closer)", d)
+            }
+            return "recognised from your recorded voice"
+        case .inRoomUnplaceable:
+            return "in the room, and no voice could be matched to it"
+        case .inRoomAnonymous, .remote:
+            return nil
+        }
+    }
+
     struct Block: Identifiable {
         let id = UUID()
         var start: TimeInterval
         var name: String
         var place: SpeakerLabelID.Place
         var isInferred: Bool
+        var basis: Meeting.Basis?
         var text: String
     }
 
@@ -571,6 +608,7 @@ struct MeetingDetail: View {
             } else {
                 out.append(Block(start: u.start, name: name, place: u.speaker.place,
                                  isInferred: meeting.isInferred(u.speaker),
+                                 basis: meeting.basis(for: u.speaker),
                                  text: u.text.trimmingCharacters(in: .whitespaces)))
             }
         }

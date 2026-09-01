@@ -17,6 +17,10 @@ actor Pipeline {
         ParakeetModel.isParakeet(model) ? ParakeetTranscriber() : WhisperKitTranscriber()
     }
     private let diarizer = SpeakerKitDiarizerAdapter()
+    /// Held only for its `producer` identifier: the mic centroids this stage gets
+    /// back come from the same models, so they must be tagged as such before they
+    /// can be compared with a stored fingerprint (AD-29).
+    private let embedder: VoiceEmbedding = SpeakerKitVoiceEmbedder()
     private let noteWriter: NoteWriting = NoteWriter()
     private let heuristic = HeuristicBackend()
     private let llm = FoundationModelsBackend()
@@ -194,6 +198,11 @@ actor Pipeline {
         var multipleInRoom = false
         var micSpans: [DiarizedSpan] = []
         var systemSpans: [DiarizedSpan] = []
+        /// Which mic cluster the enrolled voice matched, when it matched one
+        /// unambiguously. `nil` means the app claims nothing, which is what it did
+        /// before enrolment existed and what it must keep doing.
+        var localMicVoice: Int?
+        var localMatchDistance: Float?
 
         // --- Microphone: the room ---
         if let mic = await store.audioURL(id: id, stream: .mic) {
@@ -201,11 +210,38 @@ actor Pipeline {
                 let (spans, c) = try await diarizer.diarizeFull(url: mic)
                 let voices = Set(spans.map(\.speakerIndex))
                 if voices.count > 1 {
-                    // Several people in the room. Do not claim any of them is the
-                    // user; the rename + profile machinery names them once.
+                    // Several people in the room. Which of them is the user is not
+                    // assumed — it is either measured against an enrolled voice
+                    // (FR-63) or left unclaimed, exactly as before.
                     multipleInRoom = true
                     micSpans = spans
-                    for (idx, vec) in c { centroids[SpeakerLabelID.inRoom(idx).raw] = vec }
+
+                    // FR-63 / AD-30. The lookup happens here because this is the
+                    // only stage holding the mic clusters' embeddings, and its
+                    // result is handed to `assign` as a value — no stage is added
+                    // to AD-8's list, and `assign` gains no dependency on the
+                    // speaker store.
+                    let candidates = c.compactMap { idx, vec -> VoiceMatch.Candidate? in
+                        guard !vec.isEmpty else { return nil }
+                        return VoiceMatch.Candidate(
+                            key: String(idx),
+                            fingerprint: VoiceFingerprint(vector: vec, producer: embedder.producer))
+                    }
+                    let resolution = await SpeakerDirectory.shared.identifyLocal(among: candidates)
+                    if let key = resolution.matchedKey, let idx = Int(key) {
+                        localMicVoice = idx
+                        localMatchDistance = resolution.matchedDistance
+                    }
+
+                    // The identified voice is keyed `local` so every consumer —
+                    // the note, the detail pane, a future rename — sees the user
+                    // where it expects them, and the rest stay in-room.
+                    for (idx, vec) in c {
+                        let label = (idx == localMicVoice)
+                            ? SpeakerLabelID.local
+                            : SpeakerLabelID.inRoom(idx)
+                        centroids[label.raw] = vec
+                    }
                 } else {
                     // A single voice on the microphone is the user, and that
                     // inference is safe.
@@ -248,13 +284,17 @@ actor Pipeline {
 
         let mic = micSpans, sysSpans = systemSpans, multi = multipleInRoom
         let ok = anySucceeded
+        let localVoice = localMicVoice, localDistance = localMatchDistance
         _ = try await store.update(id: id) { m in
             m.diarizationSucceeded = ok
             m.multipleInRoom = multi
+            m.localIdentifiedByEnrolment = localVoice != nil
+            m.localMatchDistance = localDistance
             for (k, v) in names { m.speakerNames[k] = v }
             m.inferredSpeakers = inferred
             m.utterances = Self.assign(micSpans: mic, systemSpans: sysSpans,
-                                       multipleInRoom: multi, to: m.utterances)
+                                       multipleInRoom: multi,
+                                       localMicVoice: localVoice, to: m.utterances)
         }
     }
 
@@ -262,9 +302,18 @@ actor Pipeline {
     /// within its own stream. A mic Utterance can only become an in-room voice and
     /// a system Utterance can only become a remote one — the streams never mix,
     /// which is the part of the original design that survives.
+    ///
+    /// `localMicVoice`, when set, names the one mic cluster the user's enrolled
+    /// voice matched (FR-63). It changes **which** in-room voice becomes the Local
+    /// Speaker and nothing else: the stream rules above still hold, an unplaceable
+    /// mic utterance is still unidentified in-room speech, and with the parameter
+    /// absent this function behaves exactly as it did before enrolment existed —
+    /// which is why it has a default, so the tests that assert the old behaviour
+    /// assert it against unchanged call sites.
     static func assign(micSpans: [DiarizedSpan],
                        systemSpans: [DiarizedSpan],
                        multipleInRoom: Bool,
+                       localMicVoice: Int? = nil,
                        to utterances: [Utterance]) -> [Utterance] {
         utterances.map { u in
             let spans = u.origin == .mic ? micSpans : systemSpans
@@ -291,8 +340,16 @@ actor Pipeline {
             var c = u
             switch u.origin {
             case .mic:
-                // One voice on the mic stays the user; several become in-room voices.
-                c.speaker = multipleInRoom ? SpeakerLabelID.inRoom(b.idx) : .local
+                // One voice on the mic stays the user. With several, the enrolled
+                // voice's match is the user and the rest are in-room voices; with
+                // no match, none of them is claimed.
+                if !multipleInRoom {
+                    c.speaker = .local
+                } else if let localMicVoice, b.idx == localMicVoice {
+                    c.speaker = .local
+                } else {
+                    c.speaker = SpeakerLabelID.inRoom(b.idx)
+                }
             case .system:
                 c.speaker = SpeakerLabelID.remote(b.idx)
             }
@@ -304,7 +361,9 @@ actor Pipeline {
         let store = MeetingStore.shared
         let localName = await AppStateBridge.localSpeakerName()
         _ = try await store.update(id: id) { m in
-            if !m.multipleInRoom {
+            // Named when the user is known: because the mic held one voice, or
+            // because the enrolled voice identified one of several (FR-63).
+            if !m.multipleInRoom || m.localIdentifiedByEnrolment {
                 m.speakerNames[SpeakerLabelID.local.raw] = localName
             }
             // Number each group independently so "In-room 2" and "Speaker 2" are

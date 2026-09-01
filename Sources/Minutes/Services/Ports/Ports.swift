@@ -47,9 +47,45 @@ struct DiarizedSpan: Sendable {
 }
 
 protocol Diarizing: Sendable {
-    /// Splits ONE stream into per-speaker spans. Only ever called on the System
-    /// Stream — never a mixed stream (AD-11).
+    /// Splits ONE stream into per-speaker spans. Never a mixed stream (AD-11).
     func diarize(url: URL) async throws -> [DiarizedSpan]
+}
+
+// MARK: - Voice embedding (AD-28)
+
+/// What an embedder reports about one recording.
+///
+/// It reports rather than judges. Whether two voices in a sample is acceptable is
+/// policy, and policy lives in Services — so `VoiceEnrolment` decides to refuse
+/// and this type only says what was there.
+struct VoiceEmbeddingResult: Sendable {
+    /// The dominant speaker's fingerprint — the one who spoke for longest.
+    var fingerprint: VoiceFingerprint
+    /// How many distinct voices the embedder found. More than one is what makes
+    /// an enrolment sample unusable (FR-62).
+    var voicesFound: Int
+    /// Seconds of actual speech found, not seconds of file. A 25-second recording
+    /// of someone thinking is not a 25-second sample.
+    var speechSeconds: TimeInterval
+    /// The dominant speaker's share of that speech, so "one voice" can be
+    /// distinguished from "one voice and a cough".
+    var dominantShare: Double
+}
+
+/// Turns audio into a comparable fingerprint (AD-28).
+///
+/// The port exists so the identification path has no Apple dependency. The
+/// adapter behind it may have as many as it likes; this signature may have none,
+/// and neither may `VoiceMatch`, which does the comparing. If a future
+/// implementation is pure Swift DSP or a different model entirely, everything
+/// above this line is unaffected — that is the point, and it is the reason the
+/// spike rejected Voice Isolation as a mechanism.
+protocol VoiceEmbedding: Sendable {
+    /// Names what produced a fingerprint, and is stored beside it so a vector is
+    /// never compared against one from a different embedder (AD-29).
+    var producer: String { get }
+    /// Embeds the dominant voice in one audio file. Entirely on-device (NFR-1).
+    func embed(url: URL) async throws -> VoiceEmbeddingResult
 }
 
 // MARK: - Metadata

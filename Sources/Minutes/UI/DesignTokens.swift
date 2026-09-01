@@ -267,6 +267,13 @@ struct SpeakerChip: View {
     /// Where the voice was. This is the structural fact; who it is may not be.
     let place: SpeakerLabelID.Place
     var isInferred: Bool = false
+    /// How the app decided this is the user, when it is (FR-65). Two things can
+    /// produce a `.you` chip and they are not equally reliable — the microphone
+    /// holding one voice cannot be wrong, and an enrolment match is a measurement.
+    /// The chip looks the same either way, so the difference has to live in the
+    /// text VoiceOver reads and the tooltip a reader gets. Colour and shape carry
+    /// place; they were never going to carry this.
+    var basis: Meeting.Basis? = nil
 
     /// Convenience for call sites that only know local-or-not.
     init(name: String, isLocal: Bool, isInferred: Bool = false) {
@@ -274,8 +281,10 @@ struct SpeakerChip: View {
         self.place = isLocal ? .you : .remote
         self.isInferred = isInferred
     }
-    init(name: String, place: SpeakerLabelID.Place, isInferred: Bool = false) {
+    init(name: String, place: SpeakerLabelID.Place, isInferred: Bool = false,
+         basis: Meeting.Basis? = nil) {
         self.name = name; self.place = place; self.isInferred = isInferred
+        self.basis = basis
     }
 
     var body: some View {
@@ -291,6 +300,10 @@ struct SpeakerChip: View {
         .padding(.vertical, 2)
         .background(background, in: Capsule())
         .help(helpText)
+        // States meaning, not appearance, and states the *basis* rather than only
+        // the name — the honesty guarantee cannot be visual-only (NFR-7).
+        .accessibilityElement()
+        .accessibilityLabel(accessibilityText)
     }
 
     private var tint: Color {
@@ -310,9 +323,34 @@ struct SpeakerChip: View {
     private var helpText: String {
         if isInferred { return "Recognised from a previous meeting — check it is right." }
         switch place {
-        case .you:    return "You. The microphone held a single voice, so this is certain."
-        case .room:   return "Someone in the room with you. Minutes knows the voice was in the room, but not who it is — rename it once and it will be recognised next time."
+        case .you:
+            if case .enrolmentMatch(let d) = basis {
+                let n = d.map { String(format: " (distance %.2f)", $0) } ?? ""
+                return "You, recognised from your recorded voice\(n). Several people shared the microphone, so this is a measurement rather than a certainty — rename it if it is wrong."
+            }
+            return "You. The microphone held a single voice, so this is certain."
+        case .room:
+            if basis == .inRoomUnplaceable {
+                return "Speech from the room that Minutes could not match to any voice. It is deliberately not attributed to you."
+            }
+            return "Someone in the room with you. Minutes knows the voice was in the room, but not who it is — rename it once and it will be recognised next time."
         case .remote: return "A participant on the other end of the call."
+        }
+    }
+
+    private var accessibilityText: String {
+        let label = isInferred ? "\(name), recognised automatically" : name
+        switch place {
+        case .you:
+            if case .enrolmentMatch = basis {
+                return "\(label), you, recognised from your recorded voice"
+            }
+            return "\(label), you, the microphone held a single voice"
+        case .room:
+            if basis == .inRoomUnplaceable { return "\(label), in the room, unidentified" }
+            return "\(label), in the room with you"
+        case .remote:
+            return "\(label), on the other end of the call"
         }
     }
 }

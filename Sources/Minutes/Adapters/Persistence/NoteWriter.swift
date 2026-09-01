@@ -100,7 +100,14 @@ struct NoteWriter: NoteWriting {
             out += "> Only the microphone was captured for this meeting, so remote participants do not appear in the transcript.\n\n"
         }
         if m.multipleInRoom {
-            out += "> More than one person was speaking in the room, so the in-room voices are labelled but not identified. Rename them once and Minutes will recognise them next time.\n\n"
+            if m.localIdentifiedByEnrolment {
+                // Says which voice was identified and how, so the Note carries the
+                // same disclosure the app does (FR-65). A reader months later has
+                // only this file.
+                out += "> More than one person was speaking in the room. Your own voice was recognised from the sample you recorded; the other in-room voices are labelled but not identified. Rename them once and Minutes will recognise them next time.\n\n"
+            } else {
+                out += "> More than one person was speaking in the room, so the in-room voices are labelled but not identified. Rename them once and Minutes will recognise them next time.\n\n"
+            }
         }
 
         out += speakerIndex(m)
@@ -216,6 +223,15 @@ struct NoteWriter: NoteWriting {
         lines.append("system_audio_captured: \(m.systemStreamCaptured)")
         lines.append("speakers_separated: \(m.diarizationSucceeded)")
         lines.append("multiple_people_in_room: \(m.multipleInRoom)")
+        // Provenance for the identity claim, not just for the summary (FR-30, FR-65).
+        // Emitted only when the claim was made, so a Note never carries a field
+        // implying a feature the recording did not use.
+        if m.localIdentifiedByEnrolment {
+            lines.append("you_identified_by: enrolled_voice")
+            if let d = m.localMatchDistance {
+                lines.append(String(format: "you_match_distance: %.3f", d))
+            }
+        }
         if let app = m.triggeringApp {
             lines.append("detected_from: \(Self.yamlScalar(app))")
         }

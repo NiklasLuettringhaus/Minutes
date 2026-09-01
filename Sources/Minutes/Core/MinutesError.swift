@@ -16,6 +16,15 @@ enum MinutesError: LocalizedError, Equatable {
     case transcriptionFailed(String)
     case diarizationFailed(String)
 
+    // Voice enrolment (FR-62). Failures are staged and named, never one generic
+    // error — the user needs to know which of four things went wrong, because
+    // three of them are fixed by doing something different and one is not.
+    case voiceSampleUnreadable(String)
+    case voiceSampleTooShort(seconds: Double)
+    case voiceSampleSilent
+    case voiceSampleMultipleVoices(count: Int)
+    case voiceEmbeddingFailed(String)
+
     // Persistence
     case notesFolderUnavailable
     case notesFolderNotWritable(String)
@@ -44,6 +53,16 @@ enum MinutesError: LocalizedError, Equatable {
             return "Transcription failed. \(d)"
         case .diarizationFailed(let d):
             return "Speaker separation failed. \(d)"
+        case .voiceSampleUnreadable(let d):
+            return "The voice sample could not be read back. \(d)"
+        case .voiceSampleTooShort(let s):
+            return String(format: "The recording was only %.1f seconds long — too short to identify a voice from.", s)
+        case .voiceSampleSilent:
+            return "No speech was found in the recording."
+        case .voiceSampleMultipleVoices(let n):
+            return "\(n) voices were in the recording, so it cannot be used."
+        case .voiceEmbeddingFailed(let d):
+            return "The voice sample could not be analysed. \(d)"
         case .notesFolderUnavailable:
             return "The notes folder is not set or is no longer reachable."
         case .notesFolderNotWritable(let p):
@@ -64,6 +83,12 @@ enum MinutesError: LocalizedError, Equatable {
             return "macOS revokes system-audio permission when Minutes is rebuilt. Run the reset command shown in Settings, then try again."
         case .modelNotDownloaded:
             return "Download it in Settings > Transcription."
+        case .voiceSampleTooShort, .voiceSampleSilent:
+            return "Record again and talk continuously — reading a paragraph out loud is enough."
+        case .voiceSampleMultipleVoices:
+            return "Record again somewhere nobody else is talking. A fingerprint of two people would put someone else's name on your words."
+        case .voiceSampleUnreadable, .voiceEmbeddingFailed:
+            return "Record again. Nothing was stored."
         case .notesFolderUnavailable, .notesFolderNotWritable:
             return "Choose a notes folder in Settings > General."
         default:
