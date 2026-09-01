@@ -3,7 +3,7 @@ name: Minutes
 description: A native macOS menu bar utility that inherits Apple's visual system and adds only what recording state and setup progress genuinely require.
 status: final
 created: 2026-08-31
-updated: 2026-08-31
+updated: 2026-09-01
 sources:
   - ../../prds/prd-meeting-recorder-2026-08-31/prd.md
   - ../../prds/prd-meeting-recorder-2026-08-31/addendum.md
@@ -22,6 +22,7 @@ colors:
   state-blocked:       '#B26A00'   # added increment 3 — a capability the machine cannot do yet, and the egress marker. Deliberately NOT state-recording (reserved) and darker than state-transcribing so the two never read as the same signal.
   brand-accent:        '#12A594'
   brand-accent-hover:  '#0E8C7D'
+  ink-amber:           '#9A6203'   # documented increment 4, not introduced: the in-room speaker chip has shipped in this value since AD-11 was amended, and the spine never declared it. Raw state-transcribing is too pale to set text in on a light ground. Deliberately NOT state-blocked (#B26A00) — that means "the machine cannot do this yet", and an in-room voice is not a blocked capability.
 typography:
   # Platform-owned type ramp. macOS text styles, resolved by the system so Dynamic Type and
   # accessibility sizes work for free (see EXPERIENCE.md § Accessibility Floor).
@@ -146,9 +147,45 @@ components:
   speaker-chip:
     radius: '{rounded.full}'
     padding: '{spacing.1} {spacing.3}'
-    local:    { background: '{colors.brand-accent}', opacity: '0.15', foreground: '{colors.brand-accent}' }
-    remote:   { background: '{colors.separator}', foreground: '{colors.text-secondary}' }
+    local:    { background: '{colors.brand-accent}', opacity: '0.15', foreground: '{colors.brand-accent}', glyph: 'none' }
+    room:     { background: '{colors.state-transcribing}', opacity: '0.16', foreground: '{colors.ink-amber}', glyph: 'person.2.fill @ 8px' }
+    remote:   { background: '{colors.separator}', opacity: '0.5', foreground: '{colors.text-secondary}', glyph: 'none' }
     inferred: { suffix: 'a small "~" prefix on the name', note: 'PRD FR-25 requires an auto-applied name be recognisable as inferred.' }
+    note: 'Three places, three treatments — declared in full increment 4. The room variant has shipped since AD-11 was amended and was missing here, which left the spine describing a two-place world the product left behind. Place is the structural fact (PRD §3), so it is what the chip encodes; identity may be inferred on top of it.'
+  level-meter:
+    label-width: '92px'
+    track:  { shape: '{rounded.full}', fill: '{colors.separator}', height: '5px' }
+    filled: { fill: '{colors.brand-accent}' }
+    status: '{typography.metric}, {colors.brand-accent} when good and {colors.state-recording} when not'
+    note: 'Documented increment 4, not introduced — the Test Playground has shipped with these meters since FR-47 and the spine never owned them. One meter per Stream during a test; one meter (Microphone) during voice enrolment, because enrolment never opens the System Stream.'
+  voice-row:
+    min-height: '44px'
+    padding: '{spacing.3} 0'
+    leading-glyph:
+      remembered: 'waveform.circle @ {colors.brand-accent}'
+      enrolled:   'person.wave.2.fill @ {colors.brand-accent}'
+    title:    '{typography.row-title}'
+    subtitle: '{typography.row-subtitle} — provenance: how much audio, how many meetings, when last heard'
+    badge-enrolled: '{components.pill-done} treatment with the label "You"'
+    trailing-remembered: 'Rename · a minus-circle Forget'
+    trailing-enrolled:   'Re-record · a minus-circle Delete'
+    separator: '{colors.separator}, one above each row'
+    note: 'The Remembered-voices row, declared increment 4 for FR-51 and FR-64. The enrolled entry is the same row with a different glyph and a badge — not a second component and not a separate card. One of these entries is the user and the rest are other people, and that is the only distinction the row draws.'
+  enrolment-card:
+    derived-from: 'the Test Playground card — same card, same banner, same meter, same result-as-facts ending'
+    idle:      { banner: '{components.state-banner}.info', control: '{components.button-primary}', meters: 'one — Microphone' }
+    recording: { banner: '{components.state-banner}.recording with a countdown', meters: 'one — Microphone, live' }
+    analysing: { banner: '{components.state-banner}.transcribing', meters: 'one — Microphone, frozen' }
+    done:      { facts: '{components.fact-chip} row — seconds of speech, voices found', control: 'Re-record' }
+    failed:    { banner: '{components.state-banner}.degraded stating the reason', control: '{components.button-primary}' }
+    note: 'PRD FR-62. It reuses the Playground shape on purpose: the Playground already taught the user that a card with a meter and a countdown means "the app is about to listen and then tell you what it heard". A second shape for the same promise would be a defect. It shows ONE meter, not two — enrolment never opens the System Stream.'
+  fact-chip:
+    radius: '{rounded.sm}'
+    padding: '3px {spacing.3}'
+    typography: '{typography.metric}'
+    neutral: { background: '{colors.separator}', opacity: '0.5', foreground: '{colors.text-secondary}' }
+    good:    { background: '{colors.brand-accent}', opacity: '0.14', foreground: '{colors.brand-accent}' }
+    note: 'Documented increment 4, not introduced — the Playground result has shipped these since FR-47. A chip carries one measured fact and never an adjective.'
 ---
 
 # Minutes — Design
@@ -174,6 +211,8 @@ Three literal colours exist, each because the system provides no semantic equiva
 - **`{colors.state-recording}` (#E5484D)** — Recording, and only Recording. Red because it is the universal convention and because macOS's own capture indicator is warm; a user glancing at the menu bar must reach the right conclusion without thinking. It appears nowhere else in the product — not on destructive buttons, not on errors. Reserving it is what makes it legible.
 - **`{colors.state-transcribing}` (#F5A524)** — work in progress: transcribing, and the degraded-capture warning. Amber reads as "busy / attention" without the alarm of red.
 - **`{colors.brand-accent}` (#12A594)** — the teal from the reference. Used for the primary action in a pane, the satisfied checklist indicator, the Done pill, download progress, and the Local Speaker chip. It was chosen partly because the user liked it and partly for a structural reason: it is cold, so it can never be mistaken at a glance for the Recording state. A warm brand accent would have been a real usability bug in this specific product.
+
+`{colors.ink-amber}` (#9A6203) was added to the frontmatter in increment 4 and is **not a new colour** — it is the value the in-room speaker chip has been shipping in since AD-11 was amended, and the spine simply never declared it. It exists because `{colors.state-transcribing}` is a signal colour tuned for a 12%-opacity background, and setting text in it on a light ground is unreadable. It is deliberately not `{colors.state-blocked}`, which is nearly the same hue but means *the machine cannot do this yet* — an in-room voice is not a blocked capability, and two meanings sharing one value is how a palette stops carrying information.
 
 Errors use the system's own error presentation. We do not define an error colour, because inventing one that competes with `{colors.state-recording}` is how a red menu bar icon stops meaning "recording".
 
@@ -223,7 +262,17 @@ The de-emphasis is the whole point: a user opening Setup should see what is left
 
 **`{components.state-banner}`** — how Recording, Transcribing and degraded capture are announced inside the window. Tinted background at 12% opacity with matching foreground. The degraded variant carries a warning glyph because PRD FR-7 forbids silent degradation.
 
-**`{components.speaker-chip}`** — the Local Speaker chip is brand-tinted, Remote Speakers are neutral grey. This single visual difference encodes the product's core structural claim: one of these labels is a fact, the others are inferences. An auto-applied name from a Speaker Profile is prefixed to mark it as inferred (PRD FR-25).
+**`{components.speaker-chip}`** — three places, three treatments. The Local Speaker is brand-tinted; an in-room voice beside the user is amber with a two-person glyph; a Remote Speaker is neutral grey. The chip encodes **place**, which is the structural fact (PRD §3), and never identity, which may be inferred on top of it. An auto-applied name from a Speaker Profile is `~`-prefixed to mark it inferred (PRD FR-25).
+
+Increment 4 makes this component carry more weight than it did, because the whole point of voice enrolment is that a voice can now *move* from the amber treatment to the brand one — the same person, the same microphone, the same place, and the app has stopped guessing which of them is you. The chip is where a user sees that happen, so all three variants are now declared rather than two.
+
+**`{components.level-meter}`** — a labelled track that fills to peak level. It is not decoration: a flat meter is the Test Playground's actual answer to "is system audio working", and during voice enrolment a flat meter is the answer to "is it hearing me at all". Declared in increment 4 after shipping since FR-47.
+
+**`{components.voice-row}`** — one remembered voice. The enrolled entry (PRD FR-64) is *the same row* with a different leading glyph and a "You" badge, not a separate card in a separate section. That restraint is the design decision: the user's own voice and a remembered colleague's voice are the same kind of thing stored the same way in the same place, and the only distinction worth drawing is which one is you. Provenance sits in the subtitle for both — how much audio produced it, how many meetings have confirmed it, when it was last heard — because a one-sample guess and a twelve-meeting certainty must not look alike.
+
+**`{components.enrolment-card}`** — the record-and-verify affordance for PRD FR-62, and a deliberate re-use of the Test Playground's card rather than a new shape. The Playground already taught the user what a card with a countdown, a meter and a result made of measured facts means: *the app is about to listen, and then it will tell you what it actually heard.* Voice enrolment makes exactly that promise, so it makes it in exactly that shape. Two differences, both because the underlying thing differs: it shows **one** meter, because enrolment never opens the System Stream; and its result reports seconds of speech and number of voices found rather than a transcript, because those are the two facts that decide whether the sample is usable.
+
+**`{components.fact-chip}`** — one measured fact, never an adjective. "24 s of speech" and "one voice" are chips; "good sample" is not.
 
 **`{components.backend-row}`** — the Summaries pane's row, and a deliberate copy of the Transcription pane's model row. The user's instruction was that this pane be "similar to the model selection for transcription", so shared anatomy is a requirement and not a convenience: a reader who has learned one row has learned both. It adds one thing the model row never needed — a `Blocked` readiness state — and groups rows under family headings so that *where the work happens* is legible before any individual row is read.
 
@@ -248,6 +297,9 @@ The de-emphasis is the whole point: a user opening Setup should see what is left
 - Use monospaced digits for anything that ticks or counts.
 - Give every checklist and model row a one-line reason it exists.
 - Make download progress determinate.
+- Reuse `{components.enrolment-card}`'s parent shape — the Test Playground card — for anything that records and then reports. A user who has met one has met both.
+- Show one level meter when one Stream is being read, and two when two are. The meter count is information.
+- Keep the enrolled voice in `{components.voice-row}` along the remembered ones, marked with a badge. Same storage, same place, one badge.
 - Test every pane in light mode, dark mode, and Increase Contrast before calling it done.
 
 **Don't**
@@ -262,3 +314,7 @@ The de-emphasis is the whole point: a user opening Setup should see what is left
 - Don't give `{components.pill-done}` a hover state, a border, or focus.
 - Don't introduce an illustration, an empty-state mascot, a gradient, or a marketing surface. There is no third surface (PRD §10.1).
 - Don't add a stats, changelog, or feedback pane. The reference product has them; this one has one user (PRD §10.5).
+- Don't give voice enrolment its own pane, its own onboarding style, or its own card language. It is one checklist row and one card in Getting Started (PRD FR-46, SM-C2).
+- Don't dress a fingerprint up as friendly. No waveform illustration of "your voice", no avatar, no personality. It identifies a person and the copy says so plainly (PRD §9.1).
+- Don't render a threshold, a distance slider, a confidence dial, or a speaker count anywhere in the UI. A measured distance may be *shown* as a fact; it may never be *set* (PRD FR-65).
+- Don't use `{colors.ink-amber}` for anything but in-room speaker ink, and don't reach for `{colors.state-blocked}` when you mean it. They look alike and mean different things.

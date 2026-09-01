@@ -3,7 +3,7 @@ name: Minutes — Experience
 description: Information architecture, states, interactions and flows for a macOS menu bar meeting recorder. Peer contract to DESIGN.md; visual identity lives there.
 status: final
 created: 2026-08-31
-updated: 2026-08-31
+updated: 2026-09-01
 design_reference: ./DESIGN.md
 sources:
   - ../../prds/prd-meeting-recorder-2026-08-31/prd.md
@@ -48,16 +48,18 @@ Grouped headings over a flat list, following the reference (PRD §10.2):
 
 ```
 SETUP
-  Getting Started        → checklist, playground, re-run onboarding
+  Getting Started        → checklist, playground, voice enrolment, re-run onboarding
 CONFIGURE
   Transcription          → model selection + download
   Summaries              → summarisation backend selection, download, key
   Detection              → watched apps, suppression, master toggle
   General                → notes folder, your name, retention, launch at login,
-                           remembered voices, Dock
+                           remembered voices incl. the enrolled one, Dock
 ACTIVITY
   Meetings               → the library
 ```
+
+Increment 4 adds **no destination**. Voice enrolment is one checklist row and one card inside Getting Started, and one distinguished entry in a list General already had. A capability this central arriving without a new pane is the point, not a compromise (PRD SM-C2).
 
 Default destination on first launch is **Getting Started**. Default destination thereafter is **Meetings** — after setup, the library is what a returning user wants. Selection persists across launches.
 
@@ -79,6 +81,9 @@ Every PRD requirement resolves to a surface, and every surface has a flow that l
 | Read a past meeting | Meetings → detail | KF-3 |
 | Fix a speaker name | Meetings → detail | KF-3 |
 | Retry a failure | Meetings → row action | KF-5 |
+| Have Minutes know which voice is yours | Getting Started → Your voice | KF-8 |
+| See or delete the voice Minutes stored | General → Remembered voices | KF-8 step 7 |
+| Fix a wrong identification | Meetings → detail (rename, Exclude) | KF-3, KF-8 |
 | Reclaim disk | General | — |
 
 ## Voice and Tone
@@ -94,6 +99,7 @@ Plain, specific, and never cheerful. The user is a professional using a utility;
 - **Never claim certainty the system cannot provide.** System-audio capture state is *inferred*, so the copy says so: "Last recording captured system audio" — not "Permission granted" (PRD FR-42).
 - **Absence is stated, not padded.** A meeting with no decisions omits the section. The UI never writes "No decisions found!" in a card.
 - **Numbers over adjectives.** "About 6 minutes for a 30-minute meeting on this Mac" beats "Fast".
+- **Say what is stored, in the place it is stored.** Voice enrolment is the most sensitive thing the product keeps, so the copy names it without either softening it or dramatising it: "Minutes keeps a fingerprint of your voice on this Mac. The recording itself is deleted." Not "we take your privacy seriously", and not a warning triangle either — it is a thing the user chose, described accurately (PRD §9.1).
 
 **Terminology is fixed by the PRD Glossary and used verbatim in the UI.** The user sees *Meeting*, *Transcript*, *Speaker*, *Note*, *Notes Folder*, *Transcription Model*. The UI never says "recording" for a Meeting or "session" to the user — *Session* is an internal term and must not leak into copy.
 
@@ -111,7 +117,7 @@ The borrowed pattern (PRD FR-46, §10.3). Behaviour:
 - **Optional rows** are titled "… (Optional)" and never render as an error or block the "setup complete" state.
 - Rows never reorder as they are satisfied. Position is stable so the list does not shuffle under the cursor.
 
-The rows, in order:
+The rows, in order. **Corrected in increment 4:** this table listed five rows and the shipped pane has had six since increment 2 — detection prompts was added as row 5 and never written down here. The seventh row is new.
 
 | # | Row | Required | Satisfied when | Action when outstanding |
 |---|---|---|---|---|
@@ -119,9 +125,15 @@ The rows, in order:
 | 2 | Microphone access | yes | `AVCaptureDevice` authorization is `.authorized` | `Grant Access` (requests in place) |
 | 3 | System audio capture | no* | last capture attempt produced non-silent system audio | `Run Test →` (→ Playground) |
 | 4 | Notes folder chosen | yes | a writable folder is set | `Choose Folder…` (opens picker) |
-| 5 | Test your setup (Optional) | no | a Test Playground run has succeeded | `Run Test →` |
+| 5 | Detection prompts | no† | notification authorization permits delivery | `Allow Notifications` (requests in place) |
+| 6 | Test your setup | no | a Test Playground run has succeeded | `Run Test →` |
+| 7 | **Your voice** | no‡ | an Enrolled Voice exists | `Record Voice` (runs the card in place) |
 
 \* Row 3 is *not required* because PRD FR-7 degrades to Mic-only rather than failing. Its subtitle must say so: "Without this, Minutes records only your side of the conversation." This row is the one place the product's hardest constraint becomes visible to the user, and it must read as a trade-off, not a failure.
+
+† Row 5 is not required because detection falls back to a floating panel, but it earns a row because with notifications denied the notification path is *silently* dead — which is how a real Teams call went unprompted with nothing to show for it.
+
+‡ Row 7 is not required because everything works without it: with no Enrolled Voice, several voices on the microphone stay honestly anonymous. It is prominent because it is in this list rather than in a settings pane, and its subtitle says what it buys rather than what it is: **"Minutes can tell which voice in the room is yours instead of leaving it unattributed."** It sits last so that no shipped row is renumbered — position in this list is stable by rule, and that rule outranks putting the newest thing first.
 
 ### Test Playground (PRD FR-47)
 
@@ -134,6 +146,31 @@ The product's only diagnostic, and the reason the pattern was worth borrowing. m
 - A test run produces no Meeting and writes no Note. It must not appear in Meetings.
 - Available any time, not only during first run. The user should reach for it after granting a permission or changing devices.
 - Playing audio during the test is required for the System meter to move. The pane says so *before* the user starts: "Play something — a video, music — so Minutes can check it hears system audio."
+
+### Voice enrolment (Getting Started, PRD FR-62)
+
+A card in Getting Started, and deliberately **the Test Playground's card** rather than a new shape (`{components.enrolment-card}`). The Playground already taught the user what a countdown, a level meter and a result made of measured facts mean: the app is about to listen, and then it will say what it actually heard. Enrolment makes that exact promise.
+
+- One primary control: `Record my voice`. Before it is pressed the card says how long it will take (about 25 seconds), what will be stored (a fingerprint), and what will not (the recording).
+- **Nothing is stored until the recording completes.** Reading the card, pressing the button and cancelling, or closing the window mid-recording all leave the machine as they found it. This is what makes the feature opt-in rather than a default with an off switch, and it is a behavioural requirement, not an implementation note.
+- The card tells the user what to do, before they start, in the Playground's voice: **"Read anything out loud — a paragraph of an email is fine. Talk normally, and let nobody else talk over you."** The second half is not politeness; a sample with two voices is rejected.
+- While recording: `{components.state-banner}` recording variant, a countdown, and **one** `{components.level-meter}` labelled Microphone. One meter, not two — enrolment never opens the System Stream, so a System meter would be a lie about what is being read.
+- On completion the result is facts, not a verdict: `{components.fact-chip}`s for seconds of speech found and number of voices found, then `Re-record`. No score, no "good sample!", no waveform portrait.
+- **Failures are staged and named**, per the Playground's rule: microphone not granted · nothing was said · more than one voice in the sample · the sample was too short. "More than one voice" states plainly why it is refused — a fingerprint of two people would put a colleague's name on the user's words for months.
+- Re-recording replaces the fingerprint. The copy says *replaces*, because a user re-recording is correcting something and averaging a correction into the error preserves it.
+- An enrolment run produces no Meeting and writes no Note. It must not appear in Meetings — the Playground's rule, for the same reason.
+- Available any time, not only during first run. The natural moment to reach for it is after reading a meeting where the room was labelled anonymously.
+
+### Remembered voices row (General, PRD FR-51, FR-64)
+
+`{components.voice-row}`. The Enrolled Voice lives in this list, as the same kind of row with a different glyph and a "You" badge — not in its own section and not in its own card.
+
+- Ordering puts the enrolled entry first, then remembered colleagues alphabetically. It is the only entry that is *you*, and it is the only one whose deletion changes how future meetings are attributed.
+- Both kinds carry provenance in the subtitle, because a one-sample guess and a twelve-meeting certainty must not look alike. The enrolled entry states how much audio produced it; a remembered colleague states how many meetings have confirmed it and when it was last heard.
+- The enrolled entry offers `Re-record` and a delete. It offers **no rename** — the user's display name comes from "Your name in transcripts" in the same pane, and two places to edit one name is the defect this avoids.
+- Deleting it returns attribution to pre-enrolment behaviour for meetings processed afterwards. Meetings already written keep their labels — FR-51's existing rule, and the reason it is stated again here is that a user deleting a fingerprint may reasonably expect history to change, and it does not.
+- `Forget all` removes the Enrolled Voice too, and its confirmation **names it separately** from the count of remembered colleagues. A destructive action enumerates what it destroys (PRD FR-40), and "3 voices will be forgotten" hides the one that matters.
+- The card states, in the same place the data is shown, that none of this leaves the Mac.
 
 ### Model row (Transcription pane, PRD FR-17, FR-18)
 
@@ -216,6 +253,37 @@ Three degradations, each of which must be visible (PRD NFR-5, FR-7):
 2. **Diarization unavailable or failed** → the whole System Stream becomes one `Speaker` label rather than failing the Meeting (PRD FR-22). The Note records it.
 3. **LLM Backend unavailable** → the Heuristic Backend runs. The Note names the backend that ran (PRD FR-30). This is **not** surfaced as a warning — it is the expected path on this machine, and treating it as an error would be dishonest.
 
+### Voice enrolment state machine (PRD FR-62)
+
+`Idle → Recording → Analysing → Enrolled`, with two exits.
+
+| State | Card | Meter | What the user is told |
+|---|---|---|---|
+| **Idle, never enrolled** | `{components.state-banner}` info + `Record my voice` | one, flat | how long it takes, what is stored, what is deleted |
+| **Recording** | recording banner + countdown | one, live | seconds remaining, and to let nobody else talk |
+| **Analysing** | transcribing banner | one, frozen | that it is working out the fingerprint on this Mac |
+| **Enrolled** | `{components.fact-chip}` facts + `Re-record` | none | seconds of speech found, voices found |
+| **Refused** | degraded banner naming the reason | none | which of the four failures occurred, and what to do |
+| **Idle, already enrolled** | `{components.pill-done}` on the row; card shows the facts | none | when it was recorded, and that re-recording replaces it |
+
+Nothing is written to disk before **Enrolled**. `Refused` and a cancelled `Recording` are indistinguishable from never having started, by design.
+
+### Identity, claimed or refused (PRD FR-63, FR-65)
+
+The product now has three possible answers to "which voice on the microphone is the user", and the interface must make them look different, because two of them are honest and only one is an identification.
+
+| Situation | Label | Chip | Where the reason is visible |
+|---|---|---|---|
+| One voice on the microphone | the user's name | `{components.speaker-chip}`.local | provenance chip: structural, cannot be wrong |
+| Several voices, Enrolled Voice matches one | the user's name | `{components.speaker-chip}`.local | meeting detail states it was recognised from the enrolled voice, and how close |
+| Several voices, no Enrolled Voice or no clear match | `In-room 1…N` | `{components.speaker-chip}`.room | provenance chip: several people in the room |
+| Mic speech the diarizer could not place at all | `In-room, unidentified` | `{components.speaker-chip}`.room | the label itself is the disclosure |
+
+Two rules over the table:
+
+- **A claim states its basis.** The second row looks identical to the first in the transcript, and it must not be identical in the detail pane: one is a structural fact and the other is a measurement that could be wrong. The detail says which, and shows the measured distance as a fact.
+- **A refusal is not an error.** Rows three and four render in the ordinary in-room treatment with no warning glyph. The app declining to guess is the product working, and dressing it as a failure would push a user toward wanting the guess back.
+
 ### Capability readiness (PRD FR-58)
 
 A fourth state family, added in increment 3. The product already distinguishes *working*, *degraded* and *failed*; this adds **blocked**, which is none of those: nothing has gone wrong, and the machine simply cannot do the thing yet.
@@ -262,7 +330,9 @@ Behavioural; visual contrast is `DESIGN.md`'s.
 - **Text scales.** All type uses macOS text styles (`DESIGN.md § Typography`), so accessibility text sizes work. Panes must remain usable at the largest setting — which means no fixed-height rows containing text.
 - **Increase Contrast and Reduce Transparency are honoured** by using system materials rather than custom translucency.
 - **Reduce Motion:** there is almost no motion to reduce. Progress indicators remain, state transitions do not animate.
-- **No timed interactions.** The Detection Prompt expires on the system's schedule, and letting it expire is a safe default (decline). Nothing else is time-limited.
+- **No timed interactions.** The Detection Prompt expires on the system's schedule, and letting it expire is a safe default (decline). Nothing else is time-limited. Voice enrolment's countdown is not an exception: the user is not required to *act* within it, only to keep talking, and abandoning it stores nothing.
+- **Voice enrolment must be completable without seeing the meter.** The countdown is announced, the result is announced as text, and the meter is confirmation rather than instruction. A user who cannot see the level must still be able to tell that the sample was accepted, and why it was not.
+- **Identity announcements state their basis.** VoiceOver on a local-speaker chip announces "you, recognised from your enrolled voice" when that is how it was decided, and "you, the microphone held a single voice" when it was structural. The distinction is the honesty guarantee, so it cannot be visual-only.
 
 ## Permission Choreography
 
@@ -319,13 +389,13 @@ Never block the start of a recording on a permission dialog. A meeting is happen
 ### KF-4. Niklas sets it up once *(PRD UJ-4)*
 
 1. **Entry:** first launch. Icon appears; the window opens on **Getting Started**.
-2. Quick Setup shows five rows, four outstanding. Each says in one line why it exists.
+2. Quick Setup shows seven rows, five outstanding. Each says in one line why it exists.
 3. `Grant Access` on Microphone → system prompt → row flips to `Done` and recedes.
 4. `Choose Folder…` → picker → row satisfied.
 5. `Choose Model →` navigates to Transcription. He takes the recommended default; it downloads with determinate progress and a byte count. Row satisfied.
 6. Row 3 (System audio) is still outstanding and marked not-required, its subtitle explaining that macOS will ask on first recording and that declining means his side only.
 7. **Climax:** he clicks `Run Test →`. The pane tells him to play something. Two level meters move. Five seconds later: the transcribed words, `Mic ✓ System ✓`, the model name, and *"2.1 s for 5 s of audio — roughly 6 min for a 30-min meeting."* He now knows it works, on his machine, with numbers.
-8. **Resolution:** all rows satisfied, "Setup complete." He closes the window and does not open it for weeks.
+8. **Resolution:** the four required rows are satisfied and the pane says "Setup complete." Two optional rows remain outstanding and neither reads as an error — detection prompts, which he grants when the first huddle is detected, and `Your voice`, which he comes back for in KF-8 once he has read a meeting that needed it. He closes the window and does not open it for weeks.
 9. **Edge case:** if the System meter stays flat, the result says `System ✗` with the reason and the reset command — the failure is diagnosed, not merely reported.
 
 ### KF-6. Niklas gets a real summary without depending on Apple Intelligence *(PRD FR-55 … FR-61)*
@@ -349,6 +419,20 @@ The flow that this increment exists for. Niklas has read four meeting notes whos
 
 **The climax is the list of names.** The decision is not "do I want a better summary"; it is "am I sending thirty-seven colleagues' words to a vendor". The interface's job is to make sure that is the question being answered, and this is the one flow where the product deliberately makes an action harder rather than easier.
 
+### KF-8. Niklas tells Minutes which voice is his *(PRD FR-62 … FR-65)*
+
+The flow this increment exists for. Niklas has just read the note from an eight-person Slack huddle he took at his desk with two colleagues talking beside him. Roughly half the transcript is their conversation, and the app had correctly separated the voices and correctly refused to say which was his — so the note reads `In-room 1`, `In-room 2`, `In-room, unidentified`, and none of it is wrong and none of it is useful.
+
+1. **Entry:** he opens **Getting Started**. Six rows are satisfied and receding. Row 7 is outstanding and reads: *Your voice — Minutes can tell which voice in the room is yours instead of leaving it unattributed.* Marked optional.
+2. He presses `Record Voice`. The card below tells him it takes about 25 seconds, that a fingerprint of his voice will be kept on this Mac, and that the recording itself will be deleted.
+3. He presses `Record my voice` and reads a paragraph out loud. A countdown runs; one meter moves. Nobody else talks, because the card asked him not to let them.
+4. **Climax:** four seconds later the card says `24 s of speech` · `one voice`. Row 7 flips to `Done` and recedes with the others. He did nothing else, and nothing was asked of him twice.
+5. Next morning's huddle, same desk, same two colleagues. The note comes back with **his** lines under his own name and theirs under `In-room 1` and `In-room 2`. The meeting detail says the local speaker was recognised from his enrolled voice, and how close the match was.
+6. **Resolution:** the `In-room, unidentified` label still appears twice, for mic speech the diarizer could not place at all. That is correct and he leaves it. He clicks `Exclude` on `In-room 1` — the colleague who was on a different call — and the note omits that speech while the app keeps it.
+7. Weeks later he opens **General** out of curiosity and sees his own voice at the top of Remembered voices with a `You` badge and *24 s of audio · recorded 12 September*. There is a delete next to it. He does not press it, and the fact that he could is the point.
+
+**The climax is step 4 and it is deliberately dull** — 25 seconds, two facts, a row going quiet. Everything interesting happens in step 5, in a meeting he is not thinking about the app during. **Edge case:** if a colleague talks over him during step 3, the card refuses the sample and says *more than one voice was in the recording* — because a fingerprint of two people would put a colleague's name on his words for months, and one wasted attempt is cheaper than finding that out in October.
+
 ### KF-5. A transcription fails and nothing is lost *(PRD FR-19, FR-39)*
 
 1. **Entry:** a Session stops; transcription fails (interrupted model download).
@@ -369,6 +453,22 @@ The flow that this increment exists for. Niklas has read four meeting notes whos
 - **How many local models should the curated list offer?** Three sizes is the working assumption, mirroring the Transcription pane's shape. Depends on PRD §13 Q13 (is a 4-bit model in this class good enough at all) and cannot be settled before that is measured.
 - **Where does the per-meeting send consent live?** A sheet on the Meetings detail, or a notification like the Detection Prompt? The Detection Prompt precedent argues for a notification, but consent to transmit is a heavier decision than consent to record and probably deserves the window.
 - **Does the Summaries pane need its own Test Playground?** FR-47's pattern turned an unanswerable permission question into an empirical one. The same argument applies to "is this model's summary any good", and the answer is a sample summary of a real past meeting. Not yet a requirement.
+
+## Open Questions — increment 4
+
+- **Does the enrolment row belong last?** It is last so no shipped row is renumbered, and rows never reorder by rule. But it is the most valuable outstanding row a returning user has, and it sits below a satisfied `Test your setup` that has receded to 55% opacity. If it goes unnoticed, the alternative is not moving it — it is a one-line prompt in the meeting detail of a meeting that was left unattributed, which is where the user actually feels the problem.
+- **Should the meeting detail offer enrolment when it would have helped?** A meeting labelled `In-room 1` / `In-room 2` with no Enrolled Voice is the exact moment the feature explains itself. Offering it there risks becoming a nag, which PRD SM-C1 exists to prevent; not offering it risks the feature never being found. Not decided, and deliberately not built in this increment.
+- **What does the card do when the machine has two microphones?** The fingerprint is recorded through whatever input is active, and the spike already found the app had been recording through AirPods without recording *that* it had. If a fingerprint turns out to be device-coloured (PRD §13 Q19), the card needs to name the device it recorded through, and possibly hold more than one sample. Unmeasured, so unspecified.
+- **Is "fingerprint" the right word?** It is concrete and honest, and it also carries a forensic connotation the product does not intend. "Voice profile" is softer and vaguer. Chosen "fingerprint" for the card copy and "your voice" for the row title, on the grounds that the sensitive thing should be named plainly where it is created and plainly where it is stored, and does not need naming in a checklist row.
+
+## Assumptions — increment 4
+
+- The card's parent shape being the Test Playground's, rather than something new, is a judgement about consistency and not a stated requirement. It is the strongest assumption in this increment and the easiest to reverse.
+- 25 seconds inside the specified 20–30 range, and a single continuous take rather than three short prompts. Not specified; a single take is the shorter path to a usable sample and asks nothing of the user's patience twice.
+- Rejecting a two-voice sample rather than accepting it with a warning. Inferred from the cost asymmetry: a bad fingerprint is silent and lasts months, and a second attempt costs 25 seconds.
+- The enrolled entry sorting first in Remembered voices. Not specified; it is the only entry that is the user and the only one whose deletion changes future attribution.
+- No rename on the enrolled entry, with the name owned by "Your name in transcripts". Not specified; chosen so one name has one home.
+- Showing the measured match distance in the meeting detail as a fact. PRD FR-65 requires the identification be disclosed and forbids a *settable* threshold; that a measured number may be *displayed* is this document's reading, on the same grounds as the Playground's throughput figure — a number the user cannot set but can check is honesty, not a dial.
 
 ## Assumptions — increment 3
 
