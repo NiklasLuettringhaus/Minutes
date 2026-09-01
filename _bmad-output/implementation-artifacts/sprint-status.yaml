@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-31-2026 11:23
-last_updated: 09-01-2026 14:00
+last_updated: 09-01-2026 13:40
 project: Minutes
 project_key: NOKEY
 tracking_system: file-system
@@ -118,12 +118,12 @@ development_status:
   9-7-a-remote-model-with-a-key-and-consent-per-meeting: backlog
   epic-9-retrospective: optional
 
-  epic-10: backlog
-  10-1-one-calibrated-threshold-and-the-measurement-that-produced-i: backlog
-  10-2-a-voice-fingerprint-is-a-port-and-a-comparison-not-a-framewo: backlog
-  10-3-record-twenty-five-seconds-and-store-a-fingerprint: backlog
-  10-4-the-enrolled-voice-decides-which-voice-on-the-microphone-is: backlog
-  10-5-your-voice-as-a-row-in-getting-started: backlog
-  10-6-the-stored-voice-is-visible-distinguishable-and-deletable: backlog
-  10-7-the-identification-says-what-it-rests-on: backlog
+  epic-10: in-progress
+  10-1-one-calibrated-threshold-and-the-measurement-that-produced-i: review
+  10-2-a-voice-fingerprint-is-a-port-and-a-comparison-not-a-framewo: review
+  10-3-record-twenty-five-seconds-and-store-a-fingerprint: review
+  10-4-the-enrolled-voice-decides-which-voice-on-the-microphone-is: review
+  10-5-your-voice-as-a-row-in-getting-started: review
+  10-6-the-stored-voice-is-visible-distinguishable-and-deletable: review
+  10-7-the-identification-says-what-it-rests-on: review
   epic-10-retrospective: optional
