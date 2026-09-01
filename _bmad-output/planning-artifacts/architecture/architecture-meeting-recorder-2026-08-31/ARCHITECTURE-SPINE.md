@@ -7,20 +7,25 @@ paradigm: 'layered ports-and-adapters with a staged, resumable pipeline'
 scope: 'The whole Minutes application: menu bar control, dual-stream capture, detection, transcription, diarization, metadata, Markdown output, library, settings.'
 status: final
 created: '2026-08-31'
-updated: 2026-08-31
-binds: [FR-1..FR-48, NFR-1..NFR-8]
+updated: 2026-09-01
+binds: [FR-1..FR-65, NFR-1..NFR-8]
 sources:
   - ../../prds/prd-meeting-recorder-2026-08-31/prd.md
   - ../../prds/prd-meeting-recorder-2026-08-31/addendum.md
   - ../../ux-designs/ux-meeting-recorder-2026-08-31/DESIGN.md
   - ../../ux-designs/ux-meeting-recorder-2026-08-31/EXPERIENCE.md
   - ../../briefs/brief-meeting-recorder-2026-08-31/addendum.md
+  - ../../spikes/spike-local-llm-2026-08-31.md
+  - ../../spikes/spike-mic-isolation-2026-09-01.md
+  - ../../spikes/calibration-speaker-threshold-2026-09-01.md
 companions: []
 ---
 
 # Architecture Spine — Minutes
 
 Four spikes were run before this spine was written; each committed decision below that touches an OS or ML boundary was verified by running code on the target machine, not asserted. Findings are in `.memlog.md`.
+
+Two further measurement runs (2026-09-01) inform AD-11 and AD-28 … AD-32: a spike on isolating the user's voice from a conversation happening beside them, and a calibration of the speaker-matching threshold against the centroids of five real Meetings. The threshold is the first number in this spine that was *measured* rather than chosen.
 
 ## Design Paradigm
 
@@ -116,9 +121,17 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 
 *Amended 2026-08-31 after a user correction: "My microphone is not always me. I might have the mic but be in a meeting room with others." The original rule assigned every Mic Stream Utterance to the Local Speaker without inference, which in a conference room attributes colleagues' words to the user — strictly worse than an anonymous label.*
 
-- **Binds:** FR-21, FR-22, FR-23, FR-25
-- **Prevents:** a future refactor that diarizes a mixed stream and loses the room/far-end distinction; and the original rule's failure mode of asserting an identity the audio does not support
-- **Rule:** The **place** of a voice is never inferred: a Mic Stream Utterance is always an in-room voice and a System Stream Utterance is always a remote voice, and neither may ever be relabelled across that boundary. **Identity** is separate. Diarization runs on **both** streams. If the Mic Stream yields exactly one voice it is the Local Speaker, and that inference is safe. If it yields more than one, each becomes an anonymous in-room label and **no voice may be claimed as the Local Speaker** — the user names themselves once, and `SpeakerDirectory` remembers the voice thereafter. Every Utterance carries its origin stream so the distinction survives into the data and the UI (`components.speaker-chip` in DESIGN.md renders the three places distinctly).
+*Amended again 2026-09-01 (increment 4). The 2026-08-31 rule was right and incomplete: refusing to claim an identity is honest, and it is still not an answer. Identity now has a measured resolution path. **Nothing about place changes**, and the amendment is deliberately narrow — it adds one way for a voice to become the Local Speaker and removes none of the guarantees that hold when it does not fire.*
+
+- **Binds:** FR-21, FR-22, FR-23, FR-25, FR-63
+- **Prevents:** a future refactor that diarizes a mixed stream and loses the room/far-end distinction; the original rule's failure mode of asserting an identity the audio does not support; and — after the amendment — the opposite failure of treating an enrolment *measurement* as though it carried the same certainty as the structural fact
+- **Rule:** The **place** of a voice is never inferred: a Mic Stream Utterance is always an in-room voice and a System Stream Utterance is always a remote voice, and neither may ever be relabelled across that boundary. **Identity** is separate. Diarization runs on **both** streams.
+  - One voice on the Mic Stream **is** the Local Speaker. Structural, and cannot be wrong.
+  - Several voices on the Mic Stream, with an Enrolled Voice matching one of them within AD-31's threshold and unambiguously: **that** voice is the Local Speaker. This is a measurement, not a structural fact, and AD-30 governs how it is made and how it is recorded.
+  - Several voices on the Mic Stream with no Enrolled Voice, or no unambiguous match: each becomes an anonymous in-room label and **no voice may be claimed as the Local Speaker.** Unchanged.
+  - Mic Stream speech no diarized span covers, when several voices share the microphone, is unidentified in-room speech. Never the Local Speaker by default. *(This was a real defect: the default fell through to the Local Speaker and printed 14 utterances of a neighbouring conversation as the user's own words.)*
+
+  Every Utterance carries its origin stream so the distinction survives into the data and the UI (`components.speaker-chip` in DESIGN.md renders the three places distinctly). Enrolment changes **which** in-room voice is the Local Speaker; it never changes the structural rules, and the attribution function's other behaviour is byte-for-byte the same with and without a fingerprint present.
 
 ### AD-12 — Metadata is a port with several implementations; the deterministic one is the floor
 
@@ -220,7 +233,45 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 - **Prevents:** offering a multi-gigabyte download on a machine that cannot execute a single token of the result
 - **Rule:** MLX requires a compiled `metallib`, which `mlx-swift` builds at build time from `mlx-generated` sources — it ships no prebuilt one. The `LocalLLM` backend therefore reports `.blocked` unless the metallib is present, checked before any download is offered. Two consequences bind the build as well as the app: the build script must copy SPM resource bundles into `Minutes.app/Contents/Resources/`, which AD-16's current script does not do; and the developer machine needs `xcodebuild -downloadComponent MetalToolchain`, which is *currently uninstalled* here. Marked `[ADOPTED]` because it is a measured property of the toolchain, not a choice.
 
+### AD-28 — Voice identity is a port over a fixed-length embedding, and the mechanism is arithmetic in Core
+
+- **Binds:** FR-62, FR-63, FR-65, AD-11
+- **Prevents:** the identification path acquiring a platform dependency — the one place in the product where the user asked explicitly for the design to stay portable. It also prevents the cheapest available shortcut: the mic-isolation spike found Apple's Voice Isolation is free, already in macOS, and aggressive at removing other voices, and rejected it *for this reason and no other*.
+- **Rule:** `VoiceEmbedding` is a port protocol in Services — `embed(url:) async throws -> VoiceFingerprint`, plus an identifier naming the producer. The **comparison** is Foundation-only code in Core, operating on `[Float]` and nothing else; no framework type crosses into it. An adapter may be as Apple-specific as it likes — `SpeakerKitVoiceEmbedder` is, and uses `SpeakerKit`'s centroid embeddings — but neither the port's signature nor the matching arithmetic may name a single Apple type. The test is mechanical: the identification path must compile against `Foundation` alone. An Apple-only technique is permitted as an *optimisation behind the port* and never as the thing the feature depends on.
+
+### AD-29 — A fingerprint is comparable only to one from the same producer, at the same dimension
+
+- **Binds:** FR-63, FR-64, FR-25, AD-28
+- **Prevents:** the worst failure available to this feature — a future embedder swap comparing incompatible vectors and returning a confident number, because a wrong distance is indistinguishable from a right one. There is no error, no crash and no log line; there is only the wrong name on someone's words.
+- **Rule:** Every persisted fingerprint carries the producer's identifier and its dimension. A comparison across producers or dimensions yields **no information** — not a large distance, and not a non-match: the function returns nothing and the caller must treat that as "cannot say", never as "far apart". Collapsing those two is how a fingerprint written by one embedder becomes a permanent non-match under the next. *(`cosineDistance` already returns nil on a length mismatch, which does half of this by accident. The identifier makes it deliberate, and the distinction between "no answer" and "no match" is the half that was missing.)*
+
+### AD-30 — The Local Speaker is resolved by structure or by enrolment, and by nothing else
+
+- **Binds:** FR-21, FR-25, FR-63, FR-65, AD-11
+- **Prevents:** the user's own name arriving on a voice through FR-25's passive rename-learning path, which *cannot* be correct there — passive learning needs a known-correct label to start from, and several voices on one microphone provide none. Also prevents two components each deciding who the user is.
+- **Rule:** `.local` is assigned in exactly two ways and no third exists.
+  1. **Structurally** — the Mic Stream held one voice.
+  2. **By enrolment** — among the in-room clusters, the nearest to the Enrolled fingerprint is within AD-31's threshold **and** unambiguous: no other cluster is within AD-31's margin of it. Two clusters that close is either a Diarization split of the user's own voice or a genuine ambiguity, and in both cases **nothing is claimed** — which is AD-11's rule, applied to its own new path.
+
+  `SpeakerDirectory.match` — the FR-25 passive path — **excludes the enrolled profile from its candidate set.** It therefore cannot apply the user's name to any voice, and the user's display name keeps its single existing owner. When enrolment does resolve `.local`, the Meeting records that it was enrolment that did so and how close the match was, because a measurement presented like a structural fact is the thing AD-11 exists to prevent.
+
+  **Where it happens, so two implementations cannot differ:** the lookup runs inside the existing *diarize* stage, which is the only stage holding the mic clusters' embeddings, and its result is passed to the attribution function as **data** — one value naming which mic cluster is the local voice, or nothing. Attribution stays a pure function of its arguments (AD-20) and gains no dependency on `SpeakerDirectory`. **No stage is added to AD-8's list**, and adding one would be a violation rather than an implementation choice.
+
+### AD-31 — The match threshold is a calibrated constant with its measurement attached `[ADOPTED]`
+
+- **Binds:** FR-25, FR-63, FR-65
+- **Prevents:** the number drifting by opinion between increments, and the appearance of the single setting that would let a user break attribution invisibly — a wrong threshold puts the wrong name on someone's words with nothing to notice
+- **Rule:** One constant, in one place, with the measurement and the date written beside it. **0.35**, calibrated 2026-09-01 against 24 centroids from five real Meetings: the same in-room voice measured 0.058–0.248 apart across four independent recordings, different in-room voices in one Meeting 0.596 and above. The ambiguity margin AD-30 requires is **0.10**, which the same measurement makes generous — genuine in-room voices are 2.4× further apart than that. Neither value lives in `Preferences`, in `UserDefaults`, or on any pane. Changing either requires re-running the calibration, whose method and inputs are recorded in `../../spikes/calibration-speaker-threshold-2026-09-01.md` rather than the number being asserted alone. Marked `[ADOPTED]` because it is a measured property of this embedding on this data, not a preference.
+- **Recorded limit, not a gap:** for Remote Speakers the two populations touch — same speaker up to 0.248, different speakers from 0.254 — so **no threshold separates them.** 0.35 admits two measured false matches there. That is accepted rather than papered over: FR-25 renders an auto-applied name as inferred and FR-51 makes it correctable, so the cost is one rename. A threshold tight enough to exclude them (0.25) leaves 0.002 of headroom above the observed same-voice maximum, at which point enrolment stops working.
+
+### AD-32 — Enrolment audio is transient; only the fingerprint persists
+
+- **Binds:** FR-62, FR-64, PRD §9.1
+- **Prevents:** an enrolment recording accumulating on disk beside the fingerprint. That single failure converts the thing §9.1 permits — a vector nobody can play back — into the thing it does not: a voice recording of a named person, kept for identification.
+- **Rule:** One operation records, embeds, and deletes. The sample is written to a temporary directory outside the Meetings root; the fingerprint is derived; the directory is removed on **every** exit path, including failure and cancellation — a `defer`, never a happy-path cleanup. The sample never enters a Meeting directory, never becomes a Meeting record, and never reaches the Notes Folder. Nothing is persisted at all until the fingerprint exists, so a cancelled enrolment is indistinguishable from one that never started. A re-record **replaces** the fingerprint rather than averaging into it, which also means no history of samples exists to leak.
+
 ## Consistency Conventions
+
 
 | Concern | Convention |
 | --- | --- |
@@ -236,9 +287,12 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 | Security-scoped access | `Preferences` resolves the Notes Folder bookmark and owns the single balanced `startAccessingSecurityScopedResource` / `stop…` pair. No other component starts or stops access. |
 | Meeting record writes | Field-level updates through `MeetingStore` only (AD-21). Adapters return values. |
 | State mutation | Only `SessionCoordinator` writes `AppState` (AD-7). |
-| Concurrency | `@MainActor`: UI, `AppState`, `SessionCoordinator`. `actor`: capture engine. Serial executor: ML (AD-14). IOProc: C callback, real-time-safe — no allocation, no locks, no logging inside it. |
+| Concurrency | `@MainActor`: UI, `AppState`, `SessionCoordinator`, `VoiceEnrolment` (it drives a capture and publishes phase to a view, exactly as `TestPlayground` does). `actor`: capture engine, `SpeakerDirectory`. Serial executor: ML (AD-14) — and embedding a voice sample runs on it, so an enrolment during an active transcription queues rather than contending. IOProc: C callback, real-time-safe — no allocation, no locks, no logging inside it. |
 | Persistence format | `meeting.json` via `Codable` with explicit `CodingKeys`; unknown-key tolerant on read so an older record still loads. |
 | Visual tokens | Never hardcode a colour or metric present in `DESIGN.md`; resolve semantic colours from AppKit at render time. |
+| Voice fingerprints | `[Float]` plus a producer identifier and a dimension, persisted in `speakers.json` alongside Speaker Profiles (AD-29). Compared only in Core. Never logged, never rendered as numbers to the user beyond a single measured distance stated as a fact, never transmitted (PRD §9.1). |
+| Calibrated constants | A number derived from measurement carries the measurement's date and a path to the report, in a comment at its declaration. If it cannot cite one it is a guess and must be labelled as one (AD-31). |
+| Decodable evolution | Every persisted `Codable` type that has shipped gets a hand-written `init(from:)` using `decodeIfPresent` with defaults. Swift ignores a property's default value when the key is absent and throws `keyNotFound` instead, which is how adding one field to `Meeting` silently orphaned five real recordings. `SpeakerDirectory.Profile` gains fields in increment 4 and therefore gains the same treatment. |
 
 ## Stack
 
@@ -258,6 +312,8 @@ Verified on the target machine on 2026-08-31.
 | Local downloadable LLM (increment 3) | `ml-explore/mlx-swift-examples` exact `2.29.1` (products `MLXLLM`, `MLXLMCommon`) → `mlx-swift` `0.31.6`. Adds `swift-transformers` 1.0.x and `GzipSwift` 6.0.1 transitively; no conflict with the argmax graph, which vendors its own dependencies |
 | Metal toolchain | **required by the above and currently `uninstalled`** — `xcodebuild -downloadComponent MetalToolchain`. See AD-27 |
 | Candidate summarisation models | sizes fetched live, not estimated: `Qwen3.5-4B-MLX-4bit` 3.03 GB · `Llama-3.1-8B-Instruct-4bit` 4.52 GB · `Qwen3.5-9B-MLX-4bit` 5.95 GB. Curation pending PRD §13 Q13 |
+| Voice embeddings (increment 4) | **No new dependency.** `SpeakerKit.DiarizationResult` already exposes `nearestSpeakerCentroid(to:) -> (speakerId, distance)` and `centroidCosineDistance(between:and:)` through the already-linked `argmax-oss-swift` exact 1.1.0, and per-speaker centroids are already persisted per Meeting. 256-dimensional, pyannote v4 community-1 |
+| Speaker match threshold | **0.35, measured** — calibrated 2026-09-01 against five real Meetings (AD-31). Was 0.45, never calibrated |
 | Build/packaging | `swift build` + `Scripts/build-app.sh` (assemble + ad-hoc `codesign`) |
 
 ## Structural Seed
@@ -269,7 +325,8 @@ graph LR
     MIC[Mic Stream] --> CAP[Capture]
     SYS[System Stream] --> CAP
     CAP -->|captured| TR[Transcribe]
-    TR -->|transcribed| DI[Diarize system stream]
+    TR -->|transcribed| DI[Diarize BOTH streams]
+    SD[(SpeakerDirectory<br/>profiles + enrolled voice)] -. read .-> DI
     DI -->|diarized| AT[Attribute + merge]
     AT -->|attributed| MD[Metadata]
     MD -->|metadata| WR[Write Note]
@@ -277,6 +334,23 @@ graph LR
 ```
 
 Each edge label is the persisted `stage` value reached. Any stage may fail and be resumed from the previous label.
+
+Two corrections and one addition, 2026-09-01. The diarize node read *"Diarize system stream"*, and the code has diarized both streams since AD-11 was amended — the diagram was describing the design AD-11 replaced. The `SpeakerDirectory` read is drawn as a **dotted read into an existing stage, not a new stage**: AD-8's stage list is fixed, and enrolment resolves an *input* to attribution rather than adding a step to the pipeline. Enrolment itself appears nowhere on this diagram, because it is not part of a Meeting's processing at all (AD-32).
+
+### Voice enrolment (AD-28, AD-32)
+
+Separate from the pipeline on purpose. It produces no Meeting, writes no Note, and touches no Meeting directory.
+
+```mermaid
+graph LR
+    REC[Record mic only<br/>~25 s, temp dir] --> EMB[VoiceEmbedding port]
+    EMB --> CHK{one voice?<br/>enough speech?}
+    CHK -->|no| REJ[Refuse, state which]
+    CHK -->|yes| FP[Fingerprint + producer id]
+    FP --> SD[(SpeakerDirectory<br/>enrolled profile)]
+    REC -.->|deleted on every exit path| DEL((audio gone))
+    REJ -.-> DEL
+```
 
 ### Core entities
 
@@ -303,18 +377,23 @@ Minutes/
     Minutes.entitlements  # sandbox off, audio-input on
   Sources/Minutes/
     App/                  # @main entry, MenuBarExtra scene, window scene
-    Core/                 # Meeting, Utterance, SpeakerLabel, Stage, errors — Foundation only
+    Core/                 # Meeting, Utterance, SpeakerLabel, Stage, errors, VoiceMatch —
+                          # Foundation only. VoiceMatch is the identification MECHANISM and
+                          # must stay compilable against Foundation alone (AD-28).
     Services/
       SessionCoordinator  # sole writer of AppState (AD-7); starts/stops Sessions
       Pipeline            # staged processing (AD-8)
       DetectionService    # poll + prefix match (AD-5)
       ModelCatalog        # runtime model list (AD-13)
-      SpeakerDirectory    # SpeakerProfile matching (FR-25)
-      Ports/              # protocols: Capturing, Transcribing, Diarizing, MetadataBackend, NoteWriting
+      SpeakerDirectory    # SpeakerProfile matching + the enrolled voice (FR-25, FR-62..64)
+      VoiceEnrolment      # records, embeds, discards (AD-32); no Meeting, no Note
+      Ports/              # protocols: Capturing, Transcribing, Diarizing, MetadataBackend,
+                          #            NoteWriting, VoiceEmbedding (AD-28)
     Adapters/
       Audio/              # MicCapture, SystemTapCapture (AD-1..3), StreamFileWriter
       Transcribe/         # WhisperKitTranscriber
-      Diarize/            # SpeakerKitDiarizer
+      Diarize/            # SpeakerKitDiarizer, SpeakerKitVoiceEmbedder (an adapter may be
+                          # Apple-specific; the port and the maths may not — AD-28)
       Metadata/           # HeuristicBackend (pure), FoundationModelsBackend
       Persistence/        # MeetingStore, NoteWriter, Preferences
       System/             # Notifier, LoginItem, Permissions
@@ -338,12 +417,22 @@ Minutes/
 | Setup / settings (FR-41…48) | `UI/GettingStartedPane` + panes | AD-16, EXPERIENCE.md § Permission Choreography |
 | Library management (FR-49…54) | `UI/MeetingsPane`, `UI/GeneralPane`, `Services/AppState` | AD-9, AD-8, AD-21 |
 | Summarisation intelligence (FR-55…61) | `Adapters/Metadata/*`, `Services/SummarizerCatalog`, `Adapters/System/KeyStore`, `UI/SummariesPane` | AD-12, AD-22, AD-23, AD-24, AD-25, AD-26, AD-27 |
+| Voice enrolment (FR-62…65) | `Core/VoiceMatch`, `Services/VoiceEnrolment`, `Services/SpeakerDirectory`, `Adapters/Diarize/SpeakerKitVoiceEmbedder`, `UI/GettingStartedPane` + `UI/GeneralPane` | AD-11 (amended), AD-28, AD-29, AD-30, AD-31, AD-32 |
+
+## Build and Delivery Envelope, Increment 4
+
+Stated because the reviewer checklist treats a silent dimension as a finding, and because increment 3's AD-27 *did* bind the build — so "nothing changes here" is a claim worth making explicitly rather than leaving to be inferred.
+
+- **No build-script change.** Enrolment adds no SPM resource bundle, no framework, and no bundled asset, so `Scripts/build-app.sh` is untouched by this increment. AD-16 stands as written.
+- **No new dependency and no new entitlement.** Enrolment reads the microphone, for which `NSMicrophoneUsageDescription` and the audio-input entitlement already exist. It never opens the System Stream, so it needs nothing from AD-16's system-audio path and cannot be broken by the TCC re-grant that follows a rebuild.
+- **No new model download.** The Diarizer's models are already fetched lazily on first `diarize()` and are the same models enrolment embeds with. A machine that has completed one Meeting can enrol offline.
+- **One new persisted file shape, backward-compatibly.** `speakers.json` gains fields on `Profile`; the Decodable-evolution convention above is what stops that repeating the `Meeting` defect. There is no migration step and no schema version — an older file loads with the new fields defaulted.
 
 ## Deferred
 
 - **Live/streaming transcription.** PRD §6.2 defers it to v2. AD-8's staged pipeline is deliberately batch-shaped; streaming would need a different decomposition, and pre-building for it would compromise the reliable path.
 - **Crash-recovery UI.** AD-8 makes an interrupted Meeting resumable and AD-10 keeps its data intact, so recovery is a UI affordance, not an architectural gap. Deferred per PRD §6.2.
-- **Speaker Profile matching algorithm.** AD-11 fixes *where* it lives and that Remote-only diarization feeds it; the embedding/threshold choice is a story-level decision pending PRD §13 Q4. If it proves unreliable the port stays and the implementation degrades to manual rename.
+- ~~**Speaker Profile matching algorithm.**~~ **Decided 2026-09-01.** The embedding is SpeakerKit's 256-dimensional centroid behind AD-28's port; the comparison is cosine distance in Core; the threshold is measured (AD-31). PRD §13 Q4 is answered for in-room voices and narrowed for Remote Speakers, where AD-31 records the limit rather than hiding it. What the deferral got right is worth keeping: the port stays, and if the embedding proves unreliable the implementation degrades to manual rename without touching anything above it.
 - **Aggregate device rebuild on output-device change.** FR-8 requires surviving the change; whether that means rebuilding the aggregate or the HAL handling it is unresolved (PRD §13 Q7). AD-2 fixes the ordering either way, so this is a story-level experiment.
 - **Notes Folder conflict policy for hand-edited Notes.** AD-9 makes the Note a projection and requires the UI to say so; a merge or conflict-detection strategy is out of scope for v1.
 - **Distribution, notarization, auto-update.** Excluded by PRD §5. AD-16 stops at a locally installed ad-hoc signed bundle.
@@ -352,4 +441,8 @@ Minutes/
 - **Which local model, and whether a 4-bit model in the 3-6 GB class is good enough at all.** AD-12 fixes the port and AD-13 fixes where the list comes from; the curation is a story-level decision that cannot be made before PRD §13 Q13 is measured — and it cannot be measured until AD-27's prerequisite is installed. This is the increment's critical path.
 - **Which remote endpoint, and whether the remote backend should ship.** AD-24 fixes the chokepoint and its contract, so the shape is settled whatever the answer. Whether to build it depends on the local path's measured quality and on whether an employer-approved vendor under a data processing agreement exists (PRD §13 Q17). The architecture is deliberately indifferent to the answer.
 - **Streaming summarisation output.** The spike confirmed the local path returns an `AsyncStream` of chunks, so partial output is available. Whether the UI shows a summary assembling itself is a UX decision with no architectural consequence — the port returns a completed structure either way (AD-12's typed-output rule).
+- **macOS input voice processing** (`setVoiceProcessingEnabled`). Measured, and deliberately not adopted: it works and returns OK, and it changes the input from 1 channel to **3 deinterleaved** channels. Which channel carries the clean signal is unmeasured, and `StreamFileWriter`'s downmix averages all channels — so adopting it blind would average the noise back in. It is also macOS-only, which AD-28 permits behind the port but never as the mechanism. Needs a controlled recording with a known interfering source before any code.
+- **Per-device voice fingerprints.** AD-29 makes a fingerprint carry its producer, not its microphone, and the calibration's four Meetings all used one input device. AirPods and a built-in microphone colour a voice differently, and the mic-isolation spike found the app had been recording through AirPods without recording *that* it had. If PRD §13 Q19 turns out badly, the fix is a fingerprint per device rather than a change to AD-28 — the port already returns a value the caller may key however it likes.
+- **Enrolment for anyone but the user.** PRD §6.2's deferral was reversed for one person only. AD-28's port is indifferent to whose voice it embeds, so the architecture does not forbid it; nothing in this increment builds toward it, and the consent question it raises is a product decision, not a structural one.
+- **A voice-activity gate before embedding.** The mic-isolation spike found `VadManager` already linked via FluidAudio. It would produce a cleaner fingerprint from a sample containing silence. Held: enrolment asks the user to talk continuously for 25 seconds, so the silence problem it solves is one the interaction already avoids. Revisit only if measured sample quality demands it.
 - **Prompt design and its versioning.** Summary quality will depend heavily on the prompt, and a changed prompt changes output for the same Transcript. Whether the prompt version belongs in the Note's provenance alongside the model identifier is deferred until there is a prompt worth versioning.
