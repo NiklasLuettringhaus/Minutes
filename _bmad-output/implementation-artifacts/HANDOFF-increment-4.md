@@ -49,9 +49,10 @@ The distinction this increment was built around, so it is the first thing here.
 | Cross-meeting identification on real data | **14 matched, 0 ambiguous, 23 no-match** over 37 probes | `EnrolmentCalibrationTests`, reading the real Meetings |
 | Every stored centroid is one width | 256 dimensions, no mixing | same test |
 | The no-enrolment path is unchanged | 76 pre-existing tests pass against unchanged call sites | `swift test` |
-| Test suite | **129 passing**, 0 failures | `swift test` |
-| The build signs and bundles | adhoc + runtime, `dev.niklas.minutes` | `INSTALL=0 ./Scripts/build-app.sh` |
-| `--doctor` reports the new state | "not enrolled", threshold 0.35, margin 0.1 | ran against the staged bundle |
+| Test suite | **149 passing**, 0 failures, plus 4 ML integration tests | `swift test` · `MINUTES_ML_TESTS=1 swift test` |
+| The build signs, bundles and installs | adhoc + runtime, `dev.niklas.minutes`, at `/Applications/Minutes.app` | `./Scripts/build-app.sh` |
+| `--doctor` reports the new state | "not enrolled", threshold 0.35, margin 0.1 | ran against the **installed** bundle |
+| The installed app launches and stays up | no errors in `log show`, alive after 15 s | `open /Applications/Minutes.app` |
 
 ### Assumed, and labelled as such
 
