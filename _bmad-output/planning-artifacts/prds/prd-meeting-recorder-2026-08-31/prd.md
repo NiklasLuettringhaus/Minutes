@@ -2,7 +2,7 @@
 title: Minutes — local-first meeting recorder for macOS
 status: final
 created: 2026-08-31
-updated: 2026-08-31
+updated: 2026-09-01
 owner: Niklas
 mode: headless (-A); increment 2 applied headless (-H update)
 revisions:
@@ -14,6 +14,13 @@ revisions:
     FR-27 and FR-52, and amends NFR-1 for the first time in the project's life.
     Preceded by a spike (planning-artifacts/spikes/spike-local-llm-2026-08-31.md)
     and a review (prds/.../review-llm-key-proposal.md).
+  - 2026-09-01 increment 4 — voice enrolment. Adds FR-62 through FR-65, amends FR-21,
+    FR-25, FR-46, SM-2, §9.1 and the Glossary, and reverses one line of §6.2. Driven
+    by the first four real meetings and by two measurement runs on their audio:
+    planning-artifacts/spikes/spike-mic-isolation-2026-09-01.md and
+    planning-artifacts/spikes/calibration-speaker-threshold-2026-09-01.md. This is the
+    first increment whose central number — the matching threshold — was measured rather
+    than chosen.
 inputs:
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/brief.md
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/addendum.md
@@ -77,12 +84,15 @@ Downstream artifacts must use these terms verbatim. No synonyms anywhere.
 - **Session** — the live act of recording a Meeting, from Capture start to Capture stop. A Session becomes a Meeting once it has been transcribed.
 - **Capture** — acquisition of audio during a Session. Always two Streams.
 - **Stream** — one of exactly two audio sources in a Capture: the **Mic Stream** (local microphone, attributed to the Local Speaker) or the **System Stream** (all other applications' audio output, containing Remote Speakers).
-- **Local Speaker** — the person at the machine. Certain only when the Mic Stream held a single voice; default label `Me`.
+- **Local Speaker** — the person at the machine. Certain when the Mic Stream held a single voice, and identified when the Enrolled Voice matches exactly one of several in-room voices (FR-63). Default label `Me`.
 - **In-Room Speaker** — a voice in the Mic Stream when it held more than one, i.e. someone physically with the user. Anonymous (`In-room 1`, `In-room 2`, …) until renamed; the app does not guess which one is the Local Speaker.
 - **Remote Speaker** — a participant on the far end, present only in the System Stream. Anonymous (`Speaker 1`, `Speaker 2`, …) until renamed.
 - **Place** — whether a voice was in the room or remote. Derived from which Stream carried it, so it is structural and never inferred — unlike identity.
 - **Speaker Label** — the display name for a Local or Remote Speaker in a Note. User-editable.
-- **Speaker Profile** — a persisted association between a voice and a Speaker Label, used to reapply a name in later Meetings.
+- **Speaker Profile** — a persisted association between a voice and a Speaker Label, used to reapply a name in later Meetings. Created either by renaming a voice (FR-25) or, for the user's own voice only, by Voice Enrolment (FR-62).
+- **Voice Embedding** — a fixed-length vector derived from audio, in which two recordings of the same person land closer together than recordings of two different people. It is the unit of comparison behind every Speaker Profile, and the comparison itself is arithmetic on the vector — nothing platform-specific decides a match.
+- **Voice Enrolment** — the one-time act of recording a short sample of the user's own voice so Minutes can recognise it later. Optional and opt-in: nothing is stored until a sample has been recorded, and one control deletes it.
+- **Enrolled Voice** — the Speaker Profile produced by Voice Enrolment. Exactly one exists, it belongs to the Local Speaker, and it is the only Speaker Profile the app creates from a deliberate recording rather than from a rename.
 - **Diarization** — splitting the System Stream into time segments per Remote Speaker.
 - **Transcript** — the ordered list of Utterances for a Meeting.
 - **Utterance** — one contiguous span of speech: start time, end time, text, and exactly one Speaker Label.
@@ -338,7 +348,9 @@ A Session that stops while another Meeting is transcribing is not lost.
 
 ### 4.5 Speaker Attribution
 
-**Description:** Speakers are resolved by combining a structural fact with a model. Everything in the Mic Stream is the Local Speaker, known with certainty. Everything in the System Stream is a Remote Speaker, split by Diarization into anonymous labels. The two are merged into one chronological Transcript. Anonymous labels are renameable, and a rename is remembered so the same voice arrives pre-named next time. Realizes UJ-3.
+**Description:** Speakers are resolved by combining a structural fact with a model. *Where* a voice was is structural: the Mic Stream is the room, the System Stream is the far end, and neither can be wrong. *Who* a voice is, is inferred. The two Streams are merged into one chronological Transcript. Anonymous labels are renameable, and a rename is remembered so the same voice arrives pre-named next time. Realizes UJ-3.
+
+**Amended in increment 4.** One in-room voice can now be identified rather than guessed. When several people share the microphone the app previously refused to say which one was the user — correct, and still not an answer. Voice Enrolment (FR-62) lets the user record their own voice once, and FR-63 uses it to identify them among the in-room voices. Everything else in this section is unchanged: place stays structural, non-user in-room voices stay anonymous until renamed, and with no Enrolled Voice the behaviour is exactly what it was.
 
 **Functional Requirements:**
 
@@ -350,10 +362,12 @@ All Utterances derived from the Mic Stream are attributed to an in-room voice �
 **Consequences (testable):**
 - No Mic Stream Utterance is ever attributed to a Remote Speaker, and no System Stream Utterance is ever attributed to an in-room voice. This is structural and cannot be wrong.
 - When the Mic Stream contains exactly one voice, it is the Local Speaker. This attribution cannot be wrong either.
-- When the Mic Stream contains more than one voice, each becomes a distinct In-Room Speaker and **none is claimed to be the Local Speaker**.
+- When the Mic Stream contains more than one voice, each becomes a distinct In-Room Speaker and **none is claimed to be the Local Speaker** — unless an Enrolled Voice identifies one of them (FR-63).
+- **Amended (increment 4):** with an Enrolled Voice present and matching exactly one in-room voice, that voice is the Local Speaker. This is an identification, not an assumption, and it is recorded as such on the Meeting. With no Enrolled Voice, or no unambiguous match, the original rule stands untouched.
+- Mic Stream speech the Diarizer cannot place at all, when several voices share the microphone, is labelled as unidentified in-room speech — never as the user. *(Added in increment 4 after the defect: such speech fell through to the Local Speaker default and printed 14 utterances of a neighbouring conversation as the user's own words.)*
 - The Meeting records that the room held several people, and the Note discloses it.
-- The Local Speaker Label defaults to `Me` and is user-editable in Settings.
-- Naming an In-Room Speaker — including naming oneself — creates a Speaker Profile, so the same voice is recognised in later Meetings (FR-25).
+- The Local Speaker Label defaults to `Me` and is user-editable in Settings. It is the only place that name comes from, including when the Local Speaker was identified by enrolment.
+- Naming an In-Room Speaker creates a Speaker Profile, so the same voice is recognised in later Meetings (FR-25). Naming *oneself* is no longer the mechanism by which the app learns the user's voice — FR-62 is.
 
 #### FR-22: Diarize both Streams
 Utterances are assigned speaker labels by on-device Diarization, run separately on each Stream: the System Stream yields Remote Speakers, and the Mic Stream yields the Local Speaker or In-Room Speakers per FR-21.
@@ -390,8 +404,13 @@ Naming a Remote Speaker creates a Speaker Profile so the same voice is labelled 
 - A wrong automatic match can be corrected, and the correction updates the Speaker Profile rather than only the one Meeting.
 - Speaker Profiles are stored locally and are never transmitted.
 
+**Consequences added in increment 4:**
+- Passive learning applies to other people and **not** to the user. It needs a correct label to learn from, and several voices on one microphone provide none. The user's own voice is learned by Voice Enrolment (FR-62) and by nothing else.
+- The Enrolled Voice is excluded from FR-25's automatic name application. It answers one question — which in-room voice is the user — and never puts a name on a voice by itself.
+
 **Notes:**
-- `[NOTE FOR PM]` FR-25 is the highest-uncertainty requirement in the PRD: it depends on voice-embedding similarity across recordings holding up in practice. It is genuinely load-bearing for UJ-3's "he does not do this twice" promise, so it stays in scope — but it is the first candidate to cut to v2 if it proves unreliable, and cutting it degrades the product gracefully to manual renaming per Meeting.
+- `[NOTE FOR PM]` FR-25 was the highest-uncertainty requirement in the PRD, resting on whether voice-embedding similarity holds up across separate recordings. **Measured on 2026-09-01** (see `spikes/calibration-speaker-threshold-2026-09-01.md`) and the answer is yes for in-room voices: the same voice landed 0.058–0.248 apart across four independent Meetings, while different in-room voices in one Meeting stayed 0.596 and above. §13 Q4 is answered for that case and narrowed for Remote Speakers, where the populations touch and the inference stays correctable rather than certain.
+- The threshold that decides a match was never calibrated until that run, and is now. See FR-65.
 
 #### FR-51: See and curate the remembered voices
 The set of Speaker Profiles is visible as a list, and each entry can be renamed or forgotten on its own.
@@ -406,6 +425,64 @@ The set of Speaker Profiles is visible as a list, and each entry can be renamed 
 **Notes:**
 - This closes a gap FR-25 left open. FR-25 created Profiles and FR-24 corrected a name *within a Meeting*, but the Profile set itself was write-only: the settings pane offered one destructive "Forget all remembered voices" and no way to see what would be lost.
 - `[ASSUMPTION: renaming a Profile does not retroactively relabel Meetings already written. Retro-editing was not requested, and it would rewrite Notes the user may have edited by hand.]`
+
+#### FR-62: Enrol the user's own voice
+The user can record a short sample of their own voice, once, and Minutes stores a fingerprint of it on this Mac.
+
+**Consequences (testable):**
+- The affordance is reachable from the Setup Checklist as its own row, marked optional, following the existing row anatomy (§10.3, FR-46). It does not introduce a second onboarding style.
+- **Nothing is stored until a sample has been recorded.** Reading the row, opening the card, or starting and cancelling a recording all leave the machine exactly as they found it. This is what makes it opt-in rather than a default with an off switch.
+- The recording runs 20–30 seconds — long enough for a stable fingerprint, short enough to do once — and the app states the duration before it starts, not after.
+- Enrolment captures the Mic Stream only. It never opens the System Stream, so it never triggers the system-audio permission and never records the far end.
+- The sample is converted to a fingerprint and the audio is deleted in the same operation. Only the fingerprint persists, and the UI says so where the recording happens.
+- An enrolment run produces no Meeting and writes no Note, and never appears in the Library — FR-47's rule, for the same reason.
+- The result is reported as a measurement, not a reassurance: how many seconds of speech were found, and whether it held exactly one voice. A sample containing a second voice is rejected *with that reason*, because a fingerprint of two people is worse than no fingerprint.
+- Re-recording replaces the fingerprint rather than averaging into it. A re-record is a correction, and correcting means the old value goes.
+- Enrolment works with microphone permission alone. It requires no model download, no network, and no Summarisation Backend.
+
+**Notes:**
+- This reverses one line of §6.2 for one person only. The reasoning is there, and it is the requirement's real justification.
+
+#### FR-63: Use the Enrolled Voice to identify the user among in-room voices
+When the Mic Stream holds several voices and an Enrolled Voice exists, the in-room voice matching it is the Local Speaker.
+
+**Consequences (testable):**
+- With no Enrolled Voice, behaviour is exactly what it is today: several mic voices become anonymous In-Room Speakers and none is claimed to be the user. Enrolment adds an identification; it removes no honesty.
+- **Place is unaffected.** Enrolment changes which in-room voice is the Local Speaker, never whether a voice was in the room. A Mic Stream Utterance can still never become a Remote Speaker.
+- Matching is a comparison of Voice Embeddings and nothing else. It must not depend on any platform-specific capability, so the same rule is implementable on another system.
+- A match is accepted only when it is both **close enough and unambiguous**: the nearest in-room voice must be within the calibrated threshold, and it must be clearly nearer than the next one. Two in-room voices both close to the Enrolled Voice is either a Diarization split or a genuine ambiguity, and in both cases the app claims nothing.
+- When nothing matches, the Meeting is attributed exactly as it is today, including unidentified in-room speech for mic audio that could not be placed at all.
+- Enrolment draws no line between a participant and a bystander. Both are "not the user". A conference room normally holds several participants and that is the correct reading; deciding which non-user voice belongs in the Note remains the per-Meeting Exclude control's job and is never automated.
+- The Meeting records that the Local Speaker was identified by enrolment, and how close the match was, so the claim is checkable after the fact.
+
+**Notes:**
+- The measured problem this solves: in an 8-person Slack huddle with two colleagues talking beside the user, 723 of 1501 transcript words (48%) were the neighbouring conversation, and the app could separate those voices but not say which was the user's. Separation without identification is half an answer.
+
+#### FR-64: The Enrolled Voice is visible, distinguishable and deletable
+The Enrolled Voice appears in the remembered-voices list, marked as the user's own, and is removable in one click.
+
+**Consequences (testable):**
+- FR-51's list keeps working unchanged and shows the Enrolled Voice as a *distinct kind* of entry, not as one more remembered colleague.
+- One control deletes it. Deletion returns attribution to pre-enrolment behaviour for Meetings processed afterwards; Meetings already written keep their labels, per FR-51's rule.
+- "Forget all" removes the Enrolled Voice too, and its confirmation says so — a destructive action enumerates what it destroys (FR-40).
+- The Enrolled Voice is biometric-adjacent data under §9.1: stored locally, never transmitted under any configuration *including* a configured Remote Backend, and never written into a Note or a log.
+- The entry states where it came from and how much audio produced it, so it is judgeable the way a colleague's Profile already is.
+- The user's display name still comes from the one setting that owns it (FR-21). The Enrolled Voice never applies a name of its own.
+
+#### FR-65: The match is disclosed, correctable, and has no exposed dial
+An identification is visible in the app, fixable when wrong, and produced by a threshold the user cannot set.
+
+**Consequences (testable):**
+- The meeting detail says the Local Speaker was recognised from the Enrolled Voice, and how close the match was. A silent identification would be indistinguishable from the guess it replaced.
+- A wrong identification is corrected with the rename and Exclude controls that already exist (FR-24, FR-40). No new correction mechanism is added, and none is needed.
+- **There is no user-facing control for the matching threshold, for voice-activity parameters, or for a speaker count.** Exposing an outcome is a product decision; exposing a mechanism is a defect.
+- The threshold is one calibrated constant, recorded with the measurement and the date that produced it, so a future change has something to argue against rather than a silence to slip through.
+- Calibrated on real data, 2026-09-01: the same in-room voice measured 0.058–0.248 apart across four independent Meetings; different in-room voices within one Meeting measured 0.596 and above. The shipped value moves from 0.45 — never calibrated — to **0.35**, which keeps 41% headroom above the observed same-voice maximum and stays 1.7× below the tightest genuine in-room impostor.
+- A limit found by the same measurement is recorded rather than hidden: for Remote Speakers the two populations touch (same speaker up to 0.248, different speakers from 0.254), so **no threshold separates them**. Remote matching therefore stays a correctable inference, rendered as inferred per FR-25, and is not presented as a fact.
+
+**Notes:**
+- `[NOTE FOR PM]` The threshold is the single number most likely to be set wrongly and the hardest to reason about, and a wrong value puts the wrong name on someone's words with no way to notice. Ship one value; expose corrections. Recorded here so the instruction survives the increment that received it.
+- The two false matches 0.35 admits are both Remote-vs-Remote. They are recoverable in one rename because FR-25 marks an automatic name as inferred and FR-51 makes the Profile visible. A threshold tight enough to exclude them (0.25) leaves 0.002 of headroom above the observed same-voice maximum, at which point enrolment stops working — which is a worse failure than a correctable name.
 
 ---
 
@@ -669,6 +746,7 @@ The Setup pane presents an ordered checklist of everything required for a workin
 
 **Consequences (testable):**
 - Rows cover, at minimum: Transcription Model ready, microphone permission, system-audio capture verified, Notes Folder chosen.
+- **Amended (increment 4):** Voice Enrolment (FR-62) is one of these rows — optional, and prominent by being in this list rather than buried in a settings pane. It uses the same row anatomy and the same live-derived state rule as every other row; a second onboarding style is a defect.
 - Each row states in one line why the item is needed — never a bare label.
 - A satisfied row shows a non-interactive "Done" indicator and is visually de-emphasised; an outstanding row shows an ordinal and a control that performs or navigates to the fix.
 - Row state is derived from live system state, not from a stored "setup completed" flag, so a permission revoked later shows as outstanding again.
@@ -781,7 +859,9 @@ These exist to stop the "let me also add the nearby thing" failure mode at epic,
 - **Not a team product.** No sharing, no multi-user, no shared archive. One person, one machine.
 - **Not live transcription in v1.** Transcription is batch, after the Session ends. Streaming is a v2 direction, and designing v1 around it would compromise the simpler, more reliable batch path.
 - **Not automatic recording.** Detection offers; the user decides. Minutes never records without an explicit click, even for a Watched App it has seen a hundred times. This is a deliberate refusal of a convenience.
-- **Not voice identification of real people from cold.** Speaker Profiles (FR-25) learn from a name the user typed; the app never attempts to identify a person it was not told about.
+- **Not voice identification of real people from cold.** Speaker Profiles (FR-25) learn from a name the user typed, and Voice Enrolment (FR-62) learns one voice from the person who owns it. The app never attempts to identify a person it was not told about, and enrolling one's own voice is the narrowest possible version of being told.
+- **Not a tunable voice-matching engine.** No exposed threshold, no voice-activity parameters, no speaker count to set. The product exposes outcomes and corrections; the mechanism stays inside (FR-65).
+- **Not an automatic editor of who belongs in a meeting.** The app will not decide that an in-room voice was a bystander and drop it from the Note. A conference room full of participants is the normal case, and the user's per-Meeting Exclude control is the whole answer.
 - **Not a meeting platform integration.** No calendar reading, no attendee lists, no CRM export, no Jira tickets from action items.
 - **Not a general audio recorder or transcription utility.** No importing existing audio files, no dictation mode.
 - **Not distributed software.** No App Store, no notarization, no auto-update, no installer. It is built and run on one machine.
@@ -796,7 +876,7 @@ These exist to stop the "let me also add the nearby thing" failure mode at epic,
 - Dual-stream Capture with Mic-only degradation, device-change survival, incremental writes (§4.2)
 - Detection of Slack and Teams audio-input activity, debounced Prompt, auto-stop, per-app suppression (§4.3)
 - On-device Whisper transcription, model selection, download with progress, failure retry (§4.4)
-- Structural Local Speaker attribution, on-device Diarization of Remote Speakers, merged Transcript, renaming, Speaker Profiles (§4.5)
+- Structural Local Speaker attribution, on-device Diarization of both Streams, merged Transcript, renaming, Speaker Profiles, and Voice Enrolment of the user's own voice (§4.5)
 - On-device Metadata via LLM Backend with Heuristic Backend fallback; decisions and action items; provenance recorded (§4.6)
 - One Markdown Note per Meeting with YAML frontmatter, user-chosen Notes Folder, in-place rewrite on edit (§4.7)
 - Library: list, read, edit, retry, delete (§4.8)
@@ -805,7 +885,7 @@ These exist to stop the "let me also add the nearby thing" failure mode at epic,
 ### 6.2 Out of Scope for MVP
 
 - **Live/streaming transcription** — deferred to v2. Batch is simpler and more reliable, and the value is 95% present without it.
-- **Voiceprint enrolment** ("record 10 seconds of Mikkel") — v2. FR-25 learns passively from renames instead.
+- ~~**Voiceprint enrolment** ("record 10 seconds of Mikkel")~~ — **reversed in increment 4, for the user's own voice only.** The original reasoning was that FR-25 learns passively from renames. That reasoning holds for other people and **fails for the user**: passive learning needs a correct label to start from, and several voices on one microphone provide none — there is nothing to rename that is known to be you. Enrolling *everyone* remains out of scope and remains correctly deferred; enrolling *one person, the user*, is a different requirement that was deferred with it by accident. FR-62 through FR-65 bring that one case into scope. Recording a sample of a colleague is still v2, and nothing in FR-62 builds toward it.
 - **Zoom, Google Meet, Discord, browser calls as named Watched Apps** — generic input-device detection may happen to cover some; they are not targets and not tested. `[NOTE FOR PM]` Chrome is installed on the target machine, so browser-based calls are plausibly common; if Detection proves solid for Slack and Teams, adding Chrome is cheap and worth revisiting.
 - **Cross-meeting search and question answering** — v3 direction; needs a corpus first.
 - **Export formats other than Markdown** — Markdown is the point.
@@ -846,6 +926,13 @@ A Tier-0 build that works beats a Tier-2 build that half-works, and the tiers ar
 3. `FR-60`'s local half and `FR-61` (progress, measured duration, never block the Note) — the local model path made usable and safe.
 4. `FR-59` and `FR-60`'s remote half — the key, per-Meeting consent, cost display. Last on purpose: it is the only part that transmits anything, carries the reviewer's unresolved consent finding, and is worth building only if the local path proves insufficient.
 
+**Tier 6 — Increment 4, knowing which voice is yours.** Four real meetings produced the evidence for this tier, and one of them produced the defect that forced it. Ordered so that the measurement precedes the mechanism and the mechanism precedes the surface.
+
+1. `FR-65`'s calibration — the threshold, measured before anything is built on it. Already done (`spikes/calibration-speaker-threshold-2026-09-01.md`), and it is what turns the rest of this tier from a hope into a specification. **Nothing here should have been built before this.**
+2. `FR-62` (record a sample, store a fingerprint) — standalone, opt-in, and useful the moment it exists because the fingerprint is what everything else reads.
+3. `FR-63` (identify the user among in-room voices) — the point of the tier. Depends on 1 and 2 and on nothing else.
+4. `FR-64` and `FR-65`'s surface (visible, deletable, disclosed) — the honesty half. Small, and the increment is not shippable without it: a stored fingerprint the user cannot see or delete would breach §9.1.
+
 ## 7. Success Metrics
 
 Stakes are personal-utility, so these are deliberately few and mostly binary. The honest overall test: **three weeks after it is built, is it still enabled at login?**
@@ -853,7 +940,7 @@ Stakes are personal-utility, so these are deliberately few and mostly binary. Th
 **Primary**
 
 - **SM-1: Detection hit rate** *(provisional)* — proportion of Slack huddles and Teams calls that produce a Detection Prompt within 15 s. Target ≥ 90%, **pending §13 Q8**: this rests on `kAudioProcessPropertyIsRunningInput`, which the addendum records as documented-unreliable. Measure before treating 90% as an acceptance gate. Validates FR-11, FR-12.
-- **SM-2: Attribution trustworthiness** — Local Speaker attribution correct in 100% of Meetings (structural, so any failure is a bug); Remote Speaker segments correct often enough that renaming ≤ 3 labels fixes a whole Meeting. Validates FR-21, FR-22, FR-24.
+- **SM-2: Attribution trustworthiness** — Local Speaker attribution correct in 100% of Meetings *where it is claimed at all*; Remote Speaker segments correct often enough that renaming ≤ 3 labels fixes a whole Meeting. Validates FR-21, FR-22, FR-24. **Amended in increment 4:** the metric used to rest entirely on structure, so any failure was a bug by construction. It now has two paths — structural certainty (one voice on the microphone) and an enrolment match (FR-63) — and the second one *can* be wrong. So the metric splits: a claim must be right when made, and a refusal to claim is not a failure. Counting a Meeting where the app honestly said "unidentified" as a miss would reward the guessing this increment removed.
 - **SM-3: Output usable unedited** — proportion of Notes that are useful with no manual clean-up. Target ≥ 90%. Validates FR-31 through FR-33.
 - **SM-4: Still installed** — the app is still running at login three weeks after first use. Binary. Validates the product.
 
@@ -890,6 +977,8 @@ Stakes are personal-utility, so these are deliberately few and mostly binary. Th
 - Detection reads audio-device metadata only. It must never read audio content to decide whether a meeting is happening (FR-10). This is an invariant, and any future change that reads audio while Idle breaks the product's premise.
 - Retained audio is the largest privacy liability on disk. FR-44 makes retention explicit and FR-40 makes deletion real.
 - Speaker Profiles are biometric-adjacent data. They stay local, are never transmitted, and must be deletable.
+- **The Enrolled Voice (FR-62) is the most biometric-adjacent thing the product holds**, because it is a fingerprint of a named person deliberately recorded for identification. Four rules bind it, and none is negotiable: nothing is stored until the user records a sample; the sample audio is destroyed as soon as the fingerprint is derived, so what persists is a vector and not a recording of anyone's voice; the fingerprint never leaves the machine under any configuration, including a configured Remote Backend; and one control deletes it. `[NOTE FOR PM]` "Biometric-adjacent" is the honest word rather than "biometric": a 256-number embedding is not a recording and cannot be played back, but it identifies a person, and treating it as ordinary preference data would be wrong.
+- Enrolment records only the Mic Stream. It cannot capture the far end of a call, so it cannot become a way to sample a colleague's voice without them being in the room.
 
 ### 9.2 Cost
 
@@ -915,11 +1004,11 @@ There are exactly two surfaces. Adding a third is a scope violation.
 
 Grouped headings over a flat list, following the reference:
 
-- **Setup** — Setup Checklist (FR-46), Test Playground (FR-47), re-run onboarding (FR-48).
+- **Setup** — Setup Checklist (FR-46), Test Playground (FR-47), Voice Enrolment (FR-62), re-run onboarding (FR-48).
 - **Transcription** — Transcription Model selection and download (FR-17, FR-18).
 - **Meetings** — the Library (§4.8).
 - **Detection** — Watched Apps and suppression (FR-43).
-- **General** — Notes Folder, Local Speaker Label, audio retention, launch at login (FR-34, FR-21, FR-44, FR-45).
+- **General** — Notes Folder, Local Speaker Label, audio retention, launch at login, remembered voices including the Enrolled Voice (FR-34, FR-21, FR-44, FR-45, FR-51, FR-64).
 
 ### 10.3 Checklist row anatomy
 
@@ -972,6 +1061,8 @@ Nothing consumed the extra resolution. Both transcription engines and the Diariz
 
 The budget is stated as a target so that a future format change has something to violate rather than a silence to slip through.
 
+**Voice enrolment, added in increment 4.** Two figures, both stated as targets because neither has been measured: deriving a fingerprint from a 25-second sample should complete in under 10 seconds on the target machine, and comparing an Enrolled Voice against the in-room voices of a Meeting is a handful of 256-element dot products and must be free at any Meeting length. The second is arithmetic and safe to assert; the first depends on the Diarizer's model load and is the one to measure. Storage is negligible and worth stating only so it is not wondered about: one fingerprint is 256 single-precision floats — about 1 KB as JSON, and it replaces no audio because the audio is deleted.
+
 ## 12. Platform, Permissions and Signing
 
 *This section exists because the product's largest delivery risk is not a feature — it is macOS consent mechanics, and no template cluster names it.*
@@ -987,7 +1078,7 @@ The budget is stated as a target so that a future format change has something to
 1. **Actual transcription throughput per model on M5.** Drives the default model choice and the model picker's guidance. Must be measured during implementation. Blocks nothing; informs FR-17.
 2. **Diarization accuracy on real huddle audio with 3+ remote speakers**, and whether speaker count should be left automatic or estimated. Informs FR-22.
 3. **Is diarizing the System Stream alone materially better than diarizing a mixed stream?** The architecture assumes yes (it is also structurally cleaner). Worth one comparison once real audio exists.
-4. **Does voice-embedding similarity work well enough across separate recordings** to make Speaker Profiles (FR-25) trustworthy? This is the PRD's biggest technical unknown. If it fails, FR-25 drops to v2.
+4. ~~**Does voice-embedding similarity work well enough across separate recordings** to make Speaker Profiles (FR-25) trustworthy?~~ **Answered 2026-09-01 for in-room voices, narrowed for Remote Speakers.** Measured on four real Meetings: the same in-room voice landed 0.058–0.248 apart across independent recordings, different in-room voices in one Meeting 0.596 and above — a factor-of-2.4 gap with nothing in it. For Remote Speakers the populations touch (same up to 0.248, different from 0.254) and no threshold separates them, so remote matching stays a correctable inference. The threshold moved from 0.45 to 0.35 on that evidence. See `spikes/calibration-speaker-threshold-2026-09-01.md` and FR-65.
 5. **On-device foundation model context limit**, and therefore the chunking threshold for long Transcripts. Informs FR-27.
 6. **Does ad-hoc-signed consent survive rebuilds** more often than theory suggests? Determines whether "stable install path + re-grant note" is adequate UX or whether obtaining a certificate becomes a prerequisite.
 7. **Does the aggregate device need rebuilding when the default output device changes** mid-Session? Directly determines the FR-8 implementation.
@@ -1007,6 +1098,13 @@ Raised by increment 3:
 15. **Which local model family?** The spike found `Qwen3.5`, `Qwen3.6` and `Qwen3.8` conversions all present on `mlx-community`, with download counts favouring older Llama and Qwen builds. The list must be built from a live query (FR-56), but the *curation* still needs a judgement, and that judgement needs Q13's measurement first.
 16. **Does the Metal toolchain prerequisite survive distribution?** It is a build-time dependency here. Whether a user of a built app needs it too depends on the metallib being correctly bundled as a resource — which the current build script does not do. Informs FR-58 and the build pipeline.
 17. **Which remote endpoint, if any?** Left open deliberately. If Spirii has an approved vendor under a data processing agreement, that is the answer and it changes FR-59's consent copy. If not, the honest answer may be that FR-59 should not ship at all.
+
+Raised by increment 4:
+
+18. **Does a fingerprint from a deliberate 20–30 second sample behave like one derived from a whole Meeting?** Every figure in the calibration comes from Meeting-derived centroids. An enrolment sample is shorter but cleaner — one speaker, no crosstalk, a known device — which should help, and the two shortest samples in the data (11 words and 1 word) were visibly unreliable, which is why 20–30 seconds and not 5. Unmeasured until a sample exists. Informs FR-62's duration and FR-65's threshold.
+19. **Does an Enrolled Voice recorded on one input device match a Meeting recorded on another?** The calibration's four Meetings all used the same device. AirPods and the built-in microphone colour a voice differently, and the spike already found the app had been recording through AirPods without recording *that* it had. FR-63 may need the device recorded alongside the fingerprint, or a second sample per device. Informs FR-62.
+20. **How often does the ambiguity rule fire in practice, and is refusing the right call when it does?** FR-63 claims nothing when two in-room voices are both close to the Enrolled Voice. The measurement says that should be rare (in-room voices sat ≥ 0.596 apart), but a Diarization split of the user's own voice would produce exactly that shape, and then the honest refusal costs the user the feature. Worth counting before changing.
+21. **Does §9.1's "the audio is destroyed" survive the implementation of re-recording?** Re-recording replaces a fingerprint, and the obvious lazy implementation keeps the previous sample around "just in case". It must not. This is a code-review item as much as an open question, and it is listed because the failure would be invisible.
 
 ## 14. Assumptions Index
 
@@ -1045,3 +1143,12 @@ Every inference made without user confirmation. The user was unavailable for thi
 - **§7** — all metric targets are set by inference. None was given.
 - **§10** — every performance budget is inferred from what "small and focused" implies on this hardware. They are stated to be falsifiable, not because they were specified.
 - **§12** — that ad-hoc signing is acceptable, rather than obtaining an Apple Developer certificate, is an assumption about the user's willingness. If a certificate is available, most of §11's pain disappears.
+
+**Increment 4.** The direction was unusually complete — opt-in, deletable, local-only, one threshold and no dial, plain maths on the sound, no auto-exclusion — so most of what would normally be inferred was specified. And one figure that would previously have been an assumption is now a measurement, which is the difference between this increment and the three before it. What remains inferred:
+
+- **§4.5, FR-62 sample length** — that 20–30 seconds is the right ask. The instruction said "~20–30 seconds", so the range is given; landing on a specific value inside it is inferred from the two visibly-unreliable short samples in the calibration data rather than from a measurement of enrolment itself.
+- **§4.5, FR-63 ambiguity rule** — that two in-room voices both close to the Enrolled Voice should produce *no* identification rather than the nearer one. Not requested. Chosen because it is the AD-11-consistent answer — a claim the data does not support is the failure mode the whole increment exists to remove — and because the cost of refusing is one rename while the cost of a wrong claim is a colleague's words under the user's name. Logged as §13 Q20 because the trade-off deserves counting.
+- **§4.5, FR-62 re-record replaces rather than averages** — not stated either way. Chosen because a re-record is most plausibly a correction of a bad first sample, and averaging a correction into the thing it corrects preserves the error.
+- **§4.5, FR-64 the Enrolled Voice applies no name** — that the user's display name keeps coming from the existing setting rather than from the Profile. Inferred from there being one obvious place for it already; two places to edit one name is the defect this avoids.
+- **§4.9, the row is last in the checklist** — that Voice Enrolment sits after "Test your setup" rather than before it. Inferred: prominence comes from being in the primary checklist at all, and renumbering a shipped row to make room would disturb a surface the user already knows.
+- **§11, enrolment performance budgets** — both figures are targets, not measurements, and are labelled as such. The comparison cost is arithmetic and safe; the fingerprint-derivation cost is not, and §13 Q18 owns it.
