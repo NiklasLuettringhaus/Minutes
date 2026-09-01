@@ -68,8 +68,16 @@ final class VoiceEnrolment: ObservableObject {
     private var capture: MicCapture?
     private var levelTimer: Timer?
     private var cancelled = false
+    /// Separate from `phase`, and not redundant with it. `phase` only becomes
+    /// `.recording` inside the countdown loop, and there is an `await` before that
+    /// — requesting microphone permission — so two taps in that window would both
+    /// pass a phase-derived guard and start two captures on the same audio engine.
+    /// The second would throw and report a failure for a recording that was
+    /// actually running.
+    private var inFlight = false
 
     var isRunning: Bool {
+        if inFlight { return true }
         switch phase { case .idle, .done, .failed: return false; default: return true }
     }
 
@@ -89,7 +97,9 @@ final class VoiceEnrolment: ObservableObject {
     // MARK: - Recording
 
     func run() async {
-        guard !isRunning else { return }
+        guard !inFlight, !isRunning else { return }
+        inFlight = true
+        defer { inFlight = false }
         cancelled = false
         micLevel = 0
 

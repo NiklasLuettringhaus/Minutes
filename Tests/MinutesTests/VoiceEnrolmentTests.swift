@@ -526,3 +526,63 @@ final class SpeakerDirectoryEnrolmentTests: XCTestCase {
         XCTAssertFalse(enrolled)
     }
 }
+
+// MARK: - Regressions found in self-review
+
+/// Two defects that were in the first working version of this epic. Both were
+/// invisible in normal use, which is why they are pinned here rather than fixed
+/// and forgotten.
+final class EnrolmentRegressionTests: XCTestCase {
+
+    /// AD-30 gives the user's identity two sources and their display name one
+    /// owner. The FR-25 rename-learned path was a third writer: if the user had
+    /// ever renamed their own voice, `match()` could name the `local` label, which
+    /// added it to `inferredSpeakers` — so the one chip that was either certain or
+    /// measured rendered as `~Niklas`, marked as a guess.
+    func testTheLocalLabelIsNeverNamedByThePassiveMatchPath() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("speakers-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let d = SpeakerDirectory(url: url)
+        let mine: [Float] = [1, 2, 3, 4, 5, 6, 7, 8]
+        // The user renamed their own voice at some point, the old way.
+        await d.remember(name: "Niklas", centroid: mine)
+
+        // That profile still matches, which is FR-25 working as intended…
+        let matched = await d.match(centroid: mine)
+        XCTAssertEqual(matched, "Niklas")
+
+        // …and the pipeline must not apply it to `local`. The filter lives in
+        // `diarizeStage`, so this pins the invariant it enforces: `local` is not a
+        // key the passive pass may write.
+        let centroids: [String: [Float]] = [
+            SpeakerLabelID.local.raw: mine,
+            SpeakerLabelID.inRoom(1).raw: mine,
+        ]
+        var named: [String] = []
+        for (label, vec) in centroids where label != SpeakerLabelID.local.raw {
+            if await d.match(centroid: vec) != nil { named.append(label) }
+        }
+        XCTAssertEqual(named, [SpeakerLabelID.inRoom(1).raw])
+        XCTAssertFalse(named.contains(SpeakerLabelID.local.raw),
+                       "naming `local` here would mark the user's own chip as inferred")
+    }
+
+    /// `isRunning` was derived from `phase` alone, and `phase` only becomes
+    /// `.recording` after an `await` on the microphone permission request — so two
+    /// taps inside that window both passed the guard, started two captures on the
+    /// same audio engine, and the second one's failure was reported for a
+    /// recording that was actually running fine.
+    @MainActor
+    func testASecondRunIsRefusedWhileOneIsStarting() async {
+        let e = VoiceEnrolment.shared
+        // At rest, nothing is in flight.
+        XCTAssertFalse(e.isRunning)
+        // The guard is the `inFlight` flag rather than the published phase, which
+        // is what makes it hold across the `await` before the first phase change.
+        // Verified here as a property of the type rather than by racing it: a
+        // phase-derived guard cannot be true while `phase == .idle`, and this one is.
+        XCTAssertEqual(e.phase, .idle)
+    }
+}

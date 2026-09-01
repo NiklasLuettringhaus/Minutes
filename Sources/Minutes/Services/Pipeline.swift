@@ -267,9 +267,17 @@ actor Pipeline {
         }
 
         // Name any voice we already know from a previous meeting (FR-25).
+        //
+        // The Local Speaker is deliberately not a candidate here. AD-30 gives the
+        // user's identity exactly two sources — the structural fact of one voice on
+        // the microphone, or an enrolment match — and their *display name* one owner,
+        // the setting in General. Letting the rename-learned path name `local` as
+        // well would add a third writer, and its visible symptom would be the
+        // user's own chip rendering as `~Niklas`: marked inferred when it is the one
+        // label that was either certain or measured.
         var names: [String: String] = [:]
         var inferred: [String] = []
-        for (label, vec) in centroids {
+        for (label, vec) in centroids where label != SpeakerLabelID.local.raw {
             if let known = await SpeakerDirectory.shared.match(centroid: vec) {
                 names[label] = known
                 inferred.append(label)
