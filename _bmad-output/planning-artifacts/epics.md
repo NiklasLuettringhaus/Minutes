@@ -1,6 +1,10 @@
 ---
 stepsCompleted: [1, 2, 3, 4]
 revisions:
+  - 2026-09-01 increment 4 — added Epic 10 (7 stories, FR-62 to FR-65 plus the FR-21,
+    FR-25 and FR-46 amendments) headless, after a spike and a threshold calibration.
+    Epics 1-9 untouched and not renumbered. First epic whose central constant was
+    measured before any of its stories were written.
   - 2026-08-31 increment 3 — added Epic 9 (7 stories, FR-55 to FR-61) headless, after
     a review and a spike. Epics 1-8 untouched and not renumbered.
   - 2026-08-31 increment 2 — added Epic 8 (6 stories, FR-49 to FR-54 plus the
@@ -12,15 +16,19 @@ inputDocuments:
   - _bmad-output/planning-artifacts/ux-designs/ux-meeting-recorder-2026-08-31/DESIGN.md
   - _bmad-output/planning-artifacts/ux-designs/ux-meeting-recorder-2026-08-31/EXPERIENCE.md
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/addendum.md
+  - _bmad-output/planning-artifacts/spikes/spike-mic-isolation-2026-09-01.md
+  - _bmad-output/planning-artifacts/spikes/calibration-speaker-threshold-2026-09-01.md
 ---
 
 # Minutes - Epic Breakdown
 
 ## Overview
 
-This document decomposes the 61 functional requirements, 8 cross-cutting NFRs, the 27 architecture decisions and the two UX spines into 56 implementable stories across 9 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
+This document decomposes the 65 functional requirements, 8 cross-cutting NFRs, the 32 architecture decisions and the two UX spines into 63 implementable stories across 10 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build; Epic 9 is increment 3; Epic 10 is increment 4. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
 
-Every FR is covered by exactly one story — verified programmatically, see the FR Coverage Map.
+Every FR is covered by exactly one story — verified programmatically, see the FR Coverage Map for increment 1 and each later epic's own coverage table.
+
+**Requirements inventory scope.** The inventory below covers FR-1 to FR-48, the requirement set that existed when this document was created. Every increment since has carried its new requirements inside its own epic section, restated there rather than duplicated at the top. Epic 10 follows that convention.
 
 ## Requirements Inventory
 
@@ -223,6 +231,7 @@ All 48 FRs of increment 1 covered exactly once; no FR appears in two stories. FR
 7. **Epic 7: Metadata Intelligence** — 3 stories, tiers T1, T2, T3
 8. **Epic 8: Trust the List, See the State** — 6 stories, tier T4 (increment 2)
 9. **Epic 9: Summarisation You Choose and Can Trust** — 7 stories, tier T5 (increment 3)
+10. **Epic 10: Knowing Which Voice Is Yours** — 7 stories, tier T6 (increment 4)
 
 
 ## Epic 1: Foundation and Walking Skeleton
@@ -1868,3 +1877,247 @@ So that I can choose it deliberately, for one meeting at a time, knowing what le
 | FR-61 | T5 | 9.5 |
 
 FR-58 and FR-60 are each split across two stories on purpose: FR-58's capability *type* must exist before its *presentation* can be honest, and FR-60's local and remote halves are separated so the remote half can be dropped without losing the local one. Amended requirements (FR-26, FR-52) stay owned by their original stories; the amendments are covered here.
+
+---
+
+## Epic 10: Knowing Which Voice Is Yours
+
+*Increment 4 · Tier T6 · 7 stories · FR-62 … FR-65, plus the FR-21, FR-25 and FR-46 amendments*
+
+**Why this epic exists.** The user recorded their first real meeting: an eight-person Slack huddle, taken at a desk with two colleagues talking beside them. The app performed correctly and the result was nearly useless. It separated the voices on the microphone — `In-room 1`, `In-room 2` — and it refused to say which was the user, because AD-11 forbids claiming an identity the audio does not support. 723 of 1501 transcript words were the neighbouring conversation, and 14 utterances the diarizer could not place at all fell through to a default and printed as the user's own words.
+
+That default is fixed and is now `In-room, unidentified`, which is honest. **Honest is not the same as useful.** Separation without identification is half an answer, and the missing half cannot be supplied by the mechanism the PRD already had: FR-25 learns a voice from a rename, a rename needs a correct label to start from, and several voices on one microphone provide none. There is nothing to rename that is known to be you.
+
+This epic replaces the guess with a measurement. The user records their own voice once; the app compares it against the in-room voices of every later meeting.
+
+**What happened before any story was written, and why it matters.** The threshold that decides a match had been `0.45` since FR-25 shipped, with a comment admitting it was chosen rather than measured. Five real meetings had written per-speaker centroids to disk, so it was measurable, and it was measured (`spikes/calibration-speaker-threshold-2026-09-01.md`): the same in-room voice lands 0.058–0.248 apart across four independent recordings, different in-room voices in one meeting stay 0.596 and above. The calibrated value is **0.35**. Two apparent counter-examples turned out to be one person heard on both streams — a colleague in the room who was also on the huddle — which is the embedding working, not failing.
+
+**Ordering is load-bearing.** Story 10.1 is the measurement and ships alone, improving FR-25 today with no enrolment in sight. 10.2 is the port, and 10.3 cannot be built honestly without it. 10.4 is the point of the epic. 10.5 through 10.7 are the surfaces, and the epic is **not shippable without 10.6** — a stored fingerprint the user cannot see or delete breaches PRD §9.1.
+
+**What this epic explicitly does not build**, because each was considered and rejected: automatically excluding in-room voices from the note (a conference room full of participants is the normal case; the per-meeting Exclude control is the whole answer); a Voice Isolation prompt or nudge (it works, and it is macOS-only, and AD-28 forbids the mechanism depending on it); auto-muting the microphone when the far end speaks (it would have helped in that huddle and it fails exactly when the user is the one talking); and any user-facing dial for a threshold, a voice-activity parameter or a speaker count.
+
+### Story 10.1: One calibrated threshold, and the measurement that produced it
+
+*Requirements: FR-65 (the calibration half), FR-25 (amended) · Tier T6*
+
+As a user,
+I want the number that decides whether two recordings are the same person to have been measured,
+So that a name arriving automatically is a judgement I can trust rather than someone's guess.
+
+**Acceptance Criteria:**
+
+**Given** the speaker-matching threshold
+**When** a voice is compared against a stored profile
+**Then** the constant used is 0.35, not 0.45
+**And** the measurement and date that produced it are recorded at its declaration, with a path to the report
+
+**And** each of the following holds:
+
+- The threshold lives in exactly one place. It is not in `Preferences`, not in `UserDefaults`, and not reachable from any pane.
+- The ambiguity margin story 10.4 needs — 0.10 — sits beside it, from the same measurement.
+- A test verifies the constants are what the calibration concluded, so a later edit by opinion fails rather than passes quietly.
+- A calibration test reads the real meeting centroids on this machine when they are present and skips cleanly when they are not. It never copies a centroid into the repository: those are biometric-adjacent data belonging to the user's colleagues, and PRD §9.1 keeps them on the machine that recorded them.
+- The measured limit is recorded alongside the number, not hidden: for Remote Speakers the two populations touch and no threshold separates them, so remote matching stays a correctable inference.
+
+**Implementation constraints:**
+
+- AD-31, marked `[ADOPTED]` — a measured property of this embedding on this data, not a preference.
+- **Ship this independently of everything else in the epic.** It changes one constant and improves FR-25's behaviour today, with no enrolment anywhere near it.
+- Do not assert a figure this story did not measure. Every number in the report came from files on disk; none is extrapolated.
+
+### Story 10.2: A voice fingerprint is a port and a comparison, not a framework call
+
+*Requirements: FR-62 (foundation), FR-64 (storage) · Tier T6*
+
+As a developer,
+I want voice identity to sit behind a port with the comparison in pure code,
+So that the one thing the user asked to stay portable does not quietly acquire an Apple dependency.
+
+**Acceptance Criteria:**
+
+**Given** the identification path
+**When** it is compiled
+**Then** the comparison code depends on `Foundation` alone and names no Apple type
+**And** the embedder behind the port may be as platform-specific as it likes
+
+**And** each of the following holds:
+
+- The port takes audio and returns a fixed-length fingerprint plus an identifier naming the producer.
+- The comparison lives in Core, operates on `[Float]`, and is unit-tested without audio hardware, without a model, and without a diarizer.
+- A stored fingerprint carries its producer identifier and its dimension. A comparison across producers or dimensions returns **no information** — not a large distance and not a non-match, because collapsing "cannot say" into "no match" turns an embedder swap into a permanent silent failure.
+- The store gains the enrolled profile as a *kind* of profile rather than a second store. `SpeakerDirectory` is reused; nothing is duplicated.
+- The persisted profile type gets a hand-written decoder using `decodeIfPresent` with defaults. Swift ignores a property's default when the key is absent and throws `keyNotFound` instead, which is exactly how adding one field to `Meeting` silently orphaned five real recordings.
+- An older `speakers.json` written before this story loads without error, with the new fields defaulted. There is no migration step and no schema version.
+- The enrolled profile is excluded from the passive FR-25 match, so it can never apply a name to a voice.
+
+**Implementation constraints:**
+
+- AD-28, AD-29, AD-30. The mechanical test for AD-28 is that the identification path compiles against `Foundation` alone — check it, do not assume it.
+- No new dependency. `SpeakerKit.DiarizationResult` already exposes `nearestSpeakerCentroid(to:)` and `centroidCosineDistance(between:and:)` through the already-linked `argmax-oss-swift` 1.1.0.
+- Do this before 10.3. A recorder built on a framework call rather than a port would have to be rewritten to satisfy AD-28, and the rewrite is the expensive kind.
+
+### Story 10.3: Record twenty-five seconds and store a fingerprint
+
+*Requirements: FR-62 · Tier T6*
+
+As a user,
+I want to record my own voice once,
+So that Minutes has something to recognise me by.
+
+**Acceptance Criteria:**
+
+**Given** microphone permission and nothing else — no model download, no network, no summarisation backend
+**When** I record a sample
+**Then** a fingerprint is stored on this Mac
+**And** the sample audio is deleted in the same operation
+
+**And** each of the following holds:
+
+- **Nothing is written until the fingerprint exists.** A cancelled recording, a failed one, and one that never started are indistinguishable on disk.
+- The audio is deleted on every exit path including failure and cancellation — a `defer`, not a happy-path cleanup. It never enters a Meeting directory, never becomes a Meeting record, and never reaches the Notes Folder.
+- Only the Mic Stream is captured. The System Stream is never opened, so enrolment cannot trigger the system-audio permission and cannot record the far end.
+- The result reports measurements, not a verdict: seconds of speech found, and how many voices were found.
+- A sample containing more than one voice is **refused, with that reason stated**. A fingerprint of two people would put a colleague's name on the user's words for months, and a second attempt costs twenty-five seconds.
+- Failures are staged and named: permission missing · nothing was said · more than one voice · too short. Never one generic error.
+- Re-recording **replaces** the fingerprint rather than averaging into it, and no history of previous samples is kept.
+- Enrolment produces no Meeting and writes no Note, and never appears in the Library.
+
+**Implementation constraints:**
+
+- AD-32. The deletion-on-every-path rule is the one thing in this story that is invisible when broken, so it is the one thing to test explicitly rather than eyeball.
+- Follow `TestPlayground`'s shape — it already records, reports and cleans up, and it is the precedent the UX spine names.
+- Embedding runs on the existing ML serial executor, so an enrolment during an active transcription queues rather than contending for memory.
+
+### Story 10.4: The enrolled voice decides which voice on the microphone is the user
+
+*Requirements: FR-63, FR-21 (amended) · Tier T6*
+
+As a user,
+I want my own lines under my own name when I am in a room with other people,
+So that a meeting where colleagues sat beside me is still a record of what I said.
+
+**Acceptance Criteria:**
+
+**Given** several voices on the Mic Stream and an enrolled fingerprint
+**When** attribution runs
+**Then** the in-room voice matching the fingerprint is the Local Speaker
+**And** the others stay anonymous in-room voices
+
+**And** each of the following holds:
+
+- With no enrolled fingerprint, behaviour is **byte-for-byte** what it is today. This is a test, not an aspiration.
+- A match is accepted only when it is within the threshold **and** unambiguous — no other in-room voice within the margin of it. Two voices that close is a diarizer split or a genuine ambiguity, and either way nothing is claimed.
+- Place is untouched. A Mic Stream utterance can still never become a Remote Speaker, and a System Stream utterance can never become an in-room one.
+- Mic Stream speech no diarized span covers, with several voices present, stays unidentified in-room speech. Enrolment does not change that, and must not.
+- No stage is added to the pipeline. The lookup happens inside the existing diarize stage, and its result reaches attribution as one value — attribution stays a pure function of its arguments and gains no dependency on the store.
+- The Meeting records that the Local Speaker was identified by enrolment, and how close the match was.
+- Enrolment draws no line between a participant and a bystander. Both are "not the user", and deciding which non-user voice belongs in the note stays the per-meeting Exclude control's job.
+- A meeting on disk with several in-room voices is used as the test case, not an invented fixture.
+
+**Implementation constraints:**
+
+- AD-11 as amended, AD-30. `Pipeline.assign` gains one parameter and nothing else changes in it.
+- The structural rules are the product's oldest guarantee. A change here that makes the no-enrolment path behave differently is a regression even if every new test passes.
+
+### Story 10.5: Your voice, as a row in Getting Started
+
+*Requirements: FR-62 (surface), FR-46 (amended) · Tier T6*
+
+As a user,
+I want to find this where I found everything else about setting the app up,
+So that I do not have to know the feature exists to discover it.
+
+**Acceptance Criteria:**
+
+**Given** the Getting Started pane
+**When** I read the checklist
+**Then** there is a row for my voice, marked optional, using the existing row anatomy
+**And** a card below it records and reports, in the Test Playground's shape
+
+**And** each of the following holds:
+
+- The row is the same component as every other row: leading indicator, title, one-line subtitle, trailing control. **A second onboarding style is a defect.**
+- Row state is derived live from whether a fingerprint exists, never from a stored completion flag.
+- The subtitle says what the row buys, not what it is: that Minutes can tell which voice in the room is the user instead of leaving it unattributed.
+- The row is last, so no shipped row is renumbered. Position in the checklist is stable by rule.
+- The card shows **one** level meter, labelled Microphone. Not two — enrolment never opens the System Stream, and a System meter would misdescribe what is being read.
+- Before the recording starts, the card says how long it takes, what is stored, and that the recording itself is deleted.
+- The card asks the user to let nobody else talk, because a two-voice sample is refused.
+- The result is `{components.fact-chip}`s — seconds of speech, voices found — and a `Re-record`. No score, no waveform portrait, no "good sample!".
+- The optional row never renders as an error and never blocks the pane's "Setup complete" statement.
+
+**Implementation constraints:**
+
+- `EXPERIENCE.md` § *Voice enrolment* and § *Checklist row*; `DESIGN.md` `components.enrolment-card`. The card's parent shape is the Test Playground card, deliberately.
+- The pane already recomputes row state on appearance and on window focus. Use that; do not add a second refresh path.
+
+### Story 10.6: The stored voice is visible, distinguishable and deletable
+
+*Requirements: FR-64 · Tier T6*
+
+As a user,
+I want to see the fingerprint the app is keeping of me and remove it in one click,
+So that the most sensitive thing this app stores is something I can look at and undo.
+
+**Acceptance Criteria:**
+
+**Given** an enrolled fingerprint
+**When** I open the remembered-voices list in General
+**Then** it appears there, marked as mine, with one control that deletes it
+
+**And** each of the following holds:
+
+- FR-51's list keeps working unchanged. The enrolled entry is the **same row** with a different glyph and a badge — not its own section, not its own card.
+- It sorts first. It is the only entry that is the user, and the only one whose deletion changes how future meetings are attributed.
+- It carries provenance: how much audio produced it, and when. A remembered colleague keeps showing meetings-confirmed and last-heard.
+- It offers no rename. The user's display name comes from "Your name in transcripts" in the same pane, because two places to edit one name is a defect.
+- Deleting it returns attribution to pre-enrolment behaviour for meetings processed afterwards. Meetings already written keep their labels, which is FR-51's existing rule and is stated in the UI because a user deleting a fingerprint may reasonably expect otherwise.
+- `Forget all` removes it too, and its confirmation **names it separately** from the count of colleagues. "3 voices will be forgotten" hides the one that matters.
+- The card states, where the data is shown, that none of it leaves the Mac.
+- A relaunch shows the same entry with the same provenance. The fingerprint survives a restart or the feature does not exist.
+
+**Implementation constraints:**
+
+- `DESIGN.md` `components.voice-row`; `EXPERIENCE.md` § *Remembered voices row*.
+- **The epic is not shippable without this story.** A stored fingerprint the user cannot see or delete breaches PRD §9.1, and §9.1 is not a nice-to-have in a product whose entire claim is that nothing leaves the machine.
+
+### Story 10.7: The identification says what it rests on
+
+*Requirements: FR-65 (the disclosure half) · Tier T6*
+
+As a user,
+I want to know whether my name on a line is a fact or a measurement,
+So that I can tell the difference between something that cannot be wrong and something that can.
+
+**Acceptance Criteria:**
+
+**Given** a meeting whose Local Speaker was identified by enrolment
+**When** I open its detail
+**Then** it says so, and says how close the match was
+**And** a meeting whose Local Speaker was structural says that instead
+
+**And** each of the following holds:
+
+- The two cases look identical in the transcript and must not look identical in the detail. One is structural and cannot be wrong; the other is a measurement.
+- The measured distance is shown as a fact. It is never editable, and no control anywhere sets it — a number the user can check but not set is honesty, not a dial.
+- A wrong identification is corrected with the rename and Exclude controls that already exist. No new correction mechanism is added.
+- An honest refusal renders as ordinary in-room attribution with no warning glyph. The app declining to guess is the product working, and dressing it as a failure pushes the user toward wanting the guess back.
+- VoiceOver states the basis, not just the name: recognised from the enrolled voice, or the microphone held a single voice. The distinction is the honesty guarantee, so it cannot be visual-only.
+
+**Implementation constraints:**
+
+- `EXPERIENCE.md` § *Identity, claimed or refused* is the contract for all four situations, including the two that predate this epic.
+- PRD FR-65 forbids a *settable* threshold. Displaying a measured distance is permitted on the same grounds as the Test Playground's throughput figure, and the distinction is worth keeping straight in review.
+
+### Epic 10 FR Coverage
+
+| FR | Tier | Story |
+| --- | --- | --- |
+| FR-62 | T6 | 10.2 (foundation), 10.3 (the act), 10.5 (the surface) |
+| FR-63 | T6 | 10.4 |
+| FR-64 | T6 | 10.2 (storage), 10.6 (the surface) |
+| FR-65 | T6 | 10.1 (the calibration), 10.7 (the disclosure) |
+
+Amended requirements stay owned by their original stories — FR-21 by 1.8, FR-25 by 4.3, FR-46 by 2.6 — and the amendments are covered here: FR-21 by 10.4, FR-25 by 10.1 and 10.2, FR-46 by 10.5.
+
+FR-62, FR-64 and FR-65 are each split across stories on purpose, and in each case the split separates a *mechanism* from its *surface* so that the mechanism can be verified before anything is drawn on top of it. FR-65's split is the sharpest: its calibration half (10.1) ships first and alone, and its disclosure half (10.7) ships last, because there is nothing to disclose until 10.4 makes a claim.
