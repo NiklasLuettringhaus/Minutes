@@ -1,0 +1,295 @@
+<title>Voices Next To You</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300..600;1,6..72,300..500&family=Public+Sans:wght@400;500;600&family=Roboto+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --paper:      #f4f5f3;
+    --surface:    #ffffff;
+    --surface-2:  #eaece7;
+    --ink:        #191c18;
+    --ink-soft:   #5c6359;
+    --ink-faint:  #878e83;
+    --line:       #dcdfd7;
+    --moss:       #2f6b45;
+    --moss-wash:  #e6f0e8;
+    --clay:       #a4442c;
+    --clay-wash:  #f8ebe6;
+    --ochre:      #8a6410;
+    --ochre-wash: #f8f1de;
+    --shadow: 0 1px 2px rgba(25,28,24,.05), 0 10px 26px -14px rgba(25,28,24,.16);
+    --serif: "Newsreader", Georgia, serif;
+    --sans: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --mono: "Roboto Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #101210;
+      --surface:    #191c19;
+      --surface-2:  #212520;
+      --ink:        #e7eae5;
+      --ink-soft:   #a5ada1;
+      --ink-faint:  #7d857a;
+      --line:       #2d322c;
+      --moss:       #6cc38a;
+      --moss-wash:  #14291c;
+      --clay:       #ef9077;
+      --clay-wash:  #331912;
+      --ochre:      #d9ae4c;
+      --ochre-wash: #2c2411;
+      --shadow: 0 1px 2px rgba(0,0,0,.35), 0 12px 30px -16px rgba(0,0,0,.7);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:      #101210;
+    --surface:    #191c19;
+    --surface-2:  #212520;
+    --ink:        #e7eae5;
+    --ink-soft:   #a5ada1;
+    --ink-faint:  #7d857a;
+    --line:       #2d322c;
+    --moss:       #6cc38a;
+    --moss-wash:  #14291c;
+    --clay:       #ef9077;
+    --clay-wash:  #331912;
+    --ochre:      #d9ae4c;
+    --ochre-wash: #2c2411;
+    --shadow: 0 1px 2px rgba(0,0,0,.35), 0 12px 30px -16px rgba(0,0,0,.7);
+  }
+
+  body {
+    background: var(--paper); color: var(--ink);
+    font-family: var(--sans); font-size: 16px; line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 51rem; margin: 0 auto; padding: 3.5rem 1.5rem 6rem; }
+  @media (max-width: 640px) { .wrap { padding: 2rem 1.1rem 4rem; } }
+
+  .eyebrow {
+    font-family: var(--mono); font-size: .68rem; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--ink-faint); margin: 0 0 1rem;
+  }
+  h1 {
+    font-family: var(--serif); font-weight: 400;
+    font-size: clamp(2.4rem, 6.5vw, 3.7rem); line-height: 1.04;
+    letter-spacing: -.018em; text-wrap: balance; margin: 0 0 .7rem;
+  }
+  .standfirst {
+    font-family: var(--serif); font-style: italic;
+    font-size: clamp(1.12rem, 2.5vw, 1.36rem); line-height: 1.45;
+    color: var(--ink-soft); max-width: 38ch; margin: 0 0 2.2rem;
+  }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: .35rem 1.4rem;
+    font-family: var(--mono); font-size: .71rem; color: var(--ink-faint);
+    border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+    padding: .75rem 0; margin-bottom: 2.6rem;
+  }
+  .meta b { color: var(--ink-soft); font-weight: 500; }
+
+  h2 {
+    font-family: var(--serif); font-weight: 400;
+    font-size: clamp(1.65rem, 3.9vw, 2.1rem); line-height: 1.14;
+    letter-spacing: -.012em; text-wrap: balance; margin: 3.2rem 0 .9rem;
+  }
+  h2 .num {
+    display: block; font-family: var(--mono); font-size: .66rem;
+    letter-spacing: .12em; text-transform: uppercase; color: var(--moss);
+    margin-bottom: .45rem;
+  }
+  h3 { font-size: 1.02rem; font-weight: 600; margin: 1.9rem 0 .45rem; }
+  p { margin: 0 0 1rem; max-width: 68ch; }
+  ul { margin: 0 0 1rem; padding-left: 1.15rem; max-width: 68ch; }
+  li { margin-bottom: .35rem; }
+  code { font-family: var(--mono); font-size: .86em; }
+  p > code, li > code, td > code {
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 3px; padding: .05em .32em;
+  }
+  pre {
+    font-family: var(--mono); font-size: .78rem; line-height: 1.55;
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 3px; padding: .8rem 1rem; overflow-x: auto; margin: 0 0 1rem;
+  }
+
+  .callout {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 3px solid var(--moss); border-radius: 3px;
+    box-shadow: var(--shadow); padding: 1.5rem 1.65rem; margin: 0 0 1.5rem;
+  }
+  .callout.warn { border-left-color: var(--clay); }
+  .callout .label {
+    font-family: var(--mono); font-size: .66rem; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--moss); margin: 0 0 .55rem;
+  }
+  .callout.warn .label { color: var(--clay); }
+  .callout p:last-child { margin-bottom: 0; }
+
+  .scroller {
+    overflow-x: auto; margin: 0 0 1.3rem; border: 1px solid var(--line);
+    border-radius: 3px; background: var(--surface);
+  }
+  table { border-collapse: collapse; width: 100%; font-size: .86rem; }
+  th, td { text-align: left; padding: .65rem .8rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th {
+    font-family: var(--mono); font-size: .63rem; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--ink-faint); font-weight: 500;
+    background: var(--surface-2); white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.rank { font-family: var(--mono); color: var(--moss); font-weight: 500; width: 2rem; }
+  td.name { font-weight: 600; }
+  .any { color: var(--moss); font-weight: 500; }
+  .mac { color: var(--ochre); font-weight: 500; }
+  .num { font-variant-numeric: tabular-nums; font-family: var(--mono); }
+
+  .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.1rem; margin-bottom: 1.3rem; }
+  @media (max-width: 720px) { .split { grid-template-columns: 1fr; } }
+  .col {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 3px; padding: 1.2rem 1.3rem;
+  }
+  .col.yes { border-top: 3px solid var(--moss); }
+  .col.no  { border-top: 3px solid var(--clay); }
+  .col.never { border-top: 3px solid var(--ink-faint); }
+  .col h3 { margin: 0 0 .2rem; font-size: 1rem; }
+  .col .sub {
+    font-family: var(--mono); font-size: .64rem; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--ink-faint); margin: 0 0 .8rem;
+  }
+  .col ul { padding-left: 1.05rem; margin: 0; }
+  .col li { font-size: .9rem; margin-bottom: .5rem; }
+  .col li b { font-weight: 600; }
+
+  .evidence { font-size: .89rem; }
+  .evidence td:first-child { font-family: var(--mono); font-size: .78rem; white-space: nowrap; }
+
+  footer {
+    margin-top: 3.6rem; padding-top: 1.1rem; border-top: 1px solid var(--line);
+    font-family: var(--mono); font-size: .69rem; color: var(--ink-faint);
+  }
+</style>
+
+<div class="wrap">
+
+  <p class="eyebrow">Spike · 1 September 2026</p>
+  <h1>Voices Next To You</h1>
+  <p class="standfirst">Seven ways to stop recording the conversation beside you, and which of them you should be allowed to touch.</p>
+
+  <div class="meta">
+    <span><b>Trigger</b> first real meeting</span>
+    <span><b>Measured</b> 48% of the transcript was not the meeting</span>
+    <span><b>New dependencies needed</b> none</span>
+  </div>
+
+  <div class="callout">
+    <p class="label">The short version</p>
+    <p><strong>The best fix needs nothing you don't already have, and the cheapest fix is free but only works on a Mac.</strong> The separation already succeeded — <code>room-0</code>, <code>room-1</code> and four remote speakers were all correctly distinguished. What failed is that the note printed all of it. That is a rendering decision, not a signal-processing problem, and it is one afternoon's work.</p>
+    <p>The real fix is enrolling your voice once, which turns "how many people are in the room" into "which one is Niklas". Both primitives for that are already linked into the app.</p>
+  </div>
+
+  <h2><span class="num">Before anything else</span>Windows is not a port</h2>
+
+  <div class="callout warn">
+    <p class="label">Has to be said</p>
+    <p>System audio capture is built on CoreAudio process taps, which have no Windows equivalent. Transcription and diarization run on CoreML and the Neural Engine. The UI is SwiftUI with <code>MenuBarExtra</code>. Detection reads CoreAudio process objects.</p>
+    <p>A Windows version is <strong>a second product that shares a file format</strong>, not a recompile. Your PRD already scopes this to Apple Silicon, and I would rather say so now than have it surface as a surprise later.</p>
+    <p>What the constraint <em>does</em> legitimately change is the ranking below. Anything leaning on Apple-specific processing is an optimisation for one platform — never the mechanism the feature depends on. That rules out making Apple's Voice Isolation the answer, even though it is the cheapest thing here.</p>
+  </div>
+
+  <h2><span class="num">Measured, not recalled</span>What the machine actually said</h2>
+
+  <div class="scroller">
+    <table class="evidence">
+      <thead><tr><th>Probe</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td>preferredMicrophoneMode</td><td><strong>0 — Standard.</strong> Voice Isolation was off for the whole meeting, and the app never mentioned it</td></tr>
+        <tr><td>input device</td><td><strong>AirPods Pro</strong>, 1 ch, 24000 Hz — not the MacBook mic. We don't record this, so finding it out needed an external probe</td></tr>
+        <tr><td>can we set the mic mode?</td><td>No. Both properties are <code>readonly class</code>. We can read them, observe them, and deep-link to the picker</td></tr>
+        <tr><td>setVoiceProcessingEnabled(true)</td><td>Works — 32768 frames captured. <strong>But the format becomes 3 ch deinterleaved</strong></td></tr>
+        <tr><td>target-speaker matching</td><td>Already linked: <code>nearestSpeakerCentroid(to:)</code> in SpeakerKit</td></tr>
+        <tr><td>voice activity detection</td><td>Already linked: FluidAudio ships <code>VadManager</code> — pulled in for Parakeet</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>The three-channel trap</h3>
+  <p>With voice processing on, the input reports <strong>three deinterleaved channels</strong>. Our writer downmixes to mono by averaging — so if one channel is the processed voice and the others carry the raw or reference signal, averaging would <strong>re-add the noise the unit just removed</strong>. Which channel is which was not established: that needs a controlled recording with a known interfering source, and you were mid-meeting. No voice-processing change should ship before that measurement.</p>
+
+  <h2><span class="num">Also found</span>A mislabel, while reading your data</h2>
+  <p>Fourteen utterances in that note are attributed to <strong>you</strong> and are not verified to be you. When more than one voice shares the mic, every <em>matched</em> span becomes <code>room-N</code> — but an <em>unmatched</em> one falls through to a default of <code>local</code>, which renders as "Me":</p>
+  <pre> 63.2s  Double check verify
+ 83.0s  We do the
+102.1s  But it's not like the marshmallow
+141.0s  On
+255.4s  Slash</pre>
+  <p>That is the same class of error AD-11 was rewritten to prevent — claiming an identity the data doesn't support. An unplaceable mic utterance should read as unidentified in-room speech. Independent of everything else here, and a bug.</p>
+
+  <h2><span class="num">Options</span>Seven techniques, ranked</h2>
+  <div class="scroller">
+    <table>
+      <thead><tr><th></th><th>Technique</th><th>Effect</th><th>Works anywhere?</th><th>Work</th></tr></thead>
+      <tbody>
+        <tr><td class="rank">1</td><td class="name">Exclude in-room voices from the note</td><td>Removes 48% of that transcript</td><td class="any">any mic</td><td>Small</td></tr>
+        <tr><td class="rank">2</td><td class="name">Enrol your voice, keep only your cluster</td><td>Tells you apart <em>from</em> the room</td><td class="any">any mic</td><td>Medium</td></tr>
+        <tr><td class="rank">3</td><td class="name">Notice Voice Isolation is off, say so</td><td>Large when acted on</td><td class="mac">macOS only</td><td>Tiny</td></tr>
+        <tr><td class="rank">4</td><td class="name">Record which mic was used</td><td>Diagnosis, not isolation</td><td class="any">any mic</td><td>Tiny</td></tr>
+        <tr><td class="rank">5</td><td class="name">Apple voice processing on the input</td><td>Unknown until measured</td><td class="mac">macOS only</td><td>Medium</td></tr>
+        <tr><td class="rank">6</td><td class="name">Per-utterance level as a near/far tiebreak</td><td>Weak alone</td><td class="any">any mic</td><td>Small</td></tr>
+        <tr><td class="rank">7</td><td class="name">VAD-gate before embedding</td><td>Fewer spurious clusters</td><td class="any">any mic</td><td>Small</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Why enrolment is the real answer</h3>
+  <p>It is the only technique that answers <em>which</em> voice is yours rather than <em>how many</em> voices there are — and it is the only one that behaves the same on a borrowed MacBook, a headset, or a future non-Apple build. Thirty seconds of you reading a sentence, one stored profile, one comparison at attribution time. <code>SpeakerDirectory</code> already stores centroids and does cosine matching; SpeakerKit already exposes the comparison.</p>
+  <p>Your PRD deferred <em>"voiceprint enrolment"</em> to v2, reasoning that profiles are learned passively from renames. That holds for other people and fails for you: passive learning needs a correct label to learn from, and when several voices share one mic there is no reliable label to start from. <strong>Enrolling one person is a different requirement from enrolling everyone, and it shouldn't have been deferred with it.</strong></p>
+
+  <h2><span class="num">Your question</span>What you should be able to change</h2>
+  <p>The principle I'd apply: <strong>expose outcomes, hide mechanisms.</strong> You can reasonably decide what appears in your own notes. Nobody — including you — should be tuning a cosine distance.</p>
+
+  <div class="split">
+    <div class="col yes">
+      <h3>Configurable</h3>
+      <p class="sub">outcomes you own</p>
+      <ul>
+        <li><b>Whether in-room voices appear in the note</b> — with a per-meeting override. It's an editorial decision about your document.</li>
+        <li><b>Voice enrolment</b> — opt-in, re-recordable, deletable. Biometric-adjacent, so §9.1 governs it.</li>
+        <li><b>The mic mute</b> — already shipped.</li>
+        <li><b>Apple voice processing</b> — one switch, default off until measured, worded as an effect rather than an audio-unit name.</li>
+      </ul>
+    </div>
+    <div class="col no">
+      <h3>Not configurable</h3>
+      <p class="sub">mechanisms that would only break</p>
+      <ul>
+        <li><b>The speaker-matching threshold.</b> The number most likely to be set wrongly and hardest to reason about — and a wrong value puts the wrong name on someone's words. Calibrate it, ship one value, and expose <em>corrections</em> instead, which the voices list already does.</li>
+        <li><b>VAD parameters, level thresholds, cluster counts</b>, which processed channel to read.</li>
+        <li><b>Whether diarization runs.</b> Load-bearing for attribution.</li>
+        <li><b>Anything that disables the honesty guarantees.</b> A room voice may be left out of the note, but it must stay visible in the app, and the note must record that speech was excluded.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="col never">
+    <h3>Deliberately not offered at all</h3>
+    <p class="sub">tempting, and wrong</p>
+    <ul>
+      <li><b>Auto-muting when the far end speaks.</b> It would have helped in this exact meeting, and it fails precisely when you are the one talking.</li>
+      <li><b>A "clean up my audio" master switch.</b> It bundles techniques with different portability and different failure modes behind one control nobody could reason about — including whoever has to debug it.</li>
+    </ul>
+  </div>
+
+  <h2><span class="num">Recommendation</span>What I'd do, in order</h2>
+  <ul>
+    <li><strong>Now, together:</strong> options 1, 3 and 4, plus the mislabel fix. All small, all independent, and 4 makes every later measurement interpretable instead of guesswork.</li>
+    <li><strong>Next:</strong> option 2. The real fix, and the one that survives a change of machine.</li>
+    <li><strong>Its own spike, with a controlled recording:</strong> option 5. Promising, and the only one that could remove the neighbour before it reaches disk — but the channel question has to be settled first.</li>
+    <li><strong>Hold:</strong> 6 and 7, unless 2 proves insufficient.</li>
+  </ul>
+  <p>One non-code note worth more than most of the above: a headset mic sits centimetres from your mouth and metres from your neighbour, and no amount of processing beats that geometry. You were on AirPods Pro, which is already the good case — with Voice Isolation switched on it would likely have been a different transcript.</p>
+
+  <footer>
+    Minutes · spike · every fact above executed on the target machine, 1 September 2026<br>
+    Full record: <code>_bmad-output/planning-artifacts/spikes/spike-mic-isolation-2026-09-01.md</code>
+  </footer>
+
+</div>
