@@ -17,10 +17,6 @@ actor Pipeline {
         ParakeetModel.isParakeet(model) ? ParakeetTranscriber() : WhisperKitTranscriber()
     }
     private let diarizer = SpeakerKitDiarizerAdapter()
-    /// Held only for its `producer` identifier: the mic centroids this stage gets
-    /// back come from the same models, so they must be tagged as such before they
-    /// can be compared with a stored fingerprint (AD-29).
-    private let embedder: VoiceEmbedding = SpeakerKitVoiceEmbedder()
     private let noteWriter: NoteWriting = NoteWriter()
     private let heuristic = HeuristicBackend()
     private let llm = FoundationModelsBackend()
@@ -221,17 +217,11 @@ actor Pipeline {
                     // result is handed to `assign` as a value — no stage is added
                     // to AD-8's list, and `assign` gains no dependency on the
                     // speaker store.
-                    let candidates = c.compactMap { idx, vec -> VoiceMatch.Candidate? in
-                        guard !vec.isEmpty else { return nil }
-                        return VoiceMatch.Candidate(
-                            key: String(idx),
-                            fingerprint: VoiceFingerprint(vector: vec, producer: embedder.producer))
-                    }
+                    let candidates = VoiceMatch.candidates(from: c,
+                                                           producer: SpeakerKitVoiceEmbedder.producerID)
                     let resolution = await SpeakerDirectory.shared.identifyLocal(among: candidates)
-                    if let key = resolution.matchedKey, let idx = Int(key) {
-                        localMicVoice = idx
-                        localMatchDistance = resolution.matchedDistance
-                    }
+                    localMicVoice = VoiceMatch.micVoiceIndex(resolution)
+                    localMatchDistance = resolution.matchedDistance
 
                     // The identified voice is keyed `local` so every consumer —
                     // the note, the detail pane, a future rename — sees the user
@@ -369,28 +359,9 @@ actor Pipeline {
         let store = MeetingStore.shared
         let localName = await AppStateBridge.localSpeakerName()
         _ = try await store.update(id: id) { m in
-            // Named when the user is known: because the mic held one voice, or
-            // because the enrolled voice identified one of several (FR-63).
-            if !m.multipleInRoom || m.localIdentifiedByEnrolment {
-                m.speakerNames[SpeakerLabelID.local.raw] = localName
-            }
-            // Number each group independently so "In-room 2" and "Speaker 2" are
-            // never confused for one another.
-            var roomN = 1, remoteN = 1
-            for s in m.speakers {
-                guard m.speakerNames[s.raw] == nil else {
-                    if s.isInRoom { roomN += 1 } else if s.isRemote { remoteN += 1 }
-                    continue
-                }
-                switch s.place {
-                case .you:
-                    m.speakerNames[s.raw] = localName
-                case .room:
-                    m.speakerNames[s.raw] = "In-room \(roomN)"; roomN += 1
-                case .remote:
-                    m.speakerNames[s.raw] = "Speaker \(remoteN)"; remoteN += 1
-                }
-            }
+            // The naming rules are a pure function on the Meeting (Core), so they
+            // are testable without a store — see `assignedSpeakerNames`.
+            m.speakerNames = m.assignedSpeakerNames(localName: localName)
             // AD-4: sort by the shared session clock.
             m.utterances.sort { $0.start < $1.start }
         }

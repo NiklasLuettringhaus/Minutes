@@ -325,6 +325,51 @@ struct Meeting: Codable, Sendable, Identifiable {
         }
     }
 
+    /// The display name every Speaker Label should carry, given the user's chosen
+    /// name for themselves.
+    ///
+    /// Pure, and in Core, so it is testable without a store, an actor or a
+    /// pipeline. It was inline in `Pipeline.attributeStage` until increment 4,
+    /// where an enrolment match made a latent off-by-one reachable: the Local
+    /// Speaker `isInRoom` (it is in the room), so a *named* `local` label advanced
+    /// the in-room counter and the first colleague came out as "In-room 2". That
+    /// was unreachable before, because with several voices in the room `local` was
+    /// never a speaker on the Meeting at all — which is exactly the kind of bug
+    /// that ships when the logic has no seam to test at.
+    ///
+    /// Existing names are never overwritten, except the Local Speaker's, which is
+    /// owned by the user's setting and by nothing else (FR-64, AD-30).
+    func assignedSpeakerNames(localName: String) -> [String: String] {
+        var names = speakerNames
+        // The user is named when they are known: because the microphone held one
+        // voice, or because the enrolled voice identified one of several (FR-63).
+        if !multipleInRoom || localIdentifiedByEnrolment {
+            names[SpeakerLabelID.local.raw] = localName
+        }
+        // Numbered independently per group, so "In-room 2" and "Speaker 2" are
+        // never confused for one another.
+        var roomN = 1, remoteN = 1
+        for s in speakers {
+            guard names[s.raw] == nil else {
+                // A named colleague still occupies a number — "In-room 1" is taken
+                // by Mikkel, so the next anonymous voice is 2. The Local Speaker
+                // does not: it has its own name and never took a number.
+                if s.isInRoom && !s.isLocal { roomN += 1 }
+                else if s.isRemote { remoteN += 1 }
+                continue
+            }
+            switch s.place {
+            case .you:
+                names[s.raw] = localName
+            case .room:
+                names[s.raw] = "In-room \(roomN)"; roomN += 1
+            case .remote:
+                names[s.raw] = "Speaker \(remoteN)"; remoteN += 1
+            }
+        }
+        return names
+    }
+
     /// Distinct speakers in transcript order of first appearance.
     var speakers: [SpeakerLabelID] {
         var seen = Set<String>(); var out: [SpeakerLabelID] = []

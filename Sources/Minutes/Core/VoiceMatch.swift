@@ -155,6 +155,36 @@ enum VoiceMatch {
         }
     }
 
+    // MARK: - Diarizer glue
+
+    /// Turns a diarizer's per-cluster centroids into candidates.
+    ///
+    /// Extracted from the pipeline deliberately. The round trip — an `Int` cluster
+    /// index becomes a `String` key, a `Resolution` names that key, and the key
+    /// becomes an `Int` again — is three lines of glue that decide *which voice is
+    /// the user*, and inside `diarizeStage` it was unreachable by any test that
+    /// does not load a CoreML model and read a WAV file. If the round trip were
+    /// wrong, the wrong colleague would be labelled as the user and every test
+    /// would still pass.
+    static func candidates(from centroids: [Int: [Float]], producer: String) -> [Candidate] {
+        centroids
+            .compactMap { idx, vec -> Candidate? in
+                guard !vec.isEmpty else { return nil }
+                return Candidate(key: String(idx),
+                                 fingerprint: VoiceFingerprint(vector: vec, producer: producer))
+            }
+            // Sorted so the candidate list is stable: the input is a dictionary and
+            // has no order, and `resolve` breaks ties by key.
+            .sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
+    }
+
+    /// The diarizer cluster index a resolution names, or `nil` for all three of the
+    /// outcomes that claim nothing.
+    static func micVoiceIndex(_ r: Resolution) -> Int? {
+        guard let key = r.matchedKey else { return nil }
+        return Int(key)
+    }
+
     /// Picks the candidate the probe is, or declines to.
     ///
     /// Nothing here is stateful and nothing here is heuristic beyond the two

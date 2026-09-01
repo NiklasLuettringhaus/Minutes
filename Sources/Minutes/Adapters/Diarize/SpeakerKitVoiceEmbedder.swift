@@ -22,7 +22,15 @@ struct SpeakerKitVoiceEmbedder: VoiceEmbedding {
     /// Stored beside every fingerprint this produces (AD-29). The model version
     /// is part of the identity, because a pyannote v4 vector and a hypothetical
     /// v5 vector are not comparable and a bare "speakerkit" would hide that.
-    let producer = "speakerkit/pyannote-v4-community-1"
+    ///
+    /// Declared `static` and referenced by name from `Pipeline`, which tags the
+    /// diarizer's own per-cluster centroids with it. Those centroids come from the
+    /// same models as this embedder's, so the tag is correct — but only because
+    /// they share one declaration. Two types each writing the string would agree
+    /// today and diverge the first time either changed, and AD-29's whole purpose
+    /// is that such a divergence must be *detectable* rather than silent.
+    static let producerID = "speakerkit/pyannote-v4-community-1"
+    var producer: String { Self.producerID }
 
     func embed(url: URL) async throws -> VoiceEmbeddingResult {
         let box = try await MLEngine.shared.speakerKit()

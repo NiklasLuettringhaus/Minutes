@@ -61,13 +61,19 @@ enum Doctor {
         print("  your voice:         \(enrolled == nil ? "not enrolled" : "enrolled")")
         if let e = enrolled {
             let secs = e.speechSeconds.map { String(format: "%.1f s of speech", $0) } ?? "unknown length"
-            print("  enrolled as:        \(e.name) (\(secs), \(e.updatedAt))")
+            let f = ISO8601DateFormatter()
+            print("  enrolled:           \(secs), recorded \(f.string(from: e.updatedAt))")
         } else {
             print("  → several voices on the mic will stay unattributed. Record one in Getting Started.")
         }
-        print("  remembered:         \(voices.filter { !$0.isEnrolled }.count)")
-        for v in voices where !v.isEnrolled {
-            print("    · \(v.name) — \(v.samples) meeting(s)")
+        // Counts and sample depth, not names. This output gets pasted into notes
+        // and messages, and the names here are colleagues' — they are already
+        // visible in Settings to the one person entitled to see them, so a
+        // diagnostic gains nothing by making them portable (PRD §9.1).
+        let others = voices.filter { !$0.isEnrolled }
+        print("  remembered:         \(others.count) other voice(s)")
+        if !others.isEmpty {
+            print("  sample depth:       \(others.map { String($0.samples) }.joined(separator: ", ")) meeting(s) — names in Settings › General")
         }
         // Never print a centroid. The counts are diagnosable; the vectors are the
         // sensitive part (PRD §9.1).

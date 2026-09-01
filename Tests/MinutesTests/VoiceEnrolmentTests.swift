@@ -586,3 +586,142 @@ final class EnrolmentRegressionTests: XCTestCase {
         XCTAssertEqual(e.phase, .idle)
     }
 }
+
+// MARK: - The diarizer glue (extracted during review)
+
+/// The three lines that decide *which* voice is the user: an `Int` cluster index
+/// becomes a `String` key, a `Resolution` names that key, and the key becomes an
+/// `Int` again. Inside `diarizeStage` this was unreachable by any test that does
+/// not load a CoreML model and read a WAV file — so if it were wrong, the wrong
+/// colleague would be labelled as the user and everything would still be green.
+final class MicVoiceGlueTests: XCTestCase {
+
+    private func vecs(_ n: Int, dims: Int = 6) -> [Int: [Float]] {
+        var out: [Int: [Float]] = [:]
+        for i in 0..<n {
+            out[i] = (0..<dims).map { Float(($0 + 1) * (i + 1)) }
+        }
+        return out
+    }
+
+    func testCandidateKeysRoundTripToClusterIndices() {
+        let cs = VoiceMatch.candidates(from: vecs(4), producer: "p/1")
+        XCTAssertEqual(cs.map(\.key), ["0", "1", "2", "3"])
+        for c in cs {
+            let r = VoiceMatch.Resolution.matched(key: c.key, distance: 0.1)
+            XCTAssertEqual(VoiceMatch.micVoiceIndex(r), Int(c.key))
+        }
+    }
+
+    /// Double digits are where a naive round trip breaks: string ordering puts
+    /// "10" before "2", and the tie-break in `resolve` orders by key.
+    func testDoubleDigitClusterIndicesRoundTripAndSortNumerically() {
+        var m = vecs(3)
+        m[10] = [1, 2, 3, 4, 5, 6]
+        m[11] = [2, 3, 4, 5, 6, 7]
+        let cs = VoiceMatch.candidates(from: m, producer: "p/1")
+        XCTAssertEqual(cs.map(\.key), ["0", "1", "2", "10", "11"])
+        XCTAssertEqual(VoiceMatch.micVoiceIndex(.matched(key: "11", distance: 0.1)), 11)
+    }
+
+    /// A dictionary has no order. Two runs over the same centroids must produce the
+    /// same candidate list, or the tie-break in `resolve` is decided by luck.
+    func testCandidateOrderIsStableAcrossRuns() {
+        let m = vecs(6)
+        let a = VoiceMatch.candidates(from: m, producer: "p/1").map(\.key)
+        let b = VoiceMatch.candidates(from: m, producer: "p/1").map(\.key)
+        XCTAssertEqual(a, b)
+    }
+
+    func testEmptyCentroidsAreDroppedRatherThanTaggedAsCandidates() {
+        var m = vecs(2)
+        m[7] = []
+        let cs = VoiceMatch.candidates(from: m, producer: "p/1")
+        XCTAssertEqual(cs.map(\.key), ["0", "1"])
+    }
+
+    func testEveryOutcomeThatClaimsNothingYieldsNoIndex() {
+        XCTAssertNil(VoiceMatch.micVoiceIndex(.noMatch(nearest: 0.9)))
+        XCTAssertNil(VoiceMatch.micVoiceIndex(.notComparable))
+        XCTAssertNil(VoiceMatch.micVoiceIndex(.ambiguous(first: "0", second: "1", distance: 0.1)))
+    }
+
+    func testCandidatesCarryThePassedProducer() {
+        let cs = VoiceMatch.candidates(from: vecs(2), producer: "speakerkit/pyannote-v4-community-1")
+        XCTAssertTrue(cs.allSatisfy { $0.fingerprint.producer == "speakerkit/pyannote-v4-community-1" })
+    }
+
+    /// AD-29: the diarizer's own centroids are tagged with the embedder's producer
+    /// id, and that is only correct because the two share one declaration. If a
+    /// future change gives the diarizer a different model, this is the test that
+    /// should be updated deliberately rather than the mismatch shipping silently.
+    func testThePipelineTagsCentroidsWithTheEmbedderSOwnProducerId() {
+        XCTAssertEqual(SpeakerKitVoiceEmbedder.producerID,
+                       SpeakerKitVoiceEmbedder().producer)
+        XCTAssertFalse(SpeakerKitVoiceEmbedder.producerID.isEmpty)
+    }
+}
+
+// MARK: - Speaker numbering (regression found in review)
+
+/// The in-room numbering off-by-one an enrolment match introduced.
+///
+/// `SpeakerLabelID.local.isInRoom` is true — the Local Speaker is in the room —
+/// and the numbering loop advanced the in-room counter for any already-named
+/// in-room label. Before this epic that was unreachable, because with several
+/// voices in the room `local` was never a speaker on the Meeting. An enrolment
+/// match makes it a named in-room label, so the counter started at 2 and the
+/// first colleague was labelled "In-room 2".
+final class SpeakerNumberingTests: XCTestCase {
+
+    /// Calls the real function the pipeline calls, rather than a copy of it. The
+    /// first version of this test mirrored the logic instead, which would have
+    /// passed happily while the shipped code diverged.
+    private func names(for m: Meeting, localName: String) -> [String: String] {
+        m.assignedSpeakerNames(localName: localName)
+    }
+
+    private func meeting(identified: Bool) -> Meeting {
+        var m = Meeting(id: "n", startedAt: Date())
+        m.multipleInRoom = true
+        m.localIdentifiedByEnrolment = identified
+        m.speakerNames = [:]
+        m.utterances = [
+            Utterance(start: 0, end: 1, text: "a",
+                      speaker: identified ? .local : .inRoom(0), origin: .mic),
+            Utterance(start: 1, end: 2, text: "b", speaker: .inRoom(1), origin: .mic),
+            Utterance(start: 2, end: 3, text: "c", speaker: .inRoom(2), origin: .mic),
+            Utterance(start: 3, end: 4, text: "d", speaker: .remote(0), origin: .system),
+        ]
+        return m
+    }
+
+    func testInRoomVoicesAreNumberedFromOneWhenTheUserIsIdentified() {
+        let n = names(for: meeting(identified: true), localName: "Niklas")
+        XCTAssertEqual(n[SpeakerLabelID.local.raw], "Niklas")
+        XCTAssertEqual(n[SpeakerLabelID.inRoom(1).raw], "In-room 1",
+                       "the Local Speaker must not consume an in-room number — it has its own name")
+        XCTAssertEqual(n[SpeakerLabelID.inRoom(2).raw], "In-room 2")
+        XCTAssertEqual(n[SpeakerLabelID.remote(0).raw], "Speaker 1")
+    }
+
+    func testNumberingIsUnchangedWhenNobodyIsIdentified() {
+        let n = names(for: meeting(identified: false), localName: "Niklas")
+        XCTAssertNil(n[SpeakerLabelID.local.raw], "nothing may be claimed as the user")
+        XCTAssertEqual(n[SpeakerLabelID.inRoom(0).raw], "In-room 1")
+        XCTAssertEqual(n[SpeakerLabelID.inRoom(1).raw], "In-room 2")
+        XCTAssertEqual(n[SpeakerLabelID.inRoom(2).raw], "In-room 3")
+        XCTAssertEqual(n[SpeakerLabelID.remote(0).raw], "Speaker 1")
+    }
+
+    /// A colleague named by an FR-25 profile still consumes an in-room number, so
+    /// the fix must not have made every named in-room label free.
+    func testARememberedColleagueStillConsumesAnInRoomNumber() {
+        var m = meeting(identified: true)
+        m.speakerNames = [SpeakerLabelID.inRoom(1).raw: "Mikkel"]
+        let n = names(for: m, localName: "Niklas")
+        XCTAssertEqual(n[SpeakerLabelID.inRoom(1).raw], "Mikkel")
+        XCTAssertEqual(n[SpeakerLabelID.inRoom(2).raw], "In-room 2",
+                       "Mikkel occupied In-room 1, so the next anonymous voice is 2")
+    }
+}
