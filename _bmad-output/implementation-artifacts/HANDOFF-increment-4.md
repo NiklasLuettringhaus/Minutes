@@ -1,36 +1,37 @@
 ---
 title: Handoff — increment 4, voice enrolment
 date: 2026-09-01
-state: planned, built, reviewed, NOT installed
+state: planned, built, reviewed, installed. Two verification gaps remain, both needing a human voice.
 supersedes: HANDOFF-increment-3.md (for the items it listed as outstanding)
 ---
 
 # Handoff: increment 4 (Epic 10)
 
-The whole BMAD flow ran and the code is written, tested and reviewed. **It is not
-installed.** A recording was in progress on this machine throughout the
-implementation, and `Scripts/build-app.sh` quits the running app before
-installing, which would have destroyed a live meeting. The signed bundle is
-staged and ready.
+The whole BMAD flow ran, the code is written, tested and reviewed, and it is
+**installed at `/Applications/Minutes.app`** and running.
+
+Installation waited for a meeting that was recording throughout the
+implementation — `Scripts/build-app.sh` quits the running app before installing,
+which would have destroyed it. That meeting finished, its pipeline drained on its
+own (`stage: written`, 559 utterances, note written), and the build went in.
+`tccutil reset Microphone` succeeded; `tccutil reset SystemAudioCaptureRequests`
+reported a failure, which is the usual best-effort behaviour for that service and
+is why FR-47's Test Playground exists — run it to find out empirically whether
+system audio still works.
 
 ## The one action outstanding
 
+**Getting Started → row 7 → Record Voice**, and read a paragraph out loud for 25
+seconds with nobody else talking.
+
+That is the only thing standing between this increment and being verified end to
+end. Two of the three verification gaps in the code review close the moment it
+happens, and one of them — that the sample audio is actually deleted — is the
+increment's central privacy guarantee. Worth checking once, right after:
+
 ```
-# 1. Confirm nothing is recording (mic.wav must not be growing):
-cd ~/Library/Application\ Support/Minutes/Meetings
-for d in */; do echo "$d $(stat -f %z "$d/mic.wav")"; done; sleep 3
-for d in */; do echo "$d $(stat -f %z "$d/mic.wav")"; done
-
-# 2. Then install:
-cd ~/Desktop/Code/Meeting\ recorder && ./Scripts/build-app.sh
-
-# 3. macOS will have revoked consent, because the signature changed:
-tccutil reset SystemAudioCaptureRequests dev.niklas.minutes
-tccutil reset Microphone dev.niklas.minutes
+ls "$TMPDIR" | grep minutes-enrol   # must print nothing
 ```
-
-Then: **Getting Started → row 7 → Record Voice**, and read a paragraph out loud
-for 25 seconds with nobody else talking.
 
 ## Measured versus assumed
 
@@ -60,21 +61,44 @@ The distinction this increment was built around, so it is the first thing here.
 | A fingerprint from a deliberate 25 s sample behaves like one from a whole meeting | Every figure above comes from meeting-derived centroids. A sample is shorter but cleaner, which *should* help | PRD §13 Q18 |
 | A fingerprint recorded on one input device matches a meeting recorded on another | The calibration's four Meetings all used one device. The spike already found the app had been recording through AirPods without recording *that* it had | PRD §13 Q19 — and the fix, if needed, is a fingerprint per device, not a change to AD-28 |
 | Refusing when two in-room voices are both close is the right call | It never fired on 37 real probes, so the trade-off is untested in practice | PRD §13 Q20 — count how often it fires before changing it |
-| Under 10 s to derive a fingerprint from a 25 s sample | Stated as a target in PRD §11 and never run | One enrolment, timed. **This blocks a real fix** — see below |
+| ~~Under 10 s to derive a fingerprint from a 25 s sample~~ | **Measured.** 0.30 s for an 8.4-second recording in a fresh process; the 25-second figure is a short extrapolation from that and the 34-minute run | Nothing further; see the measurement table below |
 | The multi-voice refusal thresholds (1 voice, ≥85% dominant share, ≥8 s speech) | Chosen from the cost asymmetry, not from measurement | Enrol with a colleague talking, and see whether `voicesFound` reports 2 |
 
-### Not verified at all
+### Measured after the meeting finished
 
-Three, and they are in the code review with instructions for closing each:
+The machine went idle, so the embedder ran against real audio for the first time
+(`MINUTES_ML_TESTS=1 swift test --filter VoiceEmbedderIntegrationTests`):
 
-1. **`VoiceEnrolment.run()` has never executed.** Needs a microphone and a voice.
-   The part that matters is that **AD-32's deletion of the sample audio is a
-   `defer` no test has run.** After the first enrolment, check that no
-   `minutes-enrol-*` directory remains under `$TMPDIR`.
-2. **`SpeakerKitVoiceEmbedder.embed()` has never executed.** Needs the pyannote
-   models loaded, which would have contended for memory against a live meeting.
-3. **No meeting has been processed with a fingerprint present.** The pure parts are
-   tested exhaustively; the wiring is a handful of lines.
+| Measurement | Figure |
+| --- | --- |
+| Embed a 2032-second mic stream (34 min, 5 in-room voices) | usable 256-dim fingerprint, 1858 s of speech found |
+| `voicesFound` vs the Diarizer's own count for that room | **5 vs 5 — exact agreement** |
+| Embed an 8.4-second recording, fresh process | **0.30 s** |
+| Embed the 2032-second stream, models warm | 8.5 s |
+| Dominant-speaker pick where the loudest voice holds 38% of the speech | one cluster, deterministically |
+| embed → enrol → identify → relaunch | distance 0, producer intact after reopen |
+
+The `voicesFound` agreement is the one that mattered: FR-62's multi-voice refusal
+is what stops a fingerprint of two people being stored for months, and it rests
+entirely on that count being right.
+
+### Still not verified — both need a human voice
+
+1. **`VoiceEnrolment.run()` has never executed.** The recording path — mic start,
+   countdown, metering, stop, and the `defer` that deletes the sample. The part
+   that matters is that **AD-32's deletion of the sample audio is a `defer` no test
+   has run.** One `ls "$TMPDIR" | grep minutes-enrol` after the first enrolment
+   settles it.
+2. **No meeting has been processed with a fingerprint present.** The pure parts are
+   tested exhaustively and the embedder is now proven; what is left is the wiring,
+   a handful of lines. Enrol, then record a short meeting with a second voice in
+   the room: the detail pane should say "recognised from your recorded voice" and
+   the note's frontmatter should carry `you_identified_by: enrolled_voice`.
+
+The *quality* half of §13 Q18 also stays open: whether a deliberate 25-second
+sample's centroid lands as close to the same person's meeting centroids as two
+meeting centroids land to each other. Only a real enrolment followed by a real
+meeting answers it.
 
 ## What was built
 
@@ -135,9 +159,11 @@ New, from this increment:
 - **Lowering the threshold to 0.35 makes existing remembered voices slightly
   harder to match.** Intended, recorded in the PRD, and mentioned in no UI. A user
   whose colleague stops being recognised has no way to connect it to this change.
-- **`VoiceEnrolment` has no escape from `.analysing`.** If embedding hangs, the
-  card is stuck until the app is quit. The fix is a timeout and the timeout needs a
-  measured duration — see the assumptions table. Deliberately not guessed.
+- ~~**`VoiceEnrolment` has no escape from `.analysing`.**~~ **Fixed.** The
+  measurement made a timeout groundable and, in doing so, showed it was the wrong
+  fix: any value long enough not to misfire while queued behind a transcription is
+  far too long to help someone staring at a stuck card. `cancel()` now works during
+  analysis instead, and the card says why the wait can be long.
 
 ## State of the working tree
 

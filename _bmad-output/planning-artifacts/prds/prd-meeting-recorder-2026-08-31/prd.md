@@ -1068,7 +1068,15 @@ Nothing consumed the extra resolution. Both transcription engines and the Diariz
 
 The budget is stated as a target so that a future format change has something to violate rather than a silence to slip through.
 
-**Voice enrolment, added in increment 4.** Two figures, both stated as targets because neither has been measured: deriving a fingerprint from a 25-second sample should complete in under 10 seconds on the target machine, and comparing an Enrolled Voice against the in-room voices of a Meeting is a handful of 256-element dot products and must be free at any Meeting length. The second is arithmetic and safe to assert; the first depends on the Diarizer's model load and is the one to measure. Storage is negligible and worth stating only so it is not wondered about: one fingerprint is 256 single-precision floats — about 1 KB as JSON, and it replaces no audio because the audio is deleted.
+**Voice enrolment, added in increment 4, and now measured.** The target was "under 10 seconds to derive a fingerprint from a 25-second sample", stated as a target because nothing had been run. It has now been run against real audio on this machine:
+
+| Measurement | Figure |
+| --- | --- |
+| Embedding an 8.4-second recording, fresh process | **0.30 s** |
+| Embedding a 2032-second recording, models warm | **8.5 s** |
+| Voices reported for a mic stream the Diarizer had found 5 voices in | **5** — exact agreement |
+
+So a 25-second enrolment sample costs well under a second, and the 10-second target is met with two orders of magnitude to spare. *(The 25-second figure itself is a short linear extrapolation from the two measurements above, not a reading — no 25-second sample exists yet.)* Comparing an Enrolled Voice against a Meeting's in-room voices remains a handful of 256-element dot products and is free at any Meeting length; that one is arithmetic and never needed measuring. Storage is negligible and worth stating only so it is not wondered about: one fingerprint is 256 single-precision floats — about 1 KB as JSON, and it replaces no audio because the audio is deleted.
 
 ## 12. Platform, Permissions and Signing
 
@@ -1108,7 +1116,7 @@ Raised by increment 3:
 
 Raised by increment 4:
 
-18. **Does a fingerprint from a deliberate 20–30 second sample behave like one derived from a whole Meeting?** Every figure in the calibration comes from Meeting-derived centroids. An enrolment sample is shorter but cleaner — one speaker, no crosstalk, a known device — which should help, and the two shortest samples in the data (11 words and 1 word) were visibly unreliable, which is why 20–30 seconds and not 5. Unmeasured until a sample exists. Informs FR-62's duration and FR-65's threshold.
+18. **Does a fingerprint from a deliberate 20–30 second sample behave like one derived from a whole Meeting?** Every figure in the calibration comes from Meeting-derived centroids. An enrolment sample is shorter but cleaner — one speaker, no crosstalk, a known device — which should help, and the two shortest samples in the data (11 words and 1 word) were visibly unreliable, which is why 20–30 seconds and not 5. **Half of this is now answered.** The *cost* is measured (§11: 0.30 s for an 8.4-second recording in a fresh process), and the embedder's voice count agrees exactly with the Diarizer's on a five-voice room, which is what FR-62's multi-voice refusal depends on. The *quality* half — whether a 25-second sample's centroid lands as close to the same person's Meeting centroids as two Meeting centroids land to each other — still needs one real enrolment followed by one real meeting. Informs FR-62's duration and FR-65's threshold.
 19. **Does an Enrolled Voice recorded on one input device match a Meeting recorded on another?** The calibration's four Meetings all used the same device. AirPods and the built-in microphone colour a voice differently, and the spike already found the app had been recording through AirPods without recording *that* it had. FR-63 may need the device recorded alongside the fingerprint, or a second sample per device. Informs FR-62.
 20. **How often does the ambiguity rule fire in practice, and is refusing the right call when it does?** FR-63 claims nothing when two in-room voices are both close to the Enrolled Voice. The measurement says that should be rare (in-room voices sat ≥ 0.596 apart), but a Diarization split of the user's own voice would produce exactly that shape, and then the honest refusal costs the user the feature. Worth counting before changing.
 21. **Does §9.1's "the audio is destroyed" survive the implementation of re-recording?** Re-recording replaces a fingerprint, and the obvious lazy implementation keeps the previous sample around "just in case". It must not. This is a code-review item as much as an open question, and it is listed because the failure would be invisible.

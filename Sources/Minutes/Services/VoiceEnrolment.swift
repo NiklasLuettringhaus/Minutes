@@ -81,6 +81,11 @@ final class VoiceEnrolment: ObservableObject {
         switch phase { case .idle, .done, .failed: return false; default: return true }
     }
 
+    /// True once the user has asked to stop and the embedder has not yet returned.
+    /// The card uses it to say so rather than showing a Cancel button that has
+    /// already been pressed.
+    var isCancelling: Bool { cancelled && inFlight }
+
     private init() {}
 
     /// Reads the store. Cheap, and called on pane appearance for the same reason
@@ -170,6 +175,15 @@ final class VoiceEnrolment: ObservableObject {
         phase = .analysing
         do {
             let r = try await embedder.embed(url: url)
+            // Cancellable here too, not only during the countdown.
+            //
+            // Embedding runs on the ML serial executor (AD-14), so a user who
+            // records their voice while a two-hour meeting is transcribing waits
+            // behind it — legitimately, and for as long as it takes. A timeout was
+            // the obvious fix and is the wrong one: any value long enough not to
+            // misfire on that queue is too long to help someone staring at a stuck
+            // card. Letting them back out needs no number and cannot misfire.
+            if cancelled { phase = .idle; return }
 
             // Policy lives here, not in the embedder. The port reports what was
             // in the recording; this decides whether that is usable.
@@ -192,13 +206,18 @@ final class VoiceEnrolment: ObservableObject {
                                  voicesFound: r.voicesFound,
                                  recordedAt: Date()))
         } catch let e as MinutesError {
+            if cancelled { phase = .idle; return }
             phase = .failed(e.localizedDescription, recovery: e.recoverySuggestion)
         } catch {
+            if cancelled { phase = .idle; return }
             phase = .failed(error.localizedDescription, recovery: nil)
         }
     }
 
-    /// Stops a running recording and stores nothing.
+    /// Stops the run and stores nothing — during the countdown, and during
+    /// analysis. In the second case the embedder cannot be interrupted mid-call, so
+    /// the work finishes and its result is discarded; nothing reaches the store and
+    /// the sample audio still goes in the `defer` (AD-32).
     func cancel() {
         guard isRunning else { return }
         cancelled = true

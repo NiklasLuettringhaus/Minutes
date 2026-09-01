@@ -2,8 +2,8 @@
 title: Code review — increment 4, voice enrolment
 date: 2026-09-01
 scope: commits a92e2bd..HEAD (Epic 10 · PRD FR-62…FR-65 · AD-11 amended, AD-28…AD-32)
-verdict: ship, with four defects found and fixed during the review and three gaps recorded as unverified
-tests: 129 passing via `swift test` (76 before this increment)
+verdict: shipped and installed; five defects found and fixed, one gap closed against real audio, two gaps still needing a human voice
+tests: 149 passing via `swift test` (76 before this increment), plus 4 ML integration tests behind `MINUTES_ML_TESTS=1`
 ---
 
 # Code review: voice enrolment
@@ -18,22 +18,25 @@ real and is not being glossed. It is the single largest limitation of this
 review, and the mitigation was to lean on mechanical checks the author cannot
 talk past — reintroducing each fixed defect and watching the suite go red.
 
-Two environment constraints shaped what could be checked:
+Two environment constraints shaped the first pass, and one has since lifted:
 
-- **A recording was in progress throughout.** A meeting (`20260901-130459-13ap`)
-  started at 13:04 and its `mic.wav` was still growing at the end of the review.
-  So the app was **built and signed but not installed** — `Scripts/build-app.sh`
-  quits the running app before installing, which would have destroyed a live
-  recording. No test opened an audio device.
-- **The live app is running the previous binary.** Nothing in this increment has
-  executed against real microphone input.
+- **A recording was in progress throughout the review.** A meeting
+  (`20260901-130459-13ap`) started at 13:04 and was still growing when this was
+  written, so the app was built and signed but **not** installed —
+  `Scripts/build-app.sh` quits the running app before installing, which would have
+  destroyed a live recording. No test opened an audio device.
+- **That meeting then finished.** Its pipeline drained on its own (`stage: written`,
+  559 utterances, note on disk), the build was installed to
+  `/Applications/Minutes.app`, and one of the three verification gaps was closed
+  against real audio. This document was updated rather than superseded; each
+  section below says whether it predates that or followed it.
 
 ## Verdict
 
-Ship. Four defects were found and fixed in the course of the review, one of them
-user-visible and introduced by this increment. Three verification gaps remain and
-are recorded rather than closed, because closing them needs a human voice and an
-idle machine.
+Shipped and installed. Five defects found and fixed, one of them user-visible and
+introduced by this increment. One verification gap closed once the machine went
+idle; **two remain, and both need a human voice** — no enrolment sample has been
+recorded, so the recording path and the sample-quality question are still open.
 
 ## Defects found and fixed
 
@@ -105,30 +108,30 @@ update it deliberately.
 
 ## Edge-case trace: paths reachable from the diff and not guarded
 
-### Reported, not fixed
+### Reported, then fixed once the measurement arrived
 
-**`VoiceEnrolment` has no escape from `.analysing`.** `cancel()` only takes effect
-during the countdown. If `embed()` hangs — a CoreML model load that never returns
-— the card sits in `.analysing` forever, `inFlight` stays `true`, and the button
-cannot be pressed again. The only recovery is quitting the app.
+**`VoiceEnrolment` had no escape from `.analysing`**, and **nothing bounded how
+long the ML serial executor could make enrolment wait.** Two findings, one root
+cause: embedding runs on the same serial executor as transcription (AD-14/AD-26),
+which is correct — it is what stops two models being resident at once — so a user
+who records their voice while a two-hour meeting is transcribing sits in
+`.analysing` until that finishes. `cancel()` only worked during the countdown, so
+the card was stuck and the only recovery was quitting the app.
 
-Not fixed, deliberately, and the reasoning is worth stating rather than filing:
-the honest fix is a timeout, and **no measurement exists for what a reasonable
-timeout would be.** PRD §11 records "under 10 seconds to derive a fingerprint
-from a 25-second sample" as a *target, not a measurement*, and §13 Q18 owns it.
-Picking 30 seconds now would be exactly the kind of unmeasured constant this
-increment spent its first story removing. It needs one real enrolment run to
-measure, and then a timeout at a defensible multiple. Until then the failure mode
-is a stuck card, which is visible and recoverable, rather than a wrong name,
-which is neither.
+The review initially declined to fix this, because the obvious fix is a timeout
+and no measurement existed for what a reasonable one would be. **The measurement
+then arrived** — 0.30 s for an 8.4-second recording in a fresh process, see the
+closed gap below — which made a timeout groundable and, in doing so, made it
+clearly the *wrong* fix. Any value long enough not to misfire while queued behind
+a transcription is far too long to help someone staring at a stuck card. Those two
+requirements do not fit in one number.
 
-**Nothing bounds how long the ML serial executor makes enrolment wait.** Embedding
-runs on the same executor as transcription (AD-14/AD-26), which is correct — it is
-what stops two models being resident at once — but a user who records their voice
-while a two-hour meeting is transcribing will sit in `.analysing` until that
-finishes, with no indication why. Same root cause as above and same reason for
-holding: the honest fix is copy that names the queue, and the copy should say a
-duration, and the duration is unmeasured.
+Fixed without a number instead: `cancel()` now works during analysis too. The
+embedder cannot be interrupted mid-call, so the work finishes and its result is
+discarded — nothing reaches the store, and the sample audio still goes in the
+`defer` (AD-32). The card gains a Cancel button and says why the wait may be long:
+*"If Minutes is transcribing a meeting, this waits until that finishes — only one
+model runs at a time."* A way out needs no measurement and cannot misfire.
 
 **`SpeakerKitVoiceEmbedder` assumes 16 kHz when reporting a too-short sample.**
 `voiceSampleTooShort(seconds: Double(samples.count) / 16_000)` hard-codes the
@@ -164,7 +167,8 @@ consequence: the number appears only in a failure the user is about to retry.
 
 ## Verification gaps
 
-Three, all real, none closable in this session. Recorded rather than hidden.
+Three were recorded. **One is now closed** — see below; the other two still need a
+human voice. Recorded rather than hidden.
 
 ### `VoiceEnrolment.run()` has never executed
 
@@ -183,23 +187,33 @@ implementation is a `defer` that no test has executed.
 `minutes-enrol-*` directory remains under `$TMPDIR`. One command, one minute,
 needs an idle machine.
 
-### `SpeakerKitVoiceEmbedder.embed()` has never executed
+### ~~`SpeakerKitVoiceEmbedder.embed()` has never executed~~ — **CLOSED 2026-09-01**
 
-The adapter is untested. It needs the pyannote models loaded, and loading them
-during a live meeting's transcription would contend for memory on a 24 GB machine
-against a recording in progress — so it was deliberately not attempted.
+Closed as soon as the machine went idle, exactly as this section proposed:
+`VoiceEmbedderIntegrationTests` points `embed()` at the real `mic.wav` files. It
+is guarded by `MINUTES_ML_TESTS=1` so the default suite stays in the tens of
+milliseconds, and by the presence of real Meetings, and it copies nothing into the
+repository.
 
-What is verified instead, and it is more than nothing: the *same models'* output
-is what wrote the `centroids.json` files that `EnrolmentCalibrationTests` reads,
-and those tests confirm on real data that in-room voices cluster tightly across
-recordings (14 cross-meeting matches, 0 ambiguous, 23 correct no-matches over 37
-probes). The embedding behaves as the feature needs. What is unproven is this
-particular wrapper around it — specifically the dominant-speaker selection and the
-`voicesFound` count that the multi-voice refusal depends on.
+Four tests, all passing, and the figures are the point:
 
-*How to close it:* point `embed()` at an existing meeting's `mic.wav` on an idle
-machine. A meeting with two known in-room voices should report `voicesFound == 2`,
-which is exactly the refusal path.
+| What was run | Result |
+| --- | --- |
+| Embed a 2032-second mic stream (34 minutes, 5 in-room voices) | usable 256-dim fingerprint, `speech=1858.1 s`, `dominantShare=0.38` |
+| `voicesFound` against the Diarizer's own ground truth for that room | **5 reported, 5 recorded — exact agreement** |
+| Embed an 8.4-second recording in a fresh process | **0.30 s**; `7.0 s` of speech found, 1 voice |
+| Whether the enrolment policy would refuse the 5-voice sample | yes, on both the voice count and the dominant share |
+| Whether the enrolment policy would refuse the 8.4-second one | yes, on speech found (7.0 s < 8.0 s minimum) |
+| embed → enrol → identify → relaunch, on a real fingerprint | resolves at distance 0, producer intact after reopen |
+
+The `voicesFound` agreement is the one that mattered. FR-62's multi-voice refusal
+is the guard that stops a fingerprint of two people being stored for months, and
+it rests entirely on that count being right. It is now measured against the
+Diarizer's own answer on the hardest real case available — a five-person room.
+
+The dominant-speaker selection is also confirmed working rather than assumed: on
+a room where the loudest voice holds only 38% of the speech, it still picked one
+cluster deterministically instead of failing or returning the first.
 
 ### The full pipeline path has never run with a fingerprint present
 
@@ -255,4 +269,6 @@ note's frontmatter carries `you_identified_by: enrolled_voice`.
 | `VoiceEnrolment.inFlight` | defect fix |
 | `local` excluded from the FR-25 naming loop | defect fix |
 | `--doctor` prints sample depth, not colleagues' names | privacy tightening |
-| 10 new tests (129 total, from 119 mid-review and 76 before the increment) | coverage |
+| `cancel()` works during `.analysing`; the card explains the queue | defect fix — after the measurement made a timeout indefensible |
+| `VoiceEmbedderIntegrationTests` — 4 tests against real audio, behind `MINUTES_ML_TESTS=1` | closed a verification gap |
+| 30 new tests (149 total plus 4 ML integration tests, from 76 before the increment) | coverage |

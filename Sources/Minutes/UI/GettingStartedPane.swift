@@ -414,8 +414,25 @@ struct GettingStartedPane: View {
                         .help("Stops the recording. Nothing is stored.")
 
                 case .analysing:
-                    StateBanner(kind: .transcribing, text: "Working out your voice fingerprint on this Mac…")
+                    StateBanner(kind: .transcribing,
+                                text: enrolment.isCancelling
+                                    ? "Stopping. Nothing will be stored."
+                                    : "Working out your voice fingerprint on this Mac…")
                     micMeter.padding(.top, Tok.s4)
+                    if !enrolment.isCancelling {
+                        // Analysis queues behind transcription (one model at a time),
+                        // so this can wait minutes through no fault of its own. A way
+                        // out matters more than a progress guess we cannot make.
+                        VStack(alignment: .leading, spacing: Tok.s3) {
+                            Text("If Minutes is transcribing a meeting, this waits until that finishes — only one model runs at a time.")
+                                .font(.caption2).foregroundStyle(Tok.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Button("Cancel") { enrolment.cancel() }
+                                .buttonStyle(.bordered)
+                                .help("Stops without storing anything.")
+                        }
+                        .padding(.top, Tok.s4)
+                    }
 
                 case .done(let r):
                     // Facts, not a verdict. No score, no "good sample!".
