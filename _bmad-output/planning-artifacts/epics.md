@@ -133,7 +133,7 @@ Every FR is covered by exactly one story — verified programmatically, see the 
 
 ### NonFunctional Requirements
 
-**NFR-1 — On-device only**: All inference — transcription, Diarization, Metadata — executes locally. No audio, Transcript, or Metadata is transmitted anywhere, ever. Model downloads are the sole permitted network activity, are user-initiated, and target only the model repositories.
+**NFR-1 — On-device by default; egress only by explicit, per-use consent**: All inference — transcription, Diarization, Metadata — executes locally unless the user has deliberately configured a Remote Summarisation Backend and consented for that Meeting. **Amended by PRD increment 3 and corrected here in increment 4**, where this entry still carried the retired absolute ("No audio, Transcript, or Metadata is transmitted anywhere, ever") three increments after the PRD replaced it. Three parts survive as invariants: audio never leaves the device; Speaker Profiles — including the Enrolled Voice (FR-64) — never leave the device; and nothing leaves without the user having both configured it and consented to it. Model downloads and, when configured, Remote Summarisation requests are the only permitted network activity, and both are user-initiated.
 
 **NFR-2 — Apple Silicon, macOS 15+**: Targets Apple Silicon; deployment target no lower than macOS 14.4 for audio-capture permission reasons, and 15.0+ preferred. Intel is unsupported.
 
