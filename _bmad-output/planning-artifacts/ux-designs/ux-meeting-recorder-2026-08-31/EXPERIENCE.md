@@ -99,6 +99,7 @@ Plain, specific, and never cheerful. The user is a professional using a utility;
 - **Never claim certainty the system cannot provide.** System-audio capture state is *inferred*, so the copy says so: "Last recording captured system audio" — not "Permission granted" (PRD FR-42).
 - **Absence is stated, not padded.** A meeting with no decisions omits the section. The UI never writes "No decisions found!" in a card.
 - **Numbers over adjectives.** "About 6 minutes for a 30-minute meeting on this Mac" beats "Fast".
+- **Never state the same fact twice on one pane.** If a card has already said that Apple Intelligence is off, the control below it says what *your choice* means now — "your choice cannot be honoured right now, so keyphrase extraction runs instead" — not the same state again in different words. Two statements of one fact on one pane invite the reader to hunt for the difference. *Added increment 4, from the Summaries pane, where the two sat forty lines apart.*
 - **Say what is stored, in the place it is stored.** Voice enrolment is the most sensitive thing the product keeps, so the copy names it without either softening it or dramatising it: "Minutes keeps a fingerprint of your voice on this Mac. The recording itself is deleted." Not "we take your privacy seriously", and not a warning triangle either — it is a thing the user chose, described accurately (PRD §9.1).
 
 **Terminology is fixed by the PRD Glossary and used verbatim in the UI.** The user sees *Meeting*, *Transcript*, *Speaker*, *Note*, *Notes Folder*, *Transcription Model*. The UI never says "recording" for a Meeting or "session" to the user — *Session* is an internal term and must not leak into copy.
@@ -221,11 +222,20 @@ grouped transcript is a value computed when the Meeting changes, not work done
 while someone types. Stated as a behavioural requirement because the defect was
 invisible in every small test meeting and only appeared on a real one.
 
+**A row's prose gets its own line.** Any row that carries both controls and a
+sentence puts the sentence beneath the controls. A single row cannot hold four
+controls and two sentences at a detail column's width — it will not truncate, it
+will collapse every child to its minimum and hyphenate words down the middle. This
+is the same rule as the two above and the same reason: it was learned from the
+built app rather than from the spine.
+
 
 - Reverse-chronological rows: title, date, duration `{typography.metric}`, and `{components.speaker-chip}`s.
 - A row carries its own state: transcribing (with progress), failed (with `Retry`), or complete.
+- **A selected row owns the colour of everything inside it.** The system fills it with the user's accent, so every element that paints its own colour — chips, the recording and transcribing tints, secondary labels — surrenders that colour and takes the selection's foreground instead. State stays legible through the glyph beside it, and place through the chip's glyph. *Added increment 4:* all three were painting themselves unreadable on a selected row, and the chips were only the most visible of them.
 - Detail is a read pane: metadata, then summary/decisions/actions if present, then the Transcript.
 - Transcript rendering groups consecutive Utterances from one Speaker under a single label rather than repeating it per line (PRD FR-33).
+- **A speaker row is two lines, not one:** the chip, `Rename`, `Exclude` and the line count across the top, and one line of provenance underneath — what the app's claim about this voice rests on, and what it was heard through. *Written down in increment 4 after the one-line version broke:* it had grown to eight children including two unconstrained sentences, and SwiftUI took the width back out of all of them, rendering one character per line. The rule that prevents a recurrence is the same one `{components.voice-row}` and `{components.checklist-row}` already state — controls on a line, prose on its own line beneath — and it now covers every row in the product rather than two of three.
 - Speaker rename is inline on the chip in the detail header — click the chip, type, commit. It is not buried in a sheet or a settings pane, because PRD FR-24 is a frequent action.
 - Rename commits on Return or focus loss; Escape cancels. It rewrites the Note in place and, if the label was a Remote Speaker, updates the Speaker Profile (PRD FR-25).
 - Row actions: `Reveal in Finder`, `Open in Editor`, `Retry` (failed only), `Delete…`.

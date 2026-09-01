@@ -51,9 +51,17 @@ enum Tok {
 
 // MARK: - Card
 
-/// Tonal separation only: no shadow, no border. A stroke on top of a tonal step
-/// reads heavier than macOS does, and a drop shadow on a settings card is the
-/// most reliable tell of a non-native Mac app.
+/// Tonal separation, with a hairline where the tonal step is not enough on its own.
+///
+/// The original rule was tonal-only: no shadow, no border, because a stroke on top
+/// of a tonal step reads heavier than macOS does. That reasoning holds *while the
+/// step is perceptible*, and in the detail column it is not —
+/// `controlBackgroundColor` against `windowBackgroundColor` produced no visible
+/// edge at all, so a pane of three cards read as one undifferentiated column of
+/// prose. A don't-rule whose premise is false is not a rule.
+///
+/// So: the tonal step stays and gains a hairline, which is what macOS itself does
+/// in list and form contexts. Still no shadow — that one's premise never failed.
 struct Card<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
@@ -61,11 +69,22 @@ struct Card<Content: View>: View {
             .padding(Tok.cardPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Tok.surfaceCard, in: RoundedRectangle(cornerRadius: Tok.rLg))
+            .overlay(
+                RoundedRectangle(cornerRadius: Tok.rLg)
+                    .strokeBorder(Tok.separator, lineWidth: 1)
+            )
     }
 }
 
 /// Headings sit **outside** the card, which is what makes a pane scannable by
-/// heading alone.
+/// heading alone — and flush with the pane margin, which is what stops a pane
+/// having four left edges.
+///
+/// This carried `.padding(.horizontal, 2)`, so a heading sat 2pt right of the pane
+/// title above it and 14pt left of the card content below it. Two pixels is too
+/// small to read as hierarchy and too large to read as alignment, so it read as a
+/// mistake. There are now exactly two edges on a pane: the margin, for titles and
+/// headings; and the card padding, for card content.
 struct SectionHeading: View {
     let text: String
     var trailing: AnyView? = nil
@@ -75,7 +94,6 @@ struct SectionHeading: View {
             Spacer()
             if let trailing { trailing }
         }
-        .padding(.horizontal, 2)
         .padding(.bottom, Tok.s3)
     }
 }
@@ -274,6 +292,16 @@ struct SpeakerChip: View {
     /// text VoiceOver reads and the tooltip a reader gets. Colour and shape carry
     /// place; they were never going to carry this.
     var basis: Meeting.Basis? = nil
+    /// True when the chip sits inside a row the system has filled with its
+    /// selection colour.
+    ///
+    /// Two rules collide here and the spine now says which wins. The place tint is
+    /// load-bearing — it encodes the product's structural claim about where a voice
+    /// was — and a selection fill owns the foreground of everything inside it.
+    /// Selection wins, because an amber chip on a blue row conveys nothing at all:
+    /// that was the shipped defect. Place survives the loss of colour through the
+    /// glyph, and inference through the `~` prefix, so nothing is actually given up.
+    var inSelectedRow: Bool = false
 
     /// Convenience for call sites that only know local-or-not.
     init(name: String, isLocal: Bool, isInferred: Bool = false) {
@@ -282,15 +310,17 @@ struct SpeakerChip: View {
         self.isInferred = isInferred
     }
     init(name: String, place: SpeakerLabelID.Place, isInferred: Bool = false,
-         basis: Meeting.Basis? = nil) {
+         basis: Meeting.Basis? = nil, inSelectedRow: Bool = false) {
         self.name = name; self.place = place; self.isInferred = isInferred
-        self.basis = basis
+        self.basis = basis; self.inSelectedRow = inSelectedRow
     }
 
     var body: some View {
         HStack(spacing: 4) {
-            if place == .room {
-                Image(systemName: "person.2.fill").font(.system(size: 8))
+            // Place is carried by the glyph as well as the tint, which is what lets
+            // the tint be surrendered to a selection fill without losing the claim.
+            if let glyph = placeGlyph {
+                Image(systemName: glyph).font(.system(size: 8))
             }
             Text(isInferred ? "~\(name)" : name)
         }
@@ -307,6 +337,8 @@ struct SpeakerChip: View {
     }
 
     private var tint: Color {
+        // Inside a selection fill the chip borrows the selection's own foreground.
+        if inSelectedRow { return Color(nsColor: .alternateSelectedControlTextColor) }
         switch place {
         case .you:    return Tok.brand
         case .room:   return Tok.amberInk
@@ -314,12 +346,27 @@ struct SpeakerChip: View {
         }
     }
     private var background: Color {
+        // A translucent white scrim rather than a tint: it reads as "chip" against
+        // any selection colour the user's accent produces, and it cannot clash with
+        // one the way a fixed hue can.
+        if inSelectedRow { return Color(nsColor: .alternateSelectedControlTextColor).opacity(0.22) }
         switch place {
         case .you:    return Tok.brand.opacity(0.15)
         case .room:   return Tok.transcribing.opacity(0.16)
         case .remote: return Tok.separator.opacity(0.5)
         }
     }
+    /// Only the room glyph shows at rest — the tint already distinguishes the other
+    /// two, and three glyphs in an unselected list would be noise. In a selected row
+    /// the tint is gone, so all three appear and place stays readable.
+    private var placeGlyph: String? {
+        switch place {
+        case .room:   return "person.2.fill"
+        case .you:    return inSelectedRow ? "person.fill" : nil
+        case .remote: return inSelectedRow ? "antenna.radiowaves.left.and.right" : nil
+        }
+    }
+
     private var helpText: String {
         if isInferred { return "Recognised from a previous meeting — check it is right." }
         switch place {

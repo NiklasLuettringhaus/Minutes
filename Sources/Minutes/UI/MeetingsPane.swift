@@ -163,49 +163,76 @@ struct MeetingsPane: View {
         .background(.bar)
     }
 
+    /// Secondary text inside a row, which is the selection's own secondary colour
+    /// when the row is filled and `{colors.text-secondary}` otherwise.
+    private func secondary(_ isSelected: Bool) -> Color {
+        isSelected ? Color(nsColor: .alternateSelectedControlTextColor).opacity(0.75)
+                   : Tok.textSecondary
+    }
+
+    /// A state tint — recording red, transcribing amber — inside a row that may be
+    /// filled. On a filled row the tint is surrendered: the glyph beside it already
+    /// carries the state, and a warm tint on the user's accent is unreadable at any
+    /// contrast. This is DESIGN.md's rule that colour is never the only signal,
+    /// arriving where it was needed rather than where it was written.
+    private func stateTint(_ tint: Color, _ isSelected: Bool) -> Color {
+        isSelected ? Color(nsColor: .alternateSelectedControlTextColor) : tint
+    }
+
     private func row(_ m: Meeting) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        // The system fills a selected row with the user's accent and owns the
+        // foreground of everything inside it. Anything in here that paints its own
+        // colour has to know that, or it paints itself invisible — which is exactly
+        // what the speaker chips were doing.
+        let isSelected = selected.contains(m.id)
+        return VStack(alignment: .leading, spacing: 3) {
             Text(m.metadata?.title ?? "Untitled meeting")
                 .font(.body).lineLimit(1)
             HStack(spacing: Tok.s3) {
                 Text(dateLabel(m)).font(.caption).monospacedDigit()
-                    .foregroundStyle(Tok.textSecondary)
+                    .foregroundStyle(secondary(isSelected))
                 Text(Fmt.duration(m.duration)).font(.caption).monospacedDigit()
-                    .foregroundStyle(Tok.textSecondary)
+                    .foregroundStyle(secondary(isSelected))
             }
-            // A row carries its own state (FR-36).
+            // A row carries its own state (FR-36). Every branch below paints its own
+            // colour, so every branch has to yield it to a selection fill — the
+            // chips were the visible half of a problem all of these shared.
             if m.hasFailed {
                 HStack(spacing: 4) {
                     Image(systemName: "exclamationmark.triangle.fill").font(.caption2)
                     Text("Failed").font(.caption2)
-                }.foregroundStyle(Tok.recording)
+                }.foregroundStyle(stateTint(Tok.recording, isSelected))
             } else if app.inFlight.contains(m.id) {
                 // A spinner now means work is genuinely running, not merely that
                 // the record stopped short of `written`.
                 HStack(spacing: 4) {
                     ProgressView().controlSize(.small).scaleEffect(0.6)
-                    Text(m.stage.displayName).font(.caption2).foregroundStyle(Tok.transcribing)
+                    Text(m.stage.displayName).font(.caption2)
+                        .foregroundStyle(stateTint(Tok.transcribing, isSelected))
                 }
             } else if !m.isComplete {
                 HStack(spacing: 4) {
                     Image(systemName: "pause.circle").font(.caption2)
                     Text("Interrupted").font(.caption2)
-                }.foregroundStyle(Tok.textSecondary)
+                }.foregroundStyle(secondary(isSelected))
             } else if app.missingNotes.contains(m.id) {
                 // FR-53: complete in the record is not complete on disk.
                 HStack(spacing: 4) {
                     Image(systemName: "doc.badge.ellipsis").font(.caption2)
                     Text("Note missing").font(.caption2)
-                }.foregroundStyle(Tok.recording)
+                }.foregroundStyle(stateTint(Tok.recording, isSelected))
             } else {
                 HStack(spacing: Tok.s2) {
                     ForEach(m.speakers.prefix(4), id: \.raw) { s in
                         SpeakerChip(name: m.displayName(for: s), place: s.place,
-                                    isInferred: m.isInferred(s))
+                                    isInferred: m.isInferred(s),
+                                    inSelectedRow: isSelected)
                     }
                     if m.speakers.count > 4 {
                         Text("+\(m.speakers.count - 4)").font(.caption2)
-                            .foregroundStyle(Tok.textSecondary)
+                            .foregroundStyle(isSelected
+                                             ? Color(nsColor: .alternateSelectedControlTextColor)
+                                             : Tok.textSecondary)
                     }
                 }
             }
@@ -309,16 +336,22 @@ struct MeetingDetail: View {
             } else {
                 Text(meeting.metadata?.title ?? "Untitled meeting")
                     .font(.largeTitle)
+                    .fixedSize(horizontal: false, vertical: true)
                     .onTapGesture(count: 2) {
                         draftTitle = meeting.metadata?.title ?? ""
                         editingTitle = true
                     }
                     .help("Double-click to rename")
             }
+            // `fixedSize` on each item, so a narrow detail column wraps the row
+            // rather than hyphenating "Tuesday 1 September" down the middle of a
+            // word — which is what it was doing.
             HStack(spacing: Tok.s4) {
                 Text(fullDate).font(.caption).foregroundStyle(Tok.textSecondary)
+                    .fixedSize()
                 Text(Fmt.duration(meeting.duration)).font(.caption).monospacedDigit()
                     .foregroundStyle(Tok.textSecondary)
+                    .fixedSize()
                 // FR-53: offering "Reveal note" for a file that is not there sends
                 // the user to an empty Finder window, so the two cases are split.
                 if noteIsMissing {
@@ -332,7 +365,9 @@ struct MeetingDetail: View {
                                                       inFileViewerRootedAtPath: folder.path)
                     }
                     .buttonStyle(.borderless).font(.caption)
+                    .fixedSize()
                 }
+                Spacer(minLength: 0)
             }
             if noteIsMissing {
                 StateBanner(kind: .degraded,
@@ -361,73 +396,102 @@ struct MeetingDetail: View {
 
     /// Inline rename on the chip — a frequent action, so it is not buried in a
     /// sheet (FR-24).
+    ///
+    /// **Two lines per speaker, not one.** The single-`HStack` version held up to
+    /// eight children including two unconstrained prose texts, so SwiftUI took the
+    /// width back out of every one of them and the pane rendered a character per
+    /// line. Increment 4 caused it: the basis note (FR-65) renders for nearly every
+    /// speaker, where the caption it sat beside had only ever appeared for an
+    /// inferred one. The shape here is the one `{components.voice-row}` already
+    /// declares — controls on top, one line of provenance underneath.
     private var speakerBlock: some View {
         VStack(alignment: .leading, spacing: 0) {
             SectionHeading(text: "Speakers")
             Card {
-                VStack(alignment: .leading, spacing: Tok.s3) {
+                VStack(alignment: .leading, spacing: Tok.s4) {
                     ForEach(meeting.speakers, id: \.raw) { s in
-                        HStack(spacing: Tok.s4) {
-                            if editingSpeaker == s {
-                                TextField("Name", text: $draftName)
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 180)
-                                    .onSubmit { commitSpeaker(s) }
-                                Button("Save") { commitSpeaker(s) }.controlSize(.small)
-                                Button("Cancel") { editingSpeaker = nil }.controlSize(.small)
-                            } else {
-                                SpeakerChip(name: meeting.displayName(for: s),
-                                            place: s.place,
-                                            isInferred: meeting.isInferred(s),
-                                            basis: meeting.basis(for: s))
-                                if true {
-                                    Button("Rename") {
-                                        draftName = meeting.displayName(for: s)
-                                        editingSpeaker = s
-                                    }
-                                    .buttonStyle(.borderless).font(.caption)
-                                }
-                                if meeting.isInferred(s) {
-                                    Text("recognised automatically — check it is right")
-                                        .font(.caption2).foregroundStyle(Tok.textSecondary)
-                                }
-                                // FR-65: a claim states its basis. The two ways a
-                                // voice becomes "you" render identically in the
-                                // transcript and must not render identically here —
-                                // one cannot be wrong, the other is a measurement.
-                                if let note = basisNote(for: s) {
-                                    Text(note)
-                                        .font(.caption2).foregroundStyle(Tok.textSecondary)
-                                }
-                                Spacer()
-                                // Per-speaker, per-meeting, and never automatic. A
-                                // room usually holds participants, so the app cannot
-                                // tell a colleague beside you from a stranger beside
-                                // you — but you can, instantly.
-                                Button(meeting.isExcluded(s) ? "Include" : "Exclude") {
-                                    Task {
-                                        await SessionCoordinator.shared
-                                            .setSpeakerExcluded(!meeting.isExcluded(s),
-                                                                speaker: s, meetingID: meeting.id)
-                                    }
-                                }
-                                .buttonStyle(.borderless).font(.caption)
-                                .help(meeting.isExcluded(s)
-                                      ? "Put this speaker back in the note"
-                                      : "Leave this speaker out of the note — the speech is kept here")
-                                Text("\(count(of: s)) lines").font(.caption).monospacedDigit()
-                                    .foregroundStyle(meeting.isExcluded(s) ? Tok.textSecondary.opacity(0.6)
-                                                                           : Tok.textSecondary)
-                                Text(meeting.heardThrough(s)).font(.caption2)
-                                    .foregroundStyle(Tok.textSecondary).lineLimit(1)
-                            }
-                        }
+                        speakerRow(s)
                     }
                     Text("Renaming two speakers to the same name merges them — the fix when one person was split in two.")
                         .font(.caption2).foregroundStyle(Tok.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func speakerRow(_ s: SpeakerLabelID) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if editingSpeaker == s {
+                HStack(spacing: Tok.s3) {
+                    TextField("Name", text: $draftName)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 180)
+                        .onSubmit { commitSpeaker(s) }
+                    Button("Save") { commitSpeaker(s) }.controlSize(.small)
+                    Button("Cancel") { editingSpeaker = nil }.controlSize(.small)
+                    Spacer(minLength: 0)
+                }
+            } else {
+                HStack(spacing: Tok.s4) {
+                    SpeakerChip(name: meeting.displayName(for: s),
+                                place: s.place,
+                                isInferred: meeting.isInferred(s),
+                                basis: meeting.basis(for: s))
+                        .layoutPriority(1)
+                    Button("Rename") {
+                        draftName = meeting.displayName(for: s)
+                        editingSpeaker = s
+                    }
+                    .buttonStyle(.borderless).font(.caption)
+                    .fixedSize()
+
+                    Spacer(minLength: Tok.s3)
+
+                    // Per-speaker, per-meeting, and never automatic. A room usually
+                    // holds participants, so the app cannot tell a colleague beside
+                    // you from a stranger beside you — but you can, instantly.
+                    Button(meeting.isExcluded(s) ? "Include" : "Exclude") {
+                        Task {
+                            await SessionCoordinator.shared
+                                .setSpeakerExcluded(!meeting.isExcluded(s),
+                                                    speaker: s, meetingID: meeting.id)
+                        }
+                    }
+                    .buttonStyle(.borderless).font(.caption)
+                    .fixedSize()
+                    .help(meeting.isExcluded(s)
+                          ? "Put this speaker back in the note"
+                          : "Leave this speaker out of the note — the speech is kept here")
+
+                    Text("\(count(of: s)) lines").font(.caption).monospacedDigit()
+                        .foregroundStyle(meeting.isExcluded(s) ? Tok.textSecondary.opacity(0.6)
+                                                               : Tok.textSecondary)
+                        .fixedSize()
+                }
+                // The provenance line: what this claim rests on, and what it was
+                // heard through. Prose belongs on its own line where it has the
+                // full card width, not competing with four controls for it.
+                Text(provenanceLine(for: s))
+                    .font(.caption2).foregroundStyle(Tok.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// One line: how the app knows who this is, and what it was heard through.
+    ///
+    /// FR-65 requires a claim state its basis, and the two ways a voice becomes
+    /// "you" render identically in the transcript — one cannot be wrong, the other
+    /// is a measurement. Joined into a single sentence rather than three views, so
+    /// the row cannot go back to fighting itself for width.
+    private func provenanceLine(for s: SpeakerLabelID) -> String {
+        var parts: [String] = []
+        if let note = basisNote(for: s) { parts.append(note) }
+        if meeting.isInferred(s) { parts.append("recognised automatically — check it is right") }
+        parts.append("heard through \(meeting.heardThrough(s))")
+        return parts.joined(separator: " · ")
     }
 
     private func metadataBlock(_ md: MeetingMetadata) -> some View {

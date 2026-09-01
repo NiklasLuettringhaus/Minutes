@@ -74,8 +74,9 @@ components:
     background: '{colors.surface-card}'
     radius: '{rounded.lg}'
     padding: '{spacing.card-padding}'
-    heading-placement: 'outside and above the card, never inside it'
-    border: 'none — separation comes from the tonal step, not a stroke'
+    heading-placement: 'outside and above the card, flush with the pane margin, never inside it'
+    border: '{colors.separator} hairline — added increment 4. The rule was "none, separation comes from the tonal step"; the tonal step turned out not to be perceptible in the detail column, and a pane of three cards read as one column of prose. The hairline is what macOS itself uses in list and form contexts.'
+    shadow: 'none — that rule stands, its premise never failed'
   checklist-row:
     min-height: '44px'
     padding: '{spacing.4} {spacing.card-padding}'
@@ -150,6 +151,7 @@ components:
     local:    { background: '{colors.brand-accent}', opacity: '0.15', foreground: '{colors.brand-accent}', glyph: 'none' }
     room:     { background: '{colors.state-transcribing}', opacity: '0.16', foreground: '{colors.ink-amber}', glyph: 'person.2.fill @ 8px' }
     remote:   { background: '{colors.separator}', opacity: '0.5', foreground: '{colors.text-secondary}', glyph: 'none' }
+    selected: { background: 'alternateSelectedControlTextColor @ 0.22', foreground: 'alternateSelectedControlTextColor', glyph: 'all three places show one — person.fill / person.2.fill / antenna.radiowaves.left.and.right', note: 'Added increment 4 after the defect: inside a selected row the chips kept their place tint and rendered amber-on-blue and teal-on-blue. A selection fill owns the foreground of everything inside it, so the tint is surrendered — and place survives without it because every place gains a glyph here. This is the general rule arriving at the one place it was missing: colour is never the only signal.' }
     inferred: { suffix: 'a small "~" prefix on the name', note: 'PRD FR-25 requires an auto-applied name be recognisable as inferred.' }
     note: 'Three places, three treatments — declared in full increment 4. The room variant has shipped since AD-11 was amended and was missing here, which left the spine describing a two-place world the product left behind. Place is the structural fact (PRD §3), so it is what the chip encodes; identity may be inferred on top of it.'
   level-meter:
@@ -230,6 +232,8 @@ Three rules that are ours rather than Apple's:
 
 A 4px-derived scale (`{spacing.2}` = 4px through `{spacing.8}` = 32px), with four named tokens for the layouts that repeat: `{spacing.pane-margin}` (20px) around pane content, `{spacing.card-padding}` (16px) inside a card, `{spacing.card-gap}` (16px) between stacked cards, `{spacing.row-gap}` (8px) between rows within a card.
 
+**A pane has exactly two left edges, and this is a hard rule.** The pane margin carries the pane title, its subtitle, and every section heading. The card padding carries all card content. Nothing else introduces a third. *Added increment 4, after the built app grew four:* the title sat at the margin, section headings 2px right of it, card text 16px right of that, and an icon-led card's text a further 32px right — so two cards on one pane started their text at different places and a heading sat two pixels off its own title. Two pixels is too small to read as hierarchy and too large to read as alignment, so it reads as a mistake. A glyph that introduces a gutter goes **on the title's line**, not in a column beside it.
+
 The window is a standard SwiftUI `NavigationSplitView`: a sidebar of grouped destinations and a detail pane. Sidebar width is the system default; it is not customised. Detail panes are a vertical stack of cards, each preceded by a heading that sits **outside** the card — the pattern in the reference, and it makes a pane scannable by heading alone.
 
 Panes must fit a 13-inch laptop display without scrolling in their default state (PRD §4.9 feature NFR). Where content can grow unbounded — the Meetings list, a transcript — the pane scrolls and the surrounding chrome does not.
@@ -240,7 +244,11 @@ The menu bar menu is a plain `NSMenu`. It has no custom layout, and it holds at 
 
 There are two depth levels and no shadows.
 
-Separation is **tonal**: `{colors.surface-card}` sits one step off `{colors.surface-window}`, which is how macOS itself groups content in System Settings. Cards have `{rounded.lg}` corners and **no border** — a stroke plus a tonal step is belt-and-braces and reads as heavier than macOS does.
+Separation is **tonal plus a hairline**. `{colors.surface-card}` sits one step off `{colors.surface-window}`, the way macOS groups content in System Settings, and cards carry a `{colors.separator}` hairline at `{rounded.lg}`.
+
+*Amended increment 4, and the amendment is worth reading as a lesson rather than a tweak.* This section used to say **no border**, on the grounds that a stroke plus a tonal step is belt-and-braces and reads heavier than macOS does. That is a good argument and it holds *while the tonal step is perceptible*. In the built app it was not: in the detail column `controlBackgroundColor` against `windowBackgroundColor` produced no visible edge, so the Summaries pane's three cards read as one undifferentiated column of prose and the pane lost its only grouping mechanism. A don't-rule whose premise has failed is not a rule — it is an assumption nobody checked. The hairline is what macOS itself uses wherever its own tonal steps are too subtle to carry a boundary.
+
+Shadows are still none. That rule's premise never failed: a drop shadow on a settings card remains the most reliable tell of a non-native Mac app.
 
 Shadows appear only where the system puts them: the window frame, menus, popovers. We add none. A drop shadow on a card inside a settings window is the single most reliable tell of a non-native Mac app.
 
@@ -264,7 +272,9 @@ The de-emphasis is the whole point: a user opening Setup should see what is left
 
 **`{components.state-banner}`** — how Recording, Transcribing and degraded capture are announced inside the window. Tinted background at 12% opacity with matching foreground. The degraded variant carries a warning glyph because PRD FR-7 forbids silent degradation.
 
-**`{components.speaker-chip}`** — three places, three treatments. The Local Speaker is brand-tinted; an in-room voice beside the user is amber with a two-person glyph; a Remote Speaker is neutral grey. The chip encodes **place**, which is the structural fact (PRD §3), and never identity, which may be inferred on top of it. An auto-applied name from a Speaker Profile is `~`-prefixed to mark it inferred (PRD FR-25).
+**`{components.speaker-chip}`** — three places, three treatments, and a fourth for when the row underneath is selected. The Local Speaker is brand-tinted; an in-room voice beside the user is amber with a two-person glyph; a Remote Speaker is neutral grey. The chip encodes **place**, which is the structural fact (PRD §3), and never identity, which may be inferred on top of it. An auto-applied name from a Speaker Profile is `~`-prefixed to mark it inferred (PRD FR-25).
+
+**Inside a selected row the chip surrenders its tint.** Two rules collide there and this is the one that wins: the place tint is load-bearing, and a selection fill owns the foreground of everything inside it. Selection wins, because a chip nobody can read conveys nothing at all — which is what shipped, amber-on-blue and teal-on-blue in the Meetings list. Nothing is actually lost: in the selected treatment all three places carry a glyph, so place reads without colour, and the `~` prefix still marks an inference. This is the product's own accessibility rule — colour is never the only signal — arriving at the one component that had quietly depended on colour alone.
 
 Increment 4 makes this component carry more weight than it did, because the whole point of voice enrolment is that a voice can now *move* from the amber treatment to the brand one — the same person, the same microphone, the same place, and the app has stopped guessing which of them is you. The chip is where a user sees that happen, so all three variants are now declared rather than two.
 
@@ -295,7 +305,9 @@ Increment 4 makes this component carry more weight than it did, because the whol
 - State a blocked capability's reason **and** its remedy, in the row itself. If the remedy is a command, show the command.
 - Reserve `{components.egress-marker}` for the two elements that involve transmission, and nothing else.
 - Mirror the Transcription model row's anatomy in the Summaries pane. A second visual language for the same job is a defect.
-- Put card headings outside the card.
+- Put card headings outside the card, flush with the pane margin.
+- Keep a pane to two left edges: the margin, and the card padding. A glyph goes on the title's line, never in a gutter that shifts the text column.
+- Let anything that paints its own colour ask whether it is inside a selection fill. A chip, a state tint, a secondary label — all three were painting themselves unreadable on a selected row.
 - Use monospaced digits for anything that ticks or counts.
 - Give every checklist and model row a one-line reason it exists.
 - Make download progress determinate.
@@ -307,7 +319,7 @@ Increment 4 makes this component carry more weight than it did, because the whol
 **Don't**
 
 - Don't hardcode a hex value for anything the system provides — this is the rule that keeps dark mode free.
-- Don't add shadows to cards, or borders on top of a tonal step.
+- Don't add shadows to cards. *(The companion rule — no borders on top of a tonal step — was withdrawn in increment 4 when the tonal step turned out to be invisible. See Elevation & Depth.)*
 - Don't use `{colors.state-recording}` for errors, destructive actions, or emphasis. It means one thing.
 - Don't repaint standard controls with `{colors.brand-accent}`.
 - Don't set transcript text in a monospaced font.

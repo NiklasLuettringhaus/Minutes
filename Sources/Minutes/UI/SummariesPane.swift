@@ -23,18 +23,22 @@ struct SummariesPane: View {
             VStack(alignment: .leading, spacing: 0) {
                 SectionHeading(text: "Running now")
                 Card {
-                    HStack(alignment: .top, spacing: Tok.s4) {
-                        Image(systemName: activeIsLLM ? "sparkles" : "function")
-                            .foregroundStyle(Tok.brand).frame(width: 20)
-                        VStack(alignment: .leading, spacing: 2) {
+                    // The glyph sits on the title's line rather than in a column of
+                    // its own. An icon gutter pushed this card's text 32pt right of
+                    // the radio buttons in the very next card, which is two cards on
+                    // one pane starting their text at different places.
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: Tok.s3) {
+                            Image(systemName: activeIsLLM ? "sparkles" : "function")
+                                .foregroundStyle(Tok.brand)
                             Text(activeIsLLM ? "Apple's on-device language model"
                                              : "Keyphrase extraction")
                                 .font(.body)
-                            Text(activeExplanation)
-                                .font(.caption).foregroundStyle(Tok.textSecondary)
-                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
                         }
-                        Spacer(minLength: Tok.s4)
+                        Text(activeExplanation)
+                            .font(.caption).foregroundStyle(Tok.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -56,9 +60,14 @@ struct SummariesPane: View {
                             .font(.caption).foregroundStyle(Tok.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
 
+                        // FR-57: say which backend runs *next*, and only when the
+                        // selection and reality disagree. This used to restate what
+                        // the card above already said — the same fact twice on one
+                        // pane, forty lines apart, which invites the reader to hunt
+                        // for the difference.
                         if prefs.metadataBackend == .auto && llmAvailable == false {
-                            Text("The language model is not available on this Mac right now, so keyphrase extraction is what actually runs.")
-                                .font(.caption).foregroundStyle(Tok.textSecondary)
+                            Text("Your choice cannot be honoured right now, so keyphrase extraction runs instead — see above.")
+                                .font(.caption).foregroundStyle(Tok.amberInk)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
