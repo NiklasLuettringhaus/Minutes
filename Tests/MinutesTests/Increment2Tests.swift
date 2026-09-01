@@ -212,3 +212,107 @@ final class MissingNoteTests: XCTestCase {
         XCTAssertEqual(missing(ms, in: folder), ["b", "c"])
     }
 }
+
+// MARK: - Speaker index, exclusions, and the unidentified in-room label
+
+final class SpeakerIndexAndExclusionTests: XCTestCase {
+
+    private func meeting() -> Meeting {
+        var m = Meeting(id: "m", startedAt: Date(timeIntervalSince1970: 1_772_000_000))
+        m.stage = .written
+        m.duration = 120
+        m.systemStreamCaptured = true
+        m.diarizationSucceeded = true
+        m.multipleInRoom = true
+        m.micDevice = "Niklas’s AirPods Pro"
+        m.systemSource = "system audio — Slack"
+        m.speakerNames = ["local": "Me", "room-1": "In-room 1", "remote-0": "Speaker 1"]
+        m.utterances = [
+            Utterance(start: 0, end: 2, text: "Mine.", speaker: .local, origin: .mic),
+            Utterance(start: 2, end: 4, text: "Beside me.", speaker: .inRoom(1), origin: .mic),
+            Utterance(start: 4, end: 6, text: "Also beside me.", speaker: .inRoom(1), origin: .mic),
+            Utterance(start: 6, end: 8, text: "The far end.", speaker: .remote(0), origin: .system),
+        ]
+        m.metadata = MeetingMetadata(title: "T", tags: [], summary: "",
+                                     decisions: [], actionItems: [], backend: .heuristic)
+        return m
+    }
+
+    /// What the user asked for: an index naming who spoke and what through.
+    func testIndexNamesTheDeviceEachSpeakerCameThrough() {
+        let note = NoteWriter().render(meeting: meeting())
+        XCTAssertTrue(note.contains("## Speakers"))
+        XCTAssertTrue(note.contains("Niklas’s AirPods Pro"), "the mic hardware is named")
+        XCTAssertTrue(note.contains("system audio — Slack"), "the far end names its source")
+        // The index precedes the transcript.
+        XCTAssertLessThan(note.range(of: "## Speakers")!.lowerBound,
+                          note.range(of: "## Transcript")!.lowerBound)
+    }
+
+    func testIndexCountsLinesPerSpeaker() {
+        let note = NoteWriter().render(meeting: meeting())
+        // In-room 1 spoke twice, the others once each.
+        XCTAssertTrue(note.contains("| In-room 1 | 2 |"), note)
+        XCTAssertTrue(note.contains("| Me | 1 |"), note)
+    }
+
+    func testExcludedSpeakerLeavesTheTranscriptButNotTheRecord() {
+        var m = meeting()
+        m.excludedSpeakers = [SpeakerLabelID.inRoom(1).raw]
+        let note = NoteWriter().render(meeting: m)
+        XCTAssertFalse(note.contains("Beside me."), "excluded speech is out of the note")
+        XCTAssertTrue(note.contains("Mine."), "everyone else stays")
+        XCTAssertTrue(note.contains("The far end."))
+        XCTAssertEqual(m.utterances.count, 4, "the record is untouched")
+    }
+
+    /// A note that quietly omits speech is less trustworthy than one that says so.
+    func testExclusionIsDisclosedInTheNote() {
+        var m = meeting()
+        m.excludedSpeakers = [SpeakerLabelID.inRoom(1).raw]
+        let note = NoteWriter().render(meeting: m)
+        XCTAssertTrue(note.contains("excluded"), "the omission is stated")
+        XCTAssertTrue(note.contains("In-room 1"), "and names who")
+        XCTAssertTrue(note.contains("still in Minutes"), "and says it is recoverable")
+    }
+
+    func testExcludingEveryoneSaysSoRatherThanClaimingNoSpeech() {
+        var m = meeting()
+        m.excludedSpeakers = m.speakers.map(\.raw)
+        let note = NoteWriter().render(meeting: m)
+        XCTAssertTrue(note.contains("Every speaker in this meeting has been excluded."))
+        XCTAssertFalse(note.contains("*No speech was transcribed.*"),
+                       "there was speech; it was excluded — a different fact")
+    }
+
+    /// The mislabel found in the first real meeting: unplaceable mic speech was
+    /// rendered as the user's own words.
+    func testUnplaceableMicSpeechIsNotAttributedToTheUser() {
+        let mic = [DiarizedSpan(start: 2, end: 4, speakerIndex: 1)]
+        let u = [
+            Utterance(start: 2, end: 4, text: "placed", speaker: .local, origin: .mic),
+            Utterance(start: 40, end: 42, text: "unplaceable", speaker: .local, origin: .mic),
+        ]
+        let out = Pipeline.assign(micSpans: mic, systemSpans: [],
+                                  multipleInRoom: true, to: u)
+        XCTAssertEqual(out[0].speaker, SpeakerLabelID.inRoom(1))
+        XCTAssertEqual(out[1].speaker, .inRoomUnidentified,
+                       "with several voices on the mic, unplaceable speech is not 'Me'")
+        XCTAssertTrue(out[1].speaker.isInRoom, "but it is still structurally in-room")
+    }
+
+    /// One voice on the mic is still the user, placed or not.
+    func testSingleVoiceOnTheMicStaysTheUser() {
+        let u = [Utterance(start: 40, end: 42, text: "mine", speaker: .local, origin: .mic)]
+        let out = Pipeline.assign(micSpans: [], systemSpans: [],
+                                  multipleInRoom: false, to: u)
+        XCTAssertEqual(out[0].speaker, .local)
+    }
+
+    func testUnidentifiedLabelReadsHonestly() {
+        var m = meeting()
+        m.utterances = [Utterance(start: 0, end: 1, text: "x",
+                                  speaker: .inRoomUnidentified, origin: .mic)]
+        XCTAssertEqual(m.displayName(for: .inRoomUnidentified), "In-room, unidentified")
+    }
+}

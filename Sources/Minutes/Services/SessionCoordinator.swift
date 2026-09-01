@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import AppKit
 
 /// AD-7: the sole writer of `AppState`. Every start/stop intent goes through here.
@@ -79,8 +80,16 @@ final class SessionCoordinator: ObservableObject {
         autoStopBundleID = associated?.bundleID
         wasManualStart = (app == nil)
 
-        if let associated {
-            _ = try? await store.update(id: id) { $0.triggeringApp = associated.appName }
+        // Provenance for the index at the top of the Note (FR-33). Captured at
+        // start rather than derived later: the default input device can change
+        // between recording and transcription.
+        let micName = AVCaptureDevice.default(for: .audio)?.localizedName
+        let sysName = cap.isDegraded ? nil
+            : (associated.map { "system audio — \($0.appName)" } ?? "system audio")
+        _ = try? await store.update(id: id) { m in
+            if let associated { m.triggeringApp = associated.appName }
+            m.micDevice = micName
+            m.systemSource = sysName
         }
 
         // The icon turns Recording only once audio is actually being captured (FR-3).
@@ -257,6 +266,21 @@ final class SessionCoordinator: ObservableObject {
     private func stopTicking() {
         tickTimer?.invalidate(); tickTimer = nil
         AppState.shared.resetPulse()
+    }
+
+    /// Excluding a Speaker changes the Note, never the record. The speech stays in
+    /// `meeting.json`, stays visible in the app, and the Note states that something
+    /// was left out — a Note that quietly omits speech is less trustworthy than one
+    /// that says so.
+    func setSpeakerExcluded(_ excluded: Bool, speaker: SpeakerLabelID, meetingID: String) async {
+        let store = MeetingStore.shared
+        _ = try? await store.update(id: meetingID) { m in
+            var set = Set(m.excludedSpeakers)
+            if excluded { set.insert(speaker.raw) } else { set.remove(speaker.raw) }
+            m.excludedSpeakers = Array(set).sorted()
+        }
+        await Pipeline.shared.rewriteNote(meetingID: meetingID)
+        await AppStateBridge.reloadMeetings()
     }
 
     /// FR-10-adjacent. Published through AppState so the menu can show the state

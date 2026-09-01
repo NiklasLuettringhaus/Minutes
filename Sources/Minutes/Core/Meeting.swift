@@ -26,6 +26,11 @@ struct SpeakerLabelID: Hashable, Codable, Sendable, CustomStringConvertible {
     static let local = SpeakerLabelID("local")
     /// One of several people physically in the room with the user.
     static func inRoom(_ index: Int) -> SpeakerLabelID { SpeakerLabelID("room-\(index)") }
+    /// Mic speech the Diarizer could not place, when more than one voice shares the
+    /// microphone. Previously such an Utterance fell through to `.local` and was
+    /// rendered as the user's own words — an identity claim the data does not
+    /// support, which is exactly what AD-11 forbids.
+    static let inRoomUnidentified = SpeakerLabelID("room-unidentified")
     /// A participant on the other end of the call.
     static func remote(_ index: Int) -> SpeakerLabelID { SpeakerLabelID("remote-\(index)") }
 
@@ -158,6 +163,21 @@ struct Meeting: Codable, Sendable, Identifiable {
     /// Which app triggered a detected Session, if any.
     var triggeringApp: String?
     var transcriptionModel: String?
+    /// What the two Streams were actually heard through. Recorded because the same
+    /// room behaves completely differently on a headset and on a built-in mic, and
+    /// diagnosing the first real meeting required probing the machine from outside
+    /// the app to discover it had been AirPods.
+    var micDevice: String?
+    var systemSource: String?
+    /// Speaker Labels the user has excluded from the Note for this Meeting.
+    ///
+    /// Deliberately per-Meeting and never automatic. In-room voices are usually
+    /// *participants* — a conference room is the normal case, not the exception —
+    /// so the app cannot know which non-user voice belongs to the meeting and which
+    /// was a conversation happening beside it. The user knows instantly. Excluded
+    /// speech stays in the record and stays visible in the app; only the Note omits
+    /// it, and the Note says so.
+    var excludedSpeakers: [String] = []
 
     var utterances: [Utterance]
     /// AD-19: display names live here, keyed by stable ID.
@@ -179,6 +199,9 @@ struct Meeting: Codable, Sendable, Identifiable {
         self.multipleInRoom = false
         self.triggeringApp = nil
         self.transcriptionModel = nil
+        self.micDevice = nil
+        self.systemSource = nil
+        self.excludedSpeakers = []
         self.utterances = []
         self.speakerNames = [SpeakerLabelID.local.raw: "Me"]
         self.inferredSpeakers = []
@@ -206,6 +229,9 @@ struct Meeting: Codable, Sendable, Identifiable {
         multipleInRoom = try c.decodeIfPresent(Bool.self, forKey: .multipleInRoom) ?? false
         triggeringApp = try c.decodeIfPresent(String.self, forKey: .triggeringApp)
         transcriptionModel = try c.decodeIfPresent(String.self, forKey: .transcriptionModel)
+        micDevice = try c.decodeIfPresent(String.self, forKey: .micDevice)
+        systemSource = try c.decodeIfPresent(String.self, forKey: .systemSource)
+        excludedSpeakers = try c.decodeIfPresent([String].self, forKey: .excludedSpeakers) ?? []
         utterances = try c.decodeIfPresent([Utterance].self, forKey: .utterances) ?? []
         speakerNames = try c.decodeIfPresent([String: String].self, forKey: .speakerNames)
             ?? [SpeakerLabelID.local.raw: "Me"]
@@ -216,6 +242,7 @@ struct Meeting: Codable, Sendable, Identifiable {
 
     func displayName(for id: SpeakerLabelID) -> String {
         if let n = speakerNames[id.raw] { return n }
+        if id == .inRoomUnidentified { return "In-room, unidentified" }
         switch id.place {
         case .you:    return "Me"
         case .room:   return "In-room speaker"
@@ -227,6 +254,20 @@ struct Meeting: Codable, Sendable, Identifiable {
     var inRoomSpeakers: [SpeakerLabelID] { speakers.filter(\.isInRoom) }
     /// Voices from the other end of the call.
     var remoteSpeakers: [SpeakerLabelID] { speakers.filter(\.isRemote) }
+
+    func isExcluded(_ id: SpeakerLabelID) -> Bool { excludedSpeakers.contains(id.raw) }
+
+    /// How a given Speaker reached the recording. Structural, not guessed: mic
+    /// means the room, system means the far end (AD-11).
+    func heardThrough(_ id: SpeakerLabelID) -> String {
+        switch id.place {
+        case .you, .room:
+            return micDevice ?? "microphone"
+        case .remote:
+            if let s = systemSource { return s }
+            return "system audio"
+        }
+    }
 
     func isInferred(_ id: SpeakerLabelID) -> Bool { inferredSpeakers.contains(id.raw) }
 

@@ -381,8 +381,26 @@ struct MeetingDetail: View {
                                         .font(.caption2).foregroundStyle(Tok.textSecondary)
                                 }
                                 Spacer()
+                                // Per-speaker, per-meeting, and never automatic. A
+                                // room usually holds participants, so the app cannot
+                                // tell a colleague beside you from a stranger beside
+                                // you — but you can, instantly.
+                                Button(meeting.isExcluded(s) ? "Include" : "Exclude") {
+                                    Task {
+                                        await SessionCoordinator.shared
+                                            .setSpeakerExcluded(!meeting.isExcluded(s),
+                                                                speaker: s, meetingID: meeting.id)
+                                    }
+                                }
+                                .buttonStyle(.borderless).font(.caption)
+                                .help(meeting.isExcluded(s)
+                                      ? "Put this speaker back in the note"
+                                      : "Leave this speaker out of the note — the speech is kept here")
                                 Text("\(count(of: s)) lines").font(.caption).monospacedDigit()
-                                    .foregroundStyle(Tok.textSecondary)
+                                    .foregroundStyle(meeting.isExcluded(s) ? Tok.textSecondary.opacity(0.6)
+                                                                           : Tok.textSecondary)
+                                Text(meeting.heardThrough(s)).font(.caption2)
+                                    .foregroundStyle(Tok.textSecondary).lineLimit(1)
                             }
                         }
                     }

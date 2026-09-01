@@ -275,7 +275,19 @@ actor Pipeline {
                 guard o > 0 else { continue }
                 if best == nil || o > best!.overlap { best = (s.speakerIndex, o) }
             }
-            guard let b = best else { return u }
+            guard let b = best else {
+                // No overlapping span. With one voice on the mic that is still the
+                // user; with several it is in-room speech nobody can attribute, and
+                // calling it the user would be an identity claim the data does not
+                // support (AD-11). The default used to be `.local` either way, which
+                // put 14 unplaceable utterances under "Me" in the first real meeting.
+                if u.origin == .mic, multipleInRoom {
+                    var c = u
+                    c.speaker = .inRoomUnidentified
+                    return c
+                }
+                return u
+            }
             var c = u
             switch u.origin {
             case .mic:

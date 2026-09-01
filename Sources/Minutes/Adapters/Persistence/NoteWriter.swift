@@ -103,16 +103,56 @@ struct NoteWriter: NoteWriting {
             out += "> More than one person was speaking in the room, so the in-room voices are labelled but not identified. Rename them once and Minutes will recognise them next time.\n\n"
         }
 
+        out += speakerIndex(m)
+
         out += "## Transcript\n\n"
         out += renderTranscript(m)
+        return out
+    }
+
+    /// The index at the top: who spoke, and what they were heard through.
+    ///
+    /// Worth its space because the two Streams are the product's core structural
+    /// claim — microphone means the room, system audio means the far end — and until
+    /// now that claim was implicit in labels like "In-room 1" without ever naming the
+    /// hardware. On the first real meeting the input device turned out to be AirPods
+    /// rather than the built-in mic, which changes how every other row should be
+    /// read, and the Note recorded nothing about it.
+    func speakerIndex(_ m: Meeting) -> String {
+        let speakers = m.speakers
+        guard !speakers.isEmpty else { return "" }
+
+        var out = "## Speakers\n\n"
+        out += "| Speaker | Lines | Heard through |\n| --- | --- | --- |\n"
+        for s in speakers {
+            var name = m.displayName(for: s)
+            if m.isInferred(s) { name += " *(recognised)*" }
+            if m.isExcluded(s) { name += " *(excluded below)*" }
+            let lines = m.utterances.filter { $0.speaker == s }.count
+            out += "| \(name) | \(lines) | \(m.heardThrough(s)) |\n"
+        }
+        out += "\n"
+
+        let excluded = speakers.filter { m.isExcluded($0) }
+        if !excluded.isEmpty {
+            let names = excluded.map { m.displayName(for: $0) }
+            let who = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + names.last!
+            // Stated rather than silently dropped: a Note that quietly omits speech
+            // is less trustworthy than one that says what it left out.
+            out += "> \(who) \(names.count == 1 ? "was" : "were") excluded from the transcript below. "
+            out += "The speech is still in Minutes and can be restored.\n\n"
+        }
         return out
     }
 
     /// Groups consecutive Utterances from one Speaker under a single label, so a
     /// speaker's continuous speech is not fragmented line by line (FR-33).
     func renderTranscript(_ m: Meeting) -> String {
-        guard !m.utterances.isEmpty else {
-            return "*No speech was transcribed.*\n"
+        let visible = m.utterances.filter { !m.isExcluded($0.speaker) }
+        guard !visible.isEmpty else {
+            return m.utterances.isEmpty
+                ? "*No speech was transcribed.*\n"
+                : "*Every speaker in this meeting has been excluded.*\n"
         }
         var out = ""
         var currentSpeaker: String? = nil
@@ -125,7 +165,7 @@ struct NoteWriter: NoteWriting {
             buffer = []
         }
 
-        for u in m.utterances.sorted(by: { $0.start < $1.start }) {
+        for u in visible.sorted(by: { $0.start < $1.start }) {
             var name = m.displayName(for: u.speaker)
             if m.isInferred(u.speaker) { name = "~\(name)" }
             if name != currentSpeaker {
