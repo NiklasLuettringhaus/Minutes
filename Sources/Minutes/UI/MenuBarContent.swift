@@ -13,37 +13,31 @@ enum MenuBarIcon {
     /// the one thing the icon must not stay silent about, since the prompt itself
     /// can be suppressed by the system.
     ///
-    /// `pulsePhase` implements FR-50 by varying the Recording tint's alpha over a
-    /// four-phase cycle. It is deliberately a *variation on an already-legible
-    /// state*, never the carrier of it: FR-2's silhouette-and-tint rule still
-    /// distinguishes Recording, so the pulse survives a greyscale menu bar and a
-    /// colour-blind reader losing nothing (NFR-7).
-    static func image(for state: AppState.SessionState, isAsking: Bool = false,
-                      pulsePhase: Int = 0) -> NSImage {
-        if isAsking, case .idle = state {
-            return tinted("waveform.badge.exclamationmark", color: NSColor(Tok.brand))
-        }
+    /// **The Recording dot is solid, and does not pulse.** FR-50 introduced a
+    /// four-phase alpha cycle in increment 2 and it was withdrawn on use: the
+    /// steady red circle reads better. A status light that varies invites a second
+    /// look to work out whether it is varying, which is the opposite of what the
+    /// most-seen element in the product should ask of anyone.
+    ///
+    /// The images are built once. Nothing about the icon changes while a state
+    /// holds, so rebuilding an `NSImage` from a system symbol on every tick was
+    /// pure waste against NFR-3 — and it was only ever there to carry the pulse.
+    static func image(for state: AppState.SessionState, isAsking: Bool = false) -> NSImage {
+        if isAsking, case .idle = state { return asking }
         switch state {
-        case .idle:
-            return template("waveform")
-        case .recording:
-            return tinted("record.circle.fill",
-                          color: NSColor(Tok.recording).withAlphaComponent(pulseAlpha(pulsePhase)))
-        case .transcribing:
-            return tinted("ellipsis.circle", color: NSColor(Tok.transcribing))
+        case .idle:         return idle
+        case .recording:    return recording
+        case .transcribing: return transcribing
         }
     }
 
-    /// Never dips far enough to read as "off" — a status light that blinks out
-    /// looks like a fault, and the ask was to animate it *slightly*.
-    static func pulseAlpha(_ phase: Int) -> CGFloat {
-        switch phase % 4 {
-        case 0:  return 1.0
-        case 1:  return 0.72
-        case 2:  return 0.5
-        default: return 0.72
-        }
-    }
+    // Literal colours only (Tok.recording, Tok.transcribing, Tok.brand), so these
+    // are appearance-independent and safe to build once. Idle is a template image,
+    // which macOS re-tints itself at render time.
+    private static let idle = template("waveform")
+    private static let recording = tinted("record.circle.fill", color: NSColor(Tok.recording))
+    private static let transcribing = tinted("ellipsis.circle", color: NSColor(Tok.transcribing))
+    private static let asking = tinted("waveform.badge.exclamationmark", color: NSColor(Tok.brand))
 
     private static func template(_ name: String) -> NSImage {
         let cfg = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)

@@ -174,7 +174,7 @@ From the Architecture Spine. These are not optional implementation detail — ea
 
 From `DESIGN.md` and `EXPERIENCE.md`. The setup pattern is a direct user directive (FluidVoice reference supplied mid-run), not a designer inference.
 
-- **UX-DR1** — Menu bar icon: three states differing in **silhouette as well as tint**; Idle as a template image, Recording and Transcribing as palette images. Never animate while Idle.
+- **UX-DR1** — Menu bar icon: three states differing in **silhouette as well as tint**; Idle as a template image, Recording and Transcribing as palette images. **Never animate, in any state** — amended increment 4, when FR-50's Recording pulse was withdrawn on use.
 - **UX-DR2** — Checklist row component: leading indicator (satisfied glyph vs. ordinal in a ring), title, one-line subtitle, trailing control (dim non-interactive `Done` pill vs. live action button). Satisfied rows drop to ~55% opacity with secondary-colour titles. Hairline separators inset to text origin.
 - **UX-DR3** — `Done` pill is **not a button**: fully round, no border, no hover state, not focusable, announced by VoiceOver as status.
 - **UX-DR4** — Single window, `NavigationSplitView`, grouped sidebar: SETUP (Getting Started) · CONFIGURE (Transcription, Detection, General) · ACTIVITY (Meetings). Default destination Getting Started on first launch, Meetings thereafter.
@@ -1579,7 +1579,7 @@ So that a wrong match is correctable without waiting for a meeting that happens 
 
 ### Story 8.5: Elapsed time and a living recording indicator in the menu bar
 
-*Requirements: FR-49, FR-50 · Tier T4*
+*Requirements: FR-49; FR-50 (withdrawn increment 4) · Tier T4*
 
 As a user,
 I want to see how long I have been recording without opening the menu,
@@ -1590,19 +1590,19 @@ So that a running session is obvious at a glance.
 **Given** a Session is Recording
 **When** I look at the menu bar with the menu closed
 **Then** the elapsed time is readable and advances at least once per second
-**And** the recording indicator carries a slow pulse
+**And** the recording indicator is a steady solid dot *(amended increment 4: FR-50's pulse was withdrawn on use)*
 
 **And** each of the following holds:
 
 - The timer disappears the moment Recording ends, so the menu bar never implies a Session that is not running.
 - Transcribing shows no timer — elapsed time answers "how much have I recorded", which is not a question about processing.
-- The pulse is confined to Recording; Idle and Transcribing do not animate.
-- Recording stays identifiable without the animation: silhouette and tint still carry the state (FR-2, NFR-7).
+- ~~The pulse is confined to Recording; Idle and Transcribing do not animate.~~ **Nothing animates, in any state.**
+- Recording stays identifiable without any animation: silhouette and tint carry the state (FR-2, NFR-7). This was already required of the pulse, which is why withdrawing it costs no information.
 
 **Implementation constraints:**
 
 - Cost is the design constraint. The menu bar label is re-rendered by the system, so drive the timer from one coalesced tick that stops dead when Recording ends — never leave a 1 Hz timer running while Idle (NFR-3).
-- Express the pulse as a bounded, slow opacity or scale cycle. If it exceeds NFR-3 over a long Session (§13 Q10), degrade to a discrete two-frame indicator, which still satisfies "animate slightly".
+- ~~Express the pulse as a bounded, slow opacity or scale cycle…~~ **Withdrawn in increment 4** on the user's instruction after living with it. The icon is one image per state, built once; §13 Q10 is retired unanswered and moot.
 - FR-4's in-menu timer already ships and stays. This is the closed-menu case, which is a different requirement.
 
 ### Story 8.6: Say what writes the summaries, and let it be pinned

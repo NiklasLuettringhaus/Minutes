@@ -97,54 +97,48 @@ final class SpeakerDirectoryCurationTests: XCTestCase {
     }
 }
 
-// MARK: - Story 8.5: the Recording pulse (FR-50)
+// MARK: - Story 8.5: the Recording indicator (FR-49; FR-50 withdrawn)
 
-final class RecordingPulseTests: XCTestCase {
+/// FR-50's pulse was withdrawn on use — the solid red circle reads better. What
+/// these tests protect is what FR-2 and NFR-7 always required and what the pulse
+/// was explicitly never allowed to carry: Recording is distinguishable by
+/// silhouette and tint alone, with no motion involved.
+final class RecordingIndicatorTests: XCTestCase {
 
-    /// A status light that blinks out looks like a fault, and the ask was to
-    /// animate it *slightly*.
-    func testPulseNeverReadsAsOff() {
-        for phase in 0..<16 {
-            let a = MenuBarIcon.pulseAlpha(phase)
-            XCTAssertGreaterThanOrEqual(a, 0.5, "phase \(phase) dipped too far")
-            XCTAssertLessThanOrEqual(a, 1.0)
-        }
-    }
-
-    func testPulseCyclesOverFourPhasesAndIsSymmetric() {
-        let cycle = (0..<4).map { MenuBarIcon.pulseAlpha($0) }
-        XCTAssertEqual(cycle[0], 1.0, "the cycle peaks at full strength")
-        XCTAssertEqual(cycle[1], cycle[3], "rise and fall match, so it breathes rather than sawtooths")
-        XCTAssertLessThan(cycle[2], cycle[1], "and reaches its minimum in the middle")
-        XCTAssertEqual(MenuBarIcon.pulseAlpha(4), cycle[0], "phase wraps")
-        XCTAssertEqual(MenuBarIcon.pulseAlpha(9), cycle[1])
-    }
-
-    /// FR-50: Recording must stay identifiable without the animation (NFR-7).
     @MainActor
-    func testRecordingIsDistinctFromIdleAtEveryPhase() {
+    func testRecordingIsDistinctFromIdleAndCarriesItsOwnColour() {
         let idle = MenuBarIcon.image(for: .idle)
-        for phase in 0..<4 {
-            let rec = MenuBarIcon.image(for: .recording(since: Date(), degraded: false),
-                                        pulsePhase: phase)
-            XCTAssertFalse(rec.isTemplate, "Recording carries its own colour, not the menu bar's")
-            XCTAssertNotEqual(rec.size, .zero)
-            XCTAssertTrue(idle.isTemplate, "Idle is tinted by the system")
-        }
+        let rec = MenuBarIcon.image(for: .recording(since: Date(), degraded: false))
+        XCTAssertFalse(rec.isTemplate, "Recording carries its own colour, not the menu bar's")
+        XCTAssertTrue(idle.isTemplate, "Idle is tinted by the system")
+        XCTAssertNotEqual(rec.size, .zero)
+        XCTAssertNotEqual(idle.tiffRepresentation, rec.tiffRepresentation,
+                          "the two states must differ in silhouette, not only in tint")
     }
 
-    /// Idle and Transcribing do not animate, so the phase must not reach them.
+    /// The point of the revert: the Recording icon is the same image every time it
+    /// is asked for. Nothing varies, so nothing invites a second look to work out
+    /// whether it is varying.
     @MainActor
-    func testOnlyRecordingRespondsToThePhase() {
-        let a = MenuBarIcon.image(for: .idle, pulsePhase: 0).tiffRepresentation
-        let b = MenuBarIcon.image(for: .idle, pulsePhase: 2).tiffRepresentation
-        XCTAssertEqual(a, b, "Idle is phase-independent")
+    func testTheRecordingIconIsSteady() {
+        let a = MenuBarIcon.image(for: .recording(since: Date(), degraded: false))
+        let b = MenuBarIcon.image(for: .recording(since: Date().addingTimeInterval(90),
+                                                  degraded: true))
+        XCTAssertEqual(a.tiffRepresentation, b.tiffRepresentation,
+                       "the dot must not change with elapsed time or degradation")
+        XCTAssertTrue(a === b, "and it is built once rather than per tick (NFR-3)")
+    }
 
-        let t0 = MenuBarIcon.image(for: .transcribing(meetingID: "x", title: nil), pulsePhase: 0)
-            .tiffRepresentation
-        let t2 = MenuBarIcon.image(for: .transcribing(meetingID: "x", title: nil), pulsePhase: 2)
-            .tiffRepresentation
-        XCTAssertEqual(t0, t2, "Transcribing is phase-independent")
+    @MainActor
+    func testEveryStateHasADistinctSilhouette() {
+        let images = [
+            MenuBarIcon.image(for: .idle),
+            MenuBarIcon.image(for: .recording(since: Date(), degraded: false)),
+            MenuBarIcon.image(for: .transcribing(meetingID: "x", title: nil)),
+            MenuBarIcon.image(for: .idle, isAsking: true),
+        ].map(\.tiffRepresentation)
+        XCTAssertEqual(Set(images).count, images.count,
+                       "four distinguishable states, greyscale included (FR-2, NFR-7)")
     }
 }
 

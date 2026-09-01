@@ -247,16 +247,18 @@ final class SessionCoordinator: ObservableObject {
 
     private func startTicking() {
         tickTimer?.invalidate()
-        // One timer drives three things: the menu's elapsed time (FR-4), the menu
-        // bar's elapsed time (FR-49) and the Recording pulse (FR-50). 0.5s gives a
-        // 2s pulse cycle over four phases — slow enough to read as a status light —
-        // while still updating elapsed time more often than the once-per-second
-        // FR-4 requires. Deliberately not four separate timers, and deliberately
-        // not an animation: this stops when Recording stops (NFR-3).
+        // One timer drives the menu's elapsed time (FR-4) and the menu bar's
+        // elapsed time (FR-49). It used to drive the FR-50 pulse too, which is why
+        // it ran at 0.5s; the pulse is withdrawn and the interval stays at 0.5s
+        // because "at least once per second" has to hold under timer tolerance,
+        // and a 1.0s timer with 0.1 tolerance can land at 1.1s.
+        //
+        // The tick is much cheaper than it was: the icon image is now built once
+        // rather than per tick, so a tick republishes the session state and
+        // nothing redraws except the timer text.
         tickTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, let cap = self.capture, let started = self.startedAt else { return }
-                AppState.shared.advancePulse()
                 AppState.shared.setSessionState(.recording(since: started, degraded: cap.isDegraded))
             }
         }
@@ -265,7 +267,6 @@ final class SessionCoordinator: ObservableObject {
 
     private func stopTicking() {
         tickTimer?.invalidate(); tickTimer = nil
-        AppState.shared.resetPulse()
     }
 
     /// Excluding a Speaker changes the Note, never the record. The speech stays in

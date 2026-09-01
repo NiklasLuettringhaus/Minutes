@@ -41,12 +41,6 @@ final class AppState: ObservableObject {
     /// which is a claim about the record, not about the work. A session interrupted
     /// by a quit therefore span a progress spinner forever with nothing behind it.
     @Published private(set) var inFlight: Set<String> = []
-    /// Drives the FR-50 Recording pulse and, with it, the FR-49 menu bar timer.
-    ///
-    /// One published integer rather than an animation: the menu bar label is
-    /// re-rendered by the system, so the cost has to be bounded and stoppable
-    /// (NFR-3). It advances only while Recording and stops dead otherwise.
-    @Published private(set) var pulsePhase: Int = 0
     /// A pane another surface wants brought forward. `MainWindow` owns the actual
     /// selection, so a deep link sets this and clears it rather than reaching into
     /// someone else's `@State` (AD-7: views call intents, they do not mutate).
@@ -66,8 +60,6 @@ final class AppState: ObservableObject {
     func setMicMuted(_ b: Bool) { micMuted = b }
     func setInFlight(_ ids: Set<String>) { inFlight = ids }
     func setMissingNotes(_ ids: Set<String>) { missingNotes = ids }
-    func advancePulse() { pulsePhase = (pulsePhase + 1) % 4 }
-    func resetPulse() { pulsePhase = 0 }
     func setUnreadable(_ ids: [String]) { unreadableMeetings = ids }
     func setAudioBytes(_ n: Int64) { audioBytes = n }
 

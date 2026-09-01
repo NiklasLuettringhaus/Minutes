@@ -173,16 +173,22 @@ While Recording, the menu bar itself shows how long the Session has been running
 **Notes:**
 - FR-4 already required elapsed time *inside the open menu*, and that shipped. This is a separate requirement: the user's ask was to know the answer without clicking. Both hold.
 
-#### FR-50: The Recording indicator is animated
-While Recording, the menu bar indicator carries a slow pulse.
+#### ~~FR-50: The Recording indicator is animated~~ — **withdrawn 2026-09-01**
+~~While Recording, the menu bar indicator carries a slow pulse.~~ **The Recording indicator is a steady solid dot and does not animate.**
+
+*Withdrawn on use, by the person who asked for it: "revert the change that made the recording icon animated. the solid red circle was better." Built in increment 2 from "animate the red dot slightly", shipped, lived with, and rejected.*
 
 **Consequences (testable):**
-- The pulse is confined to the Recording state. Idle and Transcribing do not animate.
-- Recording remains identifiable without the animation — the state is still carried by silhouette and tint per FR-2, so the pulse is confirmation, not the signal (NFR-7).
-- The animation is slow and low-amplitude enough to read as a status light rather than as something demanding attention.
+- Nothing in the menu bar animates, in any state. FR-2's silhouette-and-tint rule carries Recording on its own, which it always did — the pulse was explicitly never allowed to be the signal (NFR-7), so removing it costs no information.
+- The icon image is constant while a state holds, so it is built once rather than per tick. The pulse was the only reason it was ever rebuilt.
+- The elapsed-time tick (FR-4, FR-49) survives untouched: it updates text, not the icon.
+
+**Notes:**
+- The withdrawal is recorded rather than deleted, because the reasoning that produced it was sound and the outcome still went the other way. A status light that varies invites a second look to work out *whether* it is varying, and the most-seen element in the product should not ask that of anyone. §14 recorded "that it should be a slow pulse rather than a blink" as an assumption; the assumption was wrong in a way only use could establish.
+- It retires §13 Q10, which asked whether the pulse survived NFR-3 over a two-hour Session. The question is moot and the answer is now free.
 
 **Feature-specific NFRs:**
-- Idle CPU use attributable to the menu bar component is negligible (see NFR-3); the icon must not animate while Idle. The FR-50 pulse is permitted only because it is bounded to an active Session, and its cost must stay within NFR-3 for the Recording state too.
+- Idle CPU use attributable to the menu bar component is negligible (see NFR-3), and with FR-50 withdrawn the icon does not animate in *any* state — which is strictly cheaper than the exemption FR-50 used to need.
 
 ---
 
@@ -916,7 +922,7 @@ A Tier-0 build that works beats a Tier-2 build that half-works, and the tiers ar
 1. `FR-53` (verify the Note exists) and `FR-54` (refresh the Library) — a list that disagrees with the folder undermines trust in every other feature, and both defects behind these were real.
 2. `FR-40` amended (discoverable, multi-select delete) — the user could not find deletion at all.
 3. `FR-51` (curate remembered voices) — makes FR-25 correctable, which is also what makes §13 Q4 answerable by observation.
-4. `FR-49` (menu bar timer) and `FR-50` (animated indicator) — small, visible, and independent of everything above.
+4. `FR-49` (menu bar timer) and ~~`FR-50` (animated indicator)~~ — small, visible, and independent of everything above. FR-50 shipped here and was **withdrawn in increment 4** after use; FR-49 stands.
 5. `FR-52` (Backend visible and selectable) — closes the question the user asked; no dependency, so it can move if measurement (§13 Q11) changes the shape.
 
 **Tier 5 — Increment 3, summarisation as a chosen capability.** Ordered so the honest-by-default change lands first and the expensive, contested one lands last. A stop after any step leaves a coherent product.
@@ -1052,6 +1058,7 @@ Targets on the reference machine (Apple M5, 24 GB, macOS 26.6):
 | Max supported Session length | ≥ 3 hours |
 | Idle CPU | negligible; no Idle animation |
 | Retained audio, per hour of Meeting, both Streams | ≤ 250 MB · **measured 230 MB** |
+| Editing a Meeting's title or a Speaker Label | must not re-render the Transcript · **added increment 4** |
 
 Model-specific transcription throughput must be **measured on the target machine, not estimated**, and the model picker's speed guidance should derive from those measurements.
 
@@ -1087,7 +1094,7 @@ The budget is stated as a target so that a future format change has something to
 Raised by increment 2:
 
 9. **How much menu bar width is acceptable for the FR-49 timer?** A running clock next to the icon competes with every other menu bar item on a laptop display. Informs FR-49; may need a shorter format, or an option to show it only past a threshold.
-10. **Does the FR-50 pulse survive NFR-3 over a two-hour Session?** A repeating animation in a `MenuBarExtra` label is redrawn by the system, and the cost was never measured. If it does not, the pulse becomes a slower or discrete indicator rather than a continuous one.
+10. ~~**Does the FR-50 pulse survive NFR-3 over a two-hour Session?**~~ **Retired 2026-09-01, unanswered and moot.** FR-50 is withdrawn, so there is no repeating animation to measure. Worth noting what it cost to leave open: the question was raised in increment 2 and never measured, and the feature it guarded was removed for a reason that had nothing to do with cost.
 11. **Should FR-52's Backend choice be per-Meeting rather than global?** A global toggle is simpler and matches the ask; retrying one Meeting with the other Backend is the plausible next want. Deferred, not decided.
 12. **Is FR-53's check cheap enough to run on every Library appearance**, or does it need to be tied to FR-54's explicit refresh? Depends on Meeting count and folder size; measure before choosing.
 
@@ -1125,7 +1132,7 @@ Every inference made without user confirmation. The user was unavailable for thi
 
 **Increment 2.** These carry materially less inference than the list above, because each one came from the user operating the built app rather than from reading the original request. What remains inferred:
 
-- **§4.1, FR-50 animation character** — "animate the red dot slightly" was the ask. That it should be a slow pulse rather than a blink, a spinner or a level meter is a reading of "slightly", chosen because a status light should not compete for attention.
+- ~~**§4.1, FR-50 animation character**~~ — "animate the red dot slightly" was the ask, and that it should be a slow pulse rather than a blink or a spinner was this PRD's reading of "slightly". **Resolved by use in increment 4, against the assumption:** the user withdrew the animation entirely and kept the solid dot. Left in the index because an assumption that turned out wrong is more informative than one that turned out right.
 - **§4.5, FR-51 rename semantics** — that renaming a remembered voice does not retroactively relabel past Meetings. Not requested either way; chosen because the alternative rewrites Notes the user may have edited by hand.
 - **§4.5, FR-51 provenance fields** — that sample count and last-matched date are the useful things to show. Inferred from what makes a match judgeable, not from the request.
 - **§4.6, FR-52 pin-the-Heuristic-Backend** — the user asked what performs summarisation and where its settings are. That the answer should include an override, rather than only an explanation, is inferred from a deterministic summary being sometimes preferable.

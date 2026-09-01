@@ -69,7 +69,7 @@ components:
     idle:         { glyph: 'waveform', tint: '{colors.control-accent}', rendering: 'template — system tints it' }
     recording:    { glyph: 'record.circle.fill', tint: '{colors.state-recording}', rendering: 'palette — colour is load-bearing' }
     transcribing: { glyph: 'ellipsis.circle', tint: '{colors.state-transcribing}', rendering: 'palette' }
-    note: 'Silhouettes must differ, not only tint — PRD FR-2 / NFR-7. Never animate while Idle (PRD NFR-3).'
+    note: 'Silhouettes must differ, not only tint — PRD FR-2 / NFR-7. **Never animates, in any state.** The Recording pulse (PRD FR-50) shipped in increment 2 and was withdrawn on use in increment 4 — the solid dot reads better. Each state is one image, built once.'
   card:
     background: '{colors.surface-card}'
     radius: '{rounded.lg}'
@@ -252,7 +252,9 @@ The logic: radius grows with the size of the thing, so curvature stays visually 
 
 ## Components
 
-**`{components.menubar-icon}`** — the product's most-seen element. Three states whose **silhouettes differ**, not merely their tint: a waveform when Idle, a filled record dot when Recording, a waveform-with-ellipsis when Transcribing. This is a hard requirement (PRD FR-2, NFR-7): the icon must be readable in a greyscale menu bar and by a colour-blind user. Idle renders as a template image so macOS tints it to match the menu bar; Recording and Transcribing render as palette images because their colour carries meaning the system must not override. It never animates while Idle (PRD NFR-3).
+**`{components.menubar-icon}`** — the product's most-seen element. Three states whose **silhouettes differ**, not merely their tint: a waveform when Idle, a filled record dot when Recording, a waveform-with-ellipsis when Transcribing. This is a hard requirement (PRD FR-2, NFR-7): the icon must be readable in a greyscale menu bar and by a colour-blind user. Idle renders as a template image so macOS tints it to match the menu bar; Recording and Transcribing render as palette images because their colour carries meaning the system must not override.
+
+**It never animates, in any state.** A slow Recording pulse shipped in increment 2 (PRD FR-50) and was withdrawn in increment 4 after the user lived with it: the steady dot is better. The reasoning is worth keeping because it generalises — a status light that varies makes a reader look twice to work out *whether* it is varying, and this is the element they see forty times a day. Everything the pulse conveyed was already carried by silhouette and tint, which is why removing it costs nothing.
 
 **`{components.checklist-row}`** — the borrowed pattern, and the most specified component in the product. Anatomy left to right: leading indicator, then title over one-line subtitle, then a trailing control. A satisfied row shows `{components.pill-done}` and drops to roughly 55% opacity with its title in `{colors.text-secondary}`. An outstanding row shows its ordinal in a ring and a `{components.button-row-action}`. Rows are separated by a hairline inset to the text origin, with none after the last.
 
@@ -309,7 +311,7 @@ Increment 4 makes this component carry more weight than it did, because the whol
 - Don't use `{colors.state-recording}` for errors, destructive actions, or emphasis. It means one thing.
 - Don't repaint standard controls with `{colors.brand-accent}`.
 - Don't set transcript text in a monospaced font.
-- Don't animate the menu bar icon while Idle.
+- Don't animate the menu bar icon. Not while Idle, and not while Recording either — FR-50 tried and was withdrawn.
 - Don't let a checklist subtitle run to two lines. If it needs two, the copy is wrong.
 - Don't give `{components.pill-done}` a hover state, a border, or focus.
 - Don't introduce an illustration, an empty-state mascot, a gradient, or a marketing surface. There is no third surface (PRD §10.1).

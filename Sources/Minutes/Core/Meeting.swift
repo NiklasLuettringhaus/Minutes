@@ -293,7 +293,7 @@ struct Meeting: Codable, Sendable, Identifiable {
     /// Three of the four cases mean "no identity was claimed", and they are kept
     /// apart because they are not the same statement: a structural fact, a
     /// measurement, an honest anonymous label, and speech nothing could place.
-    enum Basis: Equatable {
+    enum Basis: Equatable, Sendable {
         /// The microphone held one voice. Cannot be wrong.
         case structural
         /// Matched against the user's enrolled voice, at this distance.
@@ -368,6 +368,99 @@ struct Meeting: Codable, Sendable, Identifiable {
             }
         }
         return names
+    }
+
+    // MARK: - Transcript rendering
+
+    /// One rendered paragraph: consecutive Utterances from the same speaker,
+    /// grouped under a single label (FR-33).
+    ///
+    /// `id` is **the first Utterance's own id**, and that matters more than it
+    /// looks. This grouping used to live in the view and mint a fresh `UUID` per
+    /// block on every call, so `ForEach` saw an entirely new identity set each time
+    /// the view body ran and tore down and rebuilt every row instead of diffing.
+    /// With a few hundred blocks and a `SpeakerChip` and a `fixedSize` text in
+    /// each, one keystroke in the title field rebuilt the whole transcript.
+    /// Utterance ids are stable and persisted, so this is free.
+    struct TranscriptBlock: Identifiable, Equatable, Sendable {
+        let id: UUID
+        var start: TimeInterval
+        /// Kept so grouping can ask "same speaker?" rather than only "same label?".
+        var speaker: SpeakerLabelID
+        var name: String
+        var place: SpeakerLabelID.Place
+        var isInferred: Bool
+        var basis: Basis
+        var text: String
+    }
+
+    /// Groups the Transcript. Pure, so it is testable without a view and cheap to
+    /// call from a cache rather than from a body.
+    ///
+    /// `honouringExclusions` is what the Note passes: excluded speakers are left
+    /// out of the Note but stay visible in the app (FR-40's per-speaker Exclude).
+    /// Both renderers go through this one function, so the grouping rule cannot
+    /// drift between what the user reads on screen and what lands in Markdown —
+    /// which it had, in the same way, in both places.
+    func transcriptBlocks(honouringExclusions: Bool = false) -> [TranscriptBlock] {
+        let source = honouringExclusions
+            ? utterances.filter { !isExcluded($0.speaker) }
+            : utterances
+        var out: [TranscriptBlock] = []
+        out.reserveCapacity(source.count)
+        for u in source.sorted(by: { $0.start < $1.start }) {
+            let text = u.text.trimmingCharacters(in: .whitespaces)
+            if var last = out.last, groups(last.speaker, with: u.speaker) {
+                last.text += " " + text
+                out[out.count - 1] = last
+            } else {
+                out.append(TranscriptBlock(id: u.id,
+                                           start: u.start,
+                                           speaker: u.speaker,
+                                           name: displayName(for: u.speaker),
+                                           place: u.speaker.place,
+                                           isInferred: isInferred(u.speaker),
+                                           basis: basis(for: u.speaker),
+                                           text: text))
+            }
+        }
+        return out
+    }
+
+    /// Whether two consecutive Utterances belong in one paragraph.
+    ///
+    /// The same speaker, obviously. And two *different* labels the user has
+    /// deliberately renamed to the same name, because that is precisely what
+    /// FR-24's merge means — one person the Diarizer split in two.
+    ///
+    /// What must **not** group is two different speakers who merely fall back to
+    /// the same generic label. The first version of this grouped on the display
+    /// name alone, so two unnamed in-room voices — both rendering as "In-room
+    /// speaker" before attribution named them — were run together into one
+    /// paragraph under one label, presenting two people's alternating speech as
+    /// one person's. Unreachable in a completed Meeting, because attribution gives
+    /// every speaker a distinct name; reachable in one that failed before it.
+    private func groups(_ a: SpeakerLabelID, with b: SpeakerLabelID) -> Bool {
+        if a == b { return true }
+        guard let na = speakerNames[a.raw], let nb = speakerNames[b.raw] else { return false }
+        return na == nb
+    }
+
+    /// Changes exactly when the rendered Transcript would change, and is cheap to
+    /// compute. The view rebuilds its cached blocks on this rather than on every
+    /// body evaluation, so typing in the title field no longer regroups 600
+    /// utterances per keystroke.
+    var transcriptRevision: Int {
+        var h = Hasher()
+        h.combine(id)
+        h.combine(utterances.count)
+        h.combine(speakerNames)
+        h.combine(inferredSpeakers)
+        h.combine(localIdentifiedByEnrolment)
+        h.combine(localMatchDistance)
+        // The last utterance's end moves while a meeting is still being written to.
+        h.combine(utterances.last?.end)
+        return h.finalize()
     }
 
     /// Distinct speakers in transcript order of first appearance.

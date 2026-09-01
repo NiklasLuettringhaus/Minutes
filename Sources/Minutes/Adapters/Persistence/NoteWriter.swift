@@ -155,37 +155,25 @@ struct NoteWriter: NoteWriting {
     /// Groups consecutive Utterances from one Speaker under a single label, so a
     /// speaker's continuous speech is not fragmented line by line (FR-33).
     func renderTranscript(_ m: Meeting) -> String {
-        let visible = m.utterances.filter { !m.isExcluded($0.speaker) }
-        guard !visible.isEmpty else {
+        // One grouping rule for the app and the Note (`Meeting.transcriptBlocks`).
+        // These were two implementations of the same paragraph-building logic, and
+        // both had the same defect: they grouped on the *display name*, so two
+        // different unnamed in-room voices — both falling back to "In-room
+        // speaker" — were run together under one name. In the Note that is worse
+        // than on screen, because the Note is what gets read in six months.
+        let blocks = m.transcriptBlocks(honouringExclusions: true)
+        guard !blocks.isEmpty else {
             return m.utterances.isEmpty
                 ? "*No speech was transcribed.*\n"
                 : "*Every speaker in this meeting has been excluded.*\n"
         }
         var out = ""
-        var currentSpeaker: String? = nil
-        var buffer: [String] = []
-        var blockStart: TimeInterval = 0
-
-        func flush() {
-            guard let who = currentSpeaker, !buffer.isEmpty else { return }
-            out += "**\(Fmt.timestamp(blockStart)) \(who)**\n\n\(buffer.joined(separator: " "))\n\n"
-            buffer = []
+        for b in blocks {
+            let who = b.isInferred ? "~\(b.name)" : b.name
+            out += "**\(Fmt.timestamp(b.start)) \(who)**\n\n\(b.text)\n\n"
         }
-
-        for u in visible.sorted(by: { $0.start < $1.start }) {
-            var name = m.displayName(for: u.speaker)
-            if m.isInferred(u.speaker) { name = "~\(name)" }
-            if name != currentSpeaker {
-                flush()
-                currentSpeaker = name
-                blockStart = u.start
-            }
-            buffer.append(u.text.trimmingCharacters(in: .whitespacesAndNewlines))
-        }
-        flush()
         return out
     }
-
     private func frontmatter(_ m: Meeting) -> String {
         let iso = ISO8601DateFormatter()
         iso.formatOptions = [.withInternetDateTime]

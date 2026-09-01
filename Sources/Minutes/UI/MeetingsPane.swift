@@ -266,6 +266,10 @@ struct MeetingDetail: View {
     @State private var draftName = ""
     @State private var editingTitle = false
     @State private var draftTitle = ""
+    /// Cached, not computed in the body. Regrouping the transcript on every body
+    /// evaluation meant every keystroke in the title or a speaker name walked all
+    /// of the meeting's utterances — 598 in the longest real one.
+    @State private var blocks: [Meeting.TranscriptBlock] = []
 
     var body: some View {
         ScrollView {
@@ -284,6 +288,12 @@ struct MeetingDetail: View {
             .padding(Tok.paneMargin)
         }
         .background(Tok.surfaceWindow)
+        .onAppear { blocks = meeting.transcriptBlocks() }
+        // Rebuilt only when the rendered transcript would actually differ — a
+        // rename, a new utterance, a changed identification. Not on a keystroke.
+        .onChange(of: meeting.transcriptRevision) { _, _ in
+            blocks = meeting.transcriptBlocks()
+        }
     }
 
     private var titleBlock: some View {
@@ -503,37 +513,18 @@ struct MeetingDetail: View {
         }
     }
 
+    /// Handed to an `Equatable` child so a keystroke in the title or a speaker name
+    /// does no transcript work at all. Stable block ids alone would let SwiftUI
+    /// *diff* the rows instead of rebuilding them, which was the bulk of the fix;
+    /// this stops it walking 600 of them to discover nothing changed.
     private var transcriptBlock: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SectionHeading(text: "Transcript")
-            Card {
-                if meeting.utterances.isEmpty {
-                    // An empty transcript has two very different causes, and saying
-                    // "no speech" for the second one is simply wrong.
-                    Text(meeting.stage < .transcribed
-                         ? "Not transcribed yet — this recording was interrupted before it finished."
-                         : "No speech was transcribed.")
-                        .font(.caption)
-                        .foregroundStyle(Tok.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    VStack(alignment: .leading, spacing: Tok.s4) {
-                        ForEach(blocks(), id: \.id) { b in
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: Tok.s3) {
-                                    Text(Fmt.timestamp(b.start)).font(.caption).monospacedDigit()
-                                        .foregroundStyle(Tok.textSecondary)
-                                    SpeakerChip(name: b.name, place: b.place,
-                                                isInferred: b.isInferred, basis: b.basis)
-                                }
-                                // Transcript text is prose, not code — never monospaced.
-                                Text(b.text).font(.body).fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        TranscriptCard(blocks: blocks,
+                       emptyReason: meeting.utterances.isEmpty
+                           ? (meeting.stage < .transcribed
+                              ? "Not transcribed yet — this recording was interrupted before it finished."
+                              : "No speech was transcribed.")
+                           : nil)
+            .equatable()
     }
 
     private var provenanceBlock: some View {
@@ -587,34 +578,6 @@ struct MeetingDetail: View {
         }
     }
 
-    struct Block: Identifiable {
-        let id = UUID()
-        var start: TimeInterval
-        var name: String
-        var place: SpeakerLabelID.Place
-        var isInferred: Bool
-        var basis: Meeting.Basis?
-        var text: String
-    }
-
-    /// Groups consecutive Utterances from one Speaker under a single label (FR-33).
-    private func blocks() -> [Block] {
-        var out: [Block] = []
-        for u in meeting.utterances.sorted(by: { $0.start < $1.start }) {
-            let name = meeting.displayName(for: u.speaker)
-            if var last = out.last, last.name == name {
-                last.text += " " + u.text.trimmingCharacters(in: .whitespaces)
-                out[out.count - 1] = last
-            } else {
-                out.append(Block(start: u.start, name: name, place: u.speaker.place,
-                                 isInferred: meeting.isInferred(u.speaker),
-                                 basis: meeting.basis(for: u.speaker),
-                                 text: u.text.trimmingCharacters(in: .whitespaces)))
-            }
-        }
-        return out
-    }
-
     private func count(of s: SpeakerLabelID) -> Int {
         meeting.utterances.filter { $0.speaker == s }.count
     }
@@ -635,5 +598,48 @@ struct MeetingDetail: View {
         let t = draftTitle
         editingTitle = false
         Task { await SessionCoordinator.shared.renameMeeting(meetingID: meeting.id, to: t) }
+    }
+}
+
+/// The Transcript, as its own `Equatable` view.
+///
+/// Its only inputs are the already-grouped blocks and the reason the transcript is
+/// empty, both value types — so SwiftUI can compare them and skip the body
+/// entirely when a sibling's `@State` changed. Editing a title used to re-create
+/// every row in here, each with a `fixedSize` text that forces its own layout
+/// pass; on a 598-utterance meeting that is what "super slow and laggy" was.
+private struct TranscriptCard: View, Equatable {
+    let blocks: [Meeting.TranscriptBlock]
+    let emptyReason: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionHeading(text: "Transcript")
+            Card {
+                if let emptyReason {
+                    // An empty transcript has two very different causes, and saying
+                    // "no speech" for the second one is simply wrong.
+                    Text(emptyReason)
+                        .font(.caption)
+                        .foregroundStyle(Tok.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else {
+                    VStack(alignment: .leading, spacing: Tok.s4) {
+                        ForEach(blocks) { b in
+                            VStack(alignment: .leading, spacing: 2) {
+                                HStack(spacing: Tok.s3) {
+                                    Text(Fmt.timestamp(b.start)).font(.caption).monospacedDigit()
+                                        .foregroundStyle(Tok.textSecondary)
+                                    SpeakerChip(name: b.name, place: b.place,
+                                                isInferred: b.isInferred, basis: b.basis)
+                                }
+                                // Transcript text is prose, not code — never monospaced.
+                                Text(b.text).font(.body).fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

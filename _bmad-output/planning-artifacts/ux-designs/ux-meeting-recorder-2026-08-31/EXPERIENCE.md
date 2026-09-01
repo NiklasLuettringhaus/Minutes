@@ -213,6 +213,15 @@ The only place in the product where anything leaves the machine, and the copy ca
 
 ### Meetings list and detail (PRD §4.8)
 
+**Editing must not cost the transcript.** Typing in the title field or a speaker
+name changes one line of text, and the Transcript below it is unaffected — so it
+must not be re-rendered, which on a 598-utterance meeting means up to 228
+paragraphs each forcing its own text-layout pass. The rule for implementers: the
+grouped transcript is a value computed when the Meeting changes, not work done
+while someone types. Stated as a behavioural requirement because the defect was
+invisible in every small test meeting and only appeared on a real one.
+
+
 - Reverse-chronological rows: title, date, duration `{typography.metric}`, and `{components.speaker-chip}`s.
 - A row carries its own state: transcribing (with progress), failed (with `Retry`), or complete.
 - Detail is a read pane: metadata, then summary/decisions/actions if present, then the Transcript.
@@ -238,7 +247,7 @@ The only place in the product where anything leaves the machine, and the copy ca
 | State | Menu bar icon | Menu | Window banner |
 |---|---|---|---|
 | **Idle** | `waveform`, template tint, no animation | `Start Recording` | none |
-| **Recording** | `record.circle.fill` @ `{colors.state-recording}` | elapsed time, stream status, `Stop Recording` | recording variant with elapsed time |
+| **Recording** | `record.circle.fill` @ `{colors.state-recording}`, **steady** | elapsed time, stream status, `Stop Recording` | recording variant with elapsed time |
 | **Recording (degraded)** | same as Recording | `Mic only ⚠` on the stream line | degraded variant: "Recording your microphone only — system audio isn't being captured." |
 | **Transcribing** | `ellipsis.circle` @ `{colors.state-transcribing}` | which Meeting, `Start Recording` available | transcribing variant with progress |
 | **Transcription failed** | back to Idle | Idle menu | failure surfaces in Meetings, not the menu bar |
@@ -329,7 +338,7 @@ Behavioural; visual contrast is `DESIGN.md`'s.
 - **Live regions for state changes.** Session start/stop and transcription completion are announced.
 - **Text scales.** All type uses macOS text styles (`DESIGN.md § Typography`), so accessibility text sizes work. Panes must remain usable at the largest setting — which means no fixed-height rows containing text.
 - **Increase Contrast and Reduce Transparency are honoured** by using system materials rather than custom translucency.
-- **Reduce Motion:** there is almost no motion to reduce. Progress indicators remain, state transitions do not animate.
+- **Reduce Motion:** there is no motion to reduce beyond progress indicators. State transitions do not animate, and since increment 4 neither does the menu bar icon in any state (PRD FR-50, withdrawn) — so Reduce Motion needs no special path here rather than being honoured by a branch.
 - **No timed interactions.** The Detection Prompt expires on the system's schedule, and letting it expire is a safe default (decline). Nothing else is time-limited. Voice enrolment's countdown is not an exception: the user is not required to *act* within it, only to keep talking, and abandoning it stores nothing.
 - **Voice enrolment must be completable without seeing the meter.** The countdown is announced, the result is announced as text, and the meter is confirmation rather than instruction. A user who cannot see the level must still be able to tell that the sample was accepted, and why it was not.
 - **Identity announcements state their basis.** VoiceOver on a local-speaker chip announces "you, recognised from your enrolled voice" when that is how it was decided, and "you, the microphone held a single voice" when it was structural. The distinction is the honesty guarantee, so it cannot be visual-only.

@@ -42,8 +42,7 @@ struct MinutesApp: App {
             // Recording, so the menu bar never implies a Session that is not running.
             HStack(spacing: 3) {
                 Image(nsImage: MenuBarIcon.image(for: app.sessionState,
-                                                 isAsking: app.pendingPrompt != nil,
-                                                 pulsePhase: app.pulsePhase))
+                                                 isAsking: app.pendingPrompt != nil))
                 if app.sessionState.isRecording {
                     Text(Fmt.duration(app.elapsed)).monospacedDigit()
                 }
