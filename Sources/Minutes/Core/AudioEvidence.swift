@@ -22,7 +22,7 @@ import Foundation
 ///
 /// Measured consequence on the 13 real meetings on the author's machine
 /// (`spikes/calibration-audio-evidence-2026-09-02.md`): three system streams
-/// hold **pure digital silence, peak exactly 0.0000** — one of them 31 minutes
+/// hold **pure digital silence, peak exactly 0.0000** — one of them 32 minutes
 /// long — and all three were reported as captured successfully.
 struct AudioEvidence: Equatable, Sendable, Codable {
     /// Highest absolute sample seen over the whole capture. Never decays.
@@ -45,10 +45,19 @@ struct AudioEvidence: Equatable, Sendable, Codable {
     /// How much signal has to be present before capture counts as working.
     ///
     /// Half a second. It must stay small because the Test Playground records for
-    /// only five (FR-47), and it must exceed a click or a pop, which last
-    /// milliseconds. On the calibration data the failed streams scored 0.0 s and
-    /// the quietest working stream scored 1.5 s, so this sits between them
-    /// without being tuned to either.
+    /// only five (FR-47). On the calibration data the failed streams scored
+    /// 0.0 s and the quietest working stream scored 1.5 s, so this sits between
+    /// them without being tuned to either.
+    ///
+    /// **Its resolution is coarse and worth stating.** `nonSilentSeconds` is
+    /// accumulated per drained chunk — about 170 ms at 48 kHz — so a chunk
+    /// containing one loud sample counts whole. Three isolated clicks landing in
+    /// three different chunks would therefore clear this threshold. That is a
+    /// deliberate trade: per-sample counting is *worse*, because every waveform
+    /// passes through zero constantly and a genuine tone would undercount
+    /// badly. So this rejects a single pop, not a deliberate sequence of them —
+    /// which is the failure mode that actually occurs (a tap delivering exact
+    /// zeros), not the one an adversary would construct.
     static let minimumSignalSeconds: TimeInterval = 0.5
 
     /// The claim itself. Both conditions, because either alone is defeatable:
@@ -65,7 +74,12 @@ struct AudioEvidence: Equatable, Sendable, Codable {
                 ? "nothing was recorded"
                 : "\(Self.spell(duration)) of recording, and every sample is silent"
         }
-        return "only \(Self.spell(nonSilentSeconds)) of the \(Self.spell(duration)) recorded contained any sound"
+        // Clamped because the accumulators advance before the file write: a
+        // failed resample or write increments non-silent frames without
+        // advancing duration, which read as "only 3 seconds of the 1 second
+        // recorded". Clamping fixes the sentence; the write failure is logged
+        // where it happens rather than hidden here.
+        return "only \(Self.spell(min(nonSilentSeconds, duration))) of the \(Self.spell(duration)) recorded contained any sound"
     }
 
     /// A duration a person can read. Minutes past a minute and a half, because

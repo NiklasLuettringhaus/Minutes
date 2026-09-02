@@ -17,6 +17,11 @@ struct CapturedStreams: Sendable {
     /// state *why* a stream produced nothing rather than only that it did.
     var micEvidence: AudioEvidence = .none
     var systemEvidence: AudioEvidence = .none
+    /// Whether the tap was actually established. Distinguishes "the tap failed to
+    /// start", which reported itself at start, from "the tap ran and heard
+    /// nothing", which is the condition worth telling the user about — including
+    /// when it delivered no callbacks at all and so has zero duration.
+    var systemTapEstablished: Bool = false
 }
 
 protocol Capturing: AnyObject {

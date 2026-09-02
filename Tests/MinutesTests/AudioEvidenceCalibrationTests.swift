@@ -110,32 +110,44 @@ final class AudioEvidenceCalibrationTests: XCTestCase {
         print("[audio-evidence] the shipped rule accepted \(oldAccepts); this rule accepts \(newAccepts)")
         print("[audio-evidence] long streams of pure digital silence: \(silentButLong.isEmpty ? "none" : silentButLong.joined(separator: ", "))")
 
-        XCTAssertGreaterThan(examined, 0)
+        // Not `examined > 0` — the guards above already made that unfalsifiable.
+        // This is the claim that can actually be wrong.
         XCTAssertLessThanOrEqual(newAccepts, oldAccepts,
             "this rule must be no more permissive than the one it replaces")
     }
 
-    /// The claim that motivated the change, held as a regression: at least one
-    /// real stream is long, silent, and was previously reported as working.
-    func testAtLeastOneRealFalsePositiveExistedOnThisMachine() throws {
+    /// The claim that motivated the change, held as a regression rather than as a
+    /// count that cannot be wrong: any *long* stream of exact digital silence
+    /// must have been accepted by the shipped rule and must be rejected by this
+    /// one. The assertions are per-stream properties; the skip is for the case
+    /// where this machine simply has no such stream to demonstrate on.
+    func testLongSilentStreamsWereAcceptedBeforeAndAreRejectedNow() throws {
         try XCTSkipUnless(Self.enabled, "set MINUTES_AUDIO_CALIBRATION=1 to read real audio")
         guard let root = Self.meetingsRoot else {
             throw XCTSkip("no Meetings on this machine")
         }
         let ids = try FileManager.default.contentsOfDirectory(atPath: root.path)
-            .filter { !$0.hasPrefix(".") }
-        var falsePositives = 0
+            .filter { !$0.hasPrefix(".") }.sorted()
+
+        var demonstrated: [String] = []
         for id in ids {
             let u = root.appendingPathComponent(id).appendingPathComponent("system.wav")
             guard FileManager.default.fileExists(atPath: u.path) else { continue }
             let e = try evidence(of: u)
-            let oldRule = e.peak > 0.0001 || e.duration > 0.25
-            if oldRule && !e.producedAudio { falsePositives += 1 }
+            guard e.peak == 0, e.duration > 60 else { continue }
+
+            XCTAssertTrue(e.peak > 0.0001 || e.duration > 0.25,
+                "\(id): the shipped rule should have accepted this, or the premise is wrong")
+            XCTAssertFalse(e.producedAudio,
+                "\(id): \(Int(e.duration))s of exact silence is still being accepted")
+            XCTAssertNotNil(e.failureReason, "\(id): rejected without saying why")
+            demonstrated.append("\(id) \(Int(e.duration))s")
         }
-        print("[audio-evidence] system streams the old rule got wrong: \(falsePositives)")
-        guard falsePositives > 0 else {
-            throw XCTSkip("no false positives in this Meeting set — nothing to demonstrate")
+
+        print("[audio-evidence] long silent streams demonstrated: "
+              + (demonstrated.isEmpty ? "none" : demonstrated.joined(separator: ", ")))
+        if demonstrated.isEmpty {
+            throw XCTSkip("no long silent stream on this machine — nothing to demonstrate on")
         }
-        XCTAssertGreaterThan(falsePositives, 0)
     }
 }

@@ -159,9 +159,11 @@ enum UIShot {
             app.lastError = err
             shoot("\(name)-narrow", 320, nil) { FailureBanner() }
             shoot("\(name)-medium", 560, nil) { FailureBanner() }
-            shoot("\(name)-in-pane", 560, nil) {
-                GettingStartedPane(selection: .constant(.gettingStarted))
-            }
+            // No in-pane variant: the banner now sits at the window root rather
+            // than inside PaneScaffold, and the window root is a
+            // NavigationSplitView that ImageRenderer cannot draw. Rendering a
+            // pane here would show no banner and imply one is absent.
+            shoot("\(name)-wide", 720, nil) { FailureBanner() }
         }
         app.lastError = nil
 

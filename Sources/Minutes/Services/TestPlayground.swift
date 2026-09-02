@@ -124,7 +124,11 @@ final class TestPlayground: ObservableObject {
         // explanation (AD-36).
         if !streams.micEvidence.producedAudio {
             let why = streams.micEvidence.failureReason ?? "no sound was recorded"
-            phase = .failed("The microphone recorded no sound — \(why). Check the input device in System Settings > Sound, and that Minutes is not muted.")
+            // Not "check Minutes is not muted": run() builds a fresh
+            // DualStreamCapture and never sets isMicMuted, so a mute is not a
+            // possible cause here. Naming an impossible cause is the same defect
+            // as naming none.
+            phase = .failed("The microphone recorded no sound — \(why). Check that the right input device is selected in System Settings > Sound, and that its input volume is not at zero.")
             try? FileManager.default.removeItem(at: dir)
             return
         }

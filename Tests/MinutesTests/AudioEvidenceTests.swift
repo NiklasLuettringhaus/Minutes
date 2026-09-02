@@ -145,13 +145,30 @@ final class FailureRemedyTests: XCTestCase {
 
     func testRemedyLabelsAreNotEmpty() {
         for r in [MinutesError.Remedy.openMicrophoneSettings, .openSystemAudioSettings,
-                  .chooseTranscriptionModel, .chooseNotesFolder] {
+                  .chooseTranscriptionModel, .chooseNotesFolder, .runAudioTest] {
             XCTAssertFalse(r.label.isEmpty)
         }
     }
 
-    func testSilentSystemAudioPointsAtTheAudioPermission() {
-        XCTAssertEqual(MinutesError.systemAudioProducedSilence("x").remedy, .openSystemAudioSettings)
+    /// Deliberately *not* the settings pane. A tap that ran and heard nothing is
+    /// either a revoked permission or a quiet meeting, and both deliver exact
+    /// digital zeros — so the remedy is the thing that can tell them apart, not a
+    /// fix for whichever one we guessed.
+    func testSilentSystemAudioOffersTheTestRatherThanADiagnosis() {
+        XCTAssertEqual(MinutesError.systemAudioProducedSilence("x").remedy, .runAudioTest)
+    }
+
+    func testSilentSystemAudioNamesBothPossibleCauses() {
+        let s = MinutesError.systemAudioProducedSilence("x").recoverySuggestion!
+        XCTAssertTrue(s.contains("nothing was playing"), "got: \(s)")
+        XCTAssertTrue(s.contains("permission"), "got: \(s)")
+    }
+
+    /// A tap that failed to *establish* is diagnostic, so that one keeps the
+    /// settings remedy.
+    func testAFailedTapStillPointsAtTheSetting() {
+        XCTAssertEqual(MinutesError.systemAudioTapFailed(stage: "start", status: -1).remedy,
+                       .openSystemAudioSettings)
     }
 
     /// The reason a user sees must say what happened, and the silence case is the

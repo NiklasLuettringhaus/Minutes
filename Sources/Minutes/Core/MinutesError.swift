@@ -55,7 +55,7 @@ enum MinutesError: LocalizedError, Equatable {
         case .systemAudioTapFailed(let stage, let status):
             return "System audio capture failed at \(stage) (OSStatus \(status))."
         case .systemAudioProducedSilence(let d):
-            return "Only your side of the meeting was recorded — \(d)."
+            return "No system audio was recorded — \(d). Only your side of the meeting was captured."
         case .noDefaultOutputDevice:
             return "No default audio output device was found."
         case .audioFileWriteFailed(let d):
@@ -100,6 +100,10 @@ enum MinutesError: LocalizedError, Equatable {
         case openSystemAudioSettings
         case chooseTranscriptionModel
         case chooseNotesFolder
+        /// Runs the one thing that can distinguish a lost permission from a quiet
+        /// meeting. Offered instead of a settings pane wherever the app does not
+        /// actually know which of the two happened.
+        case runAudioTest
 
         var label: String {
             switch self {
@@ -107,6 +111,7 @@ enum MinutesError: LocalizedError, Equatable {
             case .openSystemAudioSettings: return "Open Audio Settings"
             case .chooseTranscriptionModel: return "Open Transcription"
             case .chooseNotesFolder:       return "Open General"
+            case .runAudioTest:            return "Test Audio"
             }
         }
     }
@@ -115,8 +120,13 @@ enum MinutesError: LocalizedError, Equatable {
         switch self {
         case .microphonePermissionDenied, .microphoneUnavailable:
             return .openMicrophoneSettings
-        case .systemAudioTapFailed, .systemAudioProducedSilence:
+        case .systemAudioTapFailed:
+            // The tap failed to establish, which *is* diagnostic.
             return .openSystemAudioSettings
+        case .systemAudioProducedSilence:
+            // The tap worked and heard nothing. Which of the two causes that was
+            // is unknown, so offer the test rather than a fix for a guess.
+            return .runAudioTest
         case .modelNotDownloaded, .modelLoadFailed:
             return .chooseTranscriptionModel
         case .notesFolderUnavailable, .notesFolderNotWritable:
@@ -138,7 +148,11 @@ enum MinutesError: LocalizedError, Equatable {
         case .systemAudioTapFailed:
             return "macOS revokes system-audio permission when Minutes is rebuilt. Run the reset command shown in Settings, then try again."
         case .systemAudioProducedSilence:
-            return "macOS gives no way to check this permission, so silence is the only symptom. Enable Minutes under Audio Recording, or run the reset command in Settings, then use the test in Getting Started."
+            // Deliberately two causes, because the app genuinely cannot tell them
+            // apart: a revoked permission and nothing having played both deliver
+            // exact digital zeros. Naming only the permission would send someone
+            // who recorded a solo memo to reset TCC for nothing.
+            return "Either nothing was playing on this Mac, or Minutes has lost permission to record system audio. macOS gives no way to tell those apart, so the five-second test in Getting Started is how to find out."
         case .modelNotDownloaded:
             return "Download it in Settings > Transcription."
         case .voiceSampleTooShort, .voiceSampleSilent:

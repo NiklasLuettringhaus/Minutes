@@ -125,11 +125,14 @@ final class SessionCoordinator: ObservableObject {
         // and now derived from the samples rather than from elapsed time (AD-36).
         Preferences.shared.lastSystemCaptureOK = streams.systemCaptured
 
-        // A degraded recording is a thing the user can fix, so say so rather than
-        // only logging it. Not raised when the tap was never established — that
-        // path already reported itself at start.
-        if !streams.systemCaptured, let why = streams.systemEvidence.failureReason,
-           streams.systemEvidence.duration > 0 {
+        // A degraded recording is a thing the user can act on, so say so rather
+        // than only logging it. Gated on the tap having been established, not on
+        // duration: a tap that started and delivered no callbacks at all has zero
+        // duration, and suppressing that case would reproduce exactly the silence
+        // FR-66 exists to remove. A tap that never started already reported
+        // itself at start.
+        if streams.systemTapEstablished, !streams.systemCaptured,
+           let why = streams.systemEvidence.failureReason {
             AppState.shared.lastError = .systemAudioProducedSilence(why)
         }
 

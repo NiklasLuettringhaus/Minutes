@@ -94,6 +94,22 @@ struct FailureBanner: View {
         case .openSystemAudioSettings:  Permissions.openSystemAudioSettings()
         case .chooseTranscriptionModel: AppState.shared.paneRequest = MainWindow.Pane.transcription.rawValue
         case .chooseNotesFolder:        AppState.shared.paneRequest = MainWindow.Pane.general.rawValue
+        case .runAudioTest:             AppState.shared.paneRequest = MainWindow.Pane.gettingStarted.rawValue
         }
     }
+}
+
+
+extension MinutesError.Remedy {
+    /// Which pane this remedy selects, if it selects one. Kept beside the remedy
+    /// so the menu bar and the banner cannot disagree about it.
+    var pane: MainWindow.Pane? {
+        switch self {
+        case .chooseTranscriptionModel: return .transcription
+        case .chooseNotesFolder:        return .general
+        case .runAudioTest:             return .gettingStarted
+        case .openMicrophoneSettings, .openSystemAudioSettings: return nil
+        }
+    }
+    var opensAPane: Bool { pane != nil }
 }

@@ -89,7 +89,14 @@ struct MenuBarContent: View {
                 Text(e.errorDescription ?? "Something went wrong.")
                 if let s = e.recoverySuggestion { Text(s) }
                 if let r = e.remedy {
-                    Button(r.label) { FailureBanner.perform(r) }
+                    Button(r.label) {
+                        // A remedy that selects a pane needs the window to exist:
+                        // paneRequest is only observed by MainWindow, which is
+                        // created lazily, so pressing this with the window closed
+                        // would otherwise do nothing at all.
+                        if r.opensAPane { openWindow(r.pane ?? .gettingStarted) }
+                        FailureBanner.perform(r)
+                    }
                 }
                 Button("Dismiss") { app.lastError = nil }
                 Divider()

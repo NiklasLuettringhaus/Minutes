@@ -56,6 +56,7 @@ final class DualStreamCapture: Capturing {
         let micEvidence = micResult.evidence
         var systemDuration: TimeInterval = 0
         var systemEvidence = AudioEvidence.none
+        let tapEstablished = (system != nil)
         if let s = system {
             let r = s.stop()
             systemDuration = r.duration
@@ -83,7 +84,8 @@ final class DualStreamCapture: Capturing {
             duration: duration,
             systemCaptured: produced,
             micEvidence: micEvidence,
-            systemEvidence: systemEvidence)
+            systemEvidence: systemEvidence,
+            systemTapEstablished: tapEstablished)
     }
 
     /// Mutes only the Mic Stream. The System Stream — the far end of the meeting —

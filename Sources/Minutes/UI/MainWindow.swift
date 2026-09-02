@@ -65,8 +65,19 @@ struct MainWindow: View {
             .listStyle(.sidebar)
             .navigationSplitViewColumnWidth(min: 190, ideal: 205, max: 240)
         } detail: {
-            detail
-                .frame(minWidth: 560, minHeight: 460)
+            VStack(alignment: .leading, spacing: 0) {
+                // At the window root rather than inside PaneScaffold: two of the
+                // six panes build their own root and would otherwise never show
+                // it — including Getting Started, which is where the system-audio
+                // remedy sends the user. Above the pane's scroll, so it cannot be
+                // scrolled away from either.
+                if app.lastError != nil {
+                    FailureBanner()
+                        .padding([.horizontal, .top], Tok.paneMargin)
+                }
+                detail
+            }
+            .frame(minWidth: 560, minHeight: 460)
         }
         .onChange(of: selection) { _, new in
             Preferences.shared.lastPane = new.rawValue
@@ -105,10 +116,6 @@ struct PaneScaffold<Content: View>: View {
     var body: some View {
         ShotScroll {
             VStack(alignment: .leading, spacing: Tok.cardGap) {
-                // Above the title, and on every pane: a failure the user needs to
-                // see should not depend on which pane they happen to be looking
-                // at (FR-66).
-                FailureBanner()
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.largeTitle)
                     Text(subtitle).font(.body).foregroundStyle(Tok.textSecondary)
