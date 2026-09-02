@@ -65,6 +65,24 @@ Story 9.1: no summary unless something real wrote it; store audio at 16 kHz mono
 
 Not `fix bug`, not `wip`, not `address review comments`.
 
+## Tests that read real data
+
+Two suites read the recordings on the machine they run on, and both skip
+cleanly when there are none — so they are meaningful for whoever has the data
+and silent for everyone else. Neither copies any of it into the repository:
+those are other people's voices, and PRD §9.1 keeps them where they were
+recorded.
+
+```bash
+swift test                                    # 174 tests, ~0.3 s
+MINUTES_ML_TESTS=1 swift test                 # + the embedder, on real audio
+MINUTES_AUDIO_CALIBRATION=1 swift test        # + every stream of every meeting
+```
+
+The last one reads about a gigabyte and takes just under a minute, which is why
+it is gated rather than merely slow: a suite a developer stops running is worse
+than a suite that omits something.
+
 ## What a change needs before it merges
 
 - `swift test` green. The suite is fast and there is no reason to skip it.
