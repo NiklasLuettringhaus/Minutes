@@ -30,7 +30,7 @@ struct GettingStartedPane: View {
     private var requiredSatisfied: Bool { modelReady && micState.isAuthorized && folderReady }
 
     var body: some View {
-        ScrollView {
+        ShotScroll {
             VStack(alignment: .leading, spacing: Tok.cardGap) {
                 header
                 quickSetup

@@ -235,7 +235,10 @@ built app rather than from the spine.
 - **A selected row owns the colour of everything inside it.** The system fills it with the user's accent, so every element that paints its own colour — chips, the recording and transcribing tints, secondary labels — surrenders that colour and takes the selection's foreground instead. State stays legible through the glyph beside it, and place through the chip's glyph. *Added increment 4:* all three were painting themselves unreadable on a selected row, and the chips were only the most visible of them.
 - Detail is a read pane: metadata, then summary/decisions/actions if present, then the Transcript.
 - Transcript rendering groups consecutive Utterances from one Speaker under a single label rather than repeating it per line (PRD FR-33).
-- **A speaker row is two lines, not one:** the chip, `Rename`, `Exclude` and the line count across the top, and one line of provenance underneath — what the app's claim about this voice rests on, and what it was heard through. *Written down in increment 4 after the one-line version broke:* it had grown to eight children including two unconstrained sentences, and SwiftUI took the width back out of all of them, rendering one character per line. The rule that prevents a recurrence is the same one `{components.voice-row}` and `{components.checklist-row}` already state — controls on a line, prose on its own line beneath — and it now covers every row in the product rather than two of three.
+- **Speakers group by where they were, and the device is named once per group.** "In the room with you · MacBook Pro Microphone", then its speakers; "On the call · system audio — Microsoft Teams", then its speakers. Place is the structural fact (AD-11), so it is the honest grouping — and it removes the eight identical copies of "heard through MacBook Pro Microphone" that made this section a wall on a fourteen-speaker meeting. *Added increment 4 after the user reported it as "stuff is squeezed together".*
+- **One line per speaker**, and the provenance sentence appears **only where the app is making a claim** — an enrolment match, an automatically applied name, an unplaceable voice, an exclusion. On the other rows it restated the group heading above it. Four rows out of sixteen, not sixteen out of sixteen.
+- **Renaming is available from any line in the transcript**, and the affordance is the speaker chip on that line. The transcript is where a voice is *recognised* — you read what someone said and you know who it was — so the fix belongs there and not only in a list which by then has scrolled away and where the speaker is a label with no words attached. The popover states that the rename applies to every line that speaker said, because clicking one line implies otherwise. *Requested directly by the user.*
+- ~~**A speaker row is two lines, not one:**~~ *(superseded by the grouping above; kept because the reason it existed still binds — controls on a line, prose on its own line beneath.)* the chip, `Rename`, `Exclude` and the line count across the top, and one line of provenance underneath — what the app's claim about this voice rests on, and what it was heard through. *Written down in increment 4 after the one-line version broke:* it had grown to eight children including two unconstrained sentences, and SwiftUI took the width back out of all of them, rendering one character per line. The rule that prevents a recurrence is the same one `{components.voice-row}` and `{components.checklist-row}` already state — controls on a line, prose on its own line beneath — and it now covers every row in the product rather than two of three.
 - Speaker rename is inline on the chip in the detail header — click the chip, type, commit. It is not buried in a sheet or a settings pane, because PRD FR-24 is a frequent action.
 - Rename commits on Return or focus loss; Escape cancels. It rewrites the Note in place and, if the label was a Remote Speaker, updates the Speaker Profile (PRD FR-25).
 - Row actions: `Reveal in Finder`, `Open in Editor`, `Retry` (failed only), `Delete…`.
@@ -333,10 +336,23 @@ Rules that apply to all four:
 - **Menu bar click** — opens the menu. Left-click only; no distinct right-click menu, because two menus on one icon is a discoverability trap.
 - **Single-click** activates in lists; no double-click-to-open. Selection and activation are the same gesture in a list this shallow.
 - **Return** commits an inline edit; **Escape** cancels it and restores the prior value.
-- **No drag and drop** anywhere. No custom gestures. No hover-only affordances — anything actionable is visible without hovering.
+- **No drag and drop** anywhere. No custom gestures. No hover-only affordances — anything actionable is visible without hovering. A borderless button in a row full of text is a hover-only affordance in practice, whatever the code says.
+- **A row of controls adapts rather than assuming a width.** `ViewThatFits`: one line where it fits, stacked where it does not. A row that overflows its container is the same defect as a row that compresses its children, and the second one shipped twice.
 - **Global hotkey:** none in v1. It is a real convenience but it is a new permission surface and a conflict-resolution UI, and PRD §5 keeps the surface small. Logged as a v2 candidate.
 - **Window behaviour:** closing the window does not quit the app (it is menu-bar-resident). Reopening restores the last sidebar selection. Only one window ever exists (PRD FR-5).
 - **Notification actions** perform without bringing the app forward. Clicking `Record` starts the Session and does not steal focus from the meeting the user is in — this matters, because the user is mid-conversation.
+
+## Checking a layout claim
+
+`./Scripts/uishot.sh` renders every pane with fixture data at three widths. Any
+behavioural claim in this document about what fits, wraps or truncates is
+checkable that way, and two increments of layout defects reached the user because
+it was not. The tool cannot render `Button`, `Picker` or `ProgressView`, so it
+answers *does this layout hold*, not *is the app correct*.
+
+The fixtures are deliberately harsher than reality — sixteen speakers, a
+40-character name, a 320pt column — because a fixture covering only the easy case
+is the reason the hard case shipped.
 
 ## Accessibility Floor
 

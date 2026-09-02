@@ -13,6 +13,11 @@ enum Entry {
             SelfTest.run()
         } else if CommandLine.arguments.contains("--doctor") {
             Doctor.run()
+        } else if CommandLine.arguments.contains("--uishot") {
+            // Renders the panes to PNG with fixture data, so a layout defect is
+            // findable from a terminal. Needs no screen-recording permission —
+            // an app rendering its own view tree captures nobody's screen.
+            MainActor.assumeIsolated { UIShot.run() }
         } else {
             MinutesApp.main()
         }

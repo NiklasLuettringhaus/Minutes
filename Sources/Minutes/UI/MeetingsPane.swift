@@ -163,80 +163,19 @@ struct MeetingsPane: View {
         .background(.bar)
     }
 
-    /// Secondary text inside a row, which is the selection's own secondary colour
-    /// when the row is filled and `{colors.text-secondary}` otherwise.
-    private func secondary(_ isSelected: Bool) -> Color {
-        isSelected ? Color(nsColor: .alternateSelectedControlTextColor).opacity(0.75)
-                   : Tok.textSecondary
-    }
-
-    /// A state tint — recording red, transcribing amber — inside a row that may be
-    /// filled. On a filled row the tint is surrendered: the glyph beside it already
-    /// carries the state, and a warm tint on the user's accent is unreadable at any
-    /// contrast. This is DESIGN.md's rule that colour is never the only signal,
-    /// arriving where it was needed rather than where it was written.
-    private func stateTint(_ tint: Color, _ isSelected: Bool) -> Color {
-        isSelected ? Color(nsColor: .alternateSelectedControlTextColor) : tint
-    }
-
     private func row(_ m: Meeting) -> some View {
-        // The system fills a selected row with the user's accent and owns the
-        // foreground of everything inside it. Anything in here that paints its own
-        // colour has to know that, or it paints itself invisible — which is exactly
-        // what the speaker chips were doing.
-        let isSelected = selected.contains(m.id)
-        return VStack(alignment: .leading, spacing: 3) {
-            Text(m.metadata?.title ?? "Untitled meeting")
-                .font(.body).lineLimit(1)
-            HStack(spacing: Tok.s3) {
-                Text(dateLabel(m)).font(.caption).monospacedDigit()
-                    .foregroundStyle(secondary(isSelected))
-                Text(Fmt.duration(m.duration)).font(.caption).monospacedDigit()
-                    .foregroundStyle(secondary(isSelected))
-            }
-            // A row carries its own state (FR-36). Every branch below paints its own
-            // colour, so every branch has to yield it to a selection fill — the
-            // chips were the visible half of a problem all of these shared.
-            if m.hasFailed {
-                HStack(spacing: 4) {
-                    Image(systemName: "exclamationmark.triangle.fill").font(.caption2)
-                    Text("Failed").font(.caption2)
-                }.foregroundStyle(stateTint(Tok.recording, isSelected))
-            } else if app.inFlight.contains(m.id) {
-                // A spinner now means work is genuinely running, not merely that
-                // the record stopped short of `written`.
-                HStack(spacing: 4) {
-                    ProgressView().controlSize(.small).scaleEffect(0.6)
-                    Text(m.stage.displayName).font(.caption2)
-                        .foregroundStyle(stateTint(Tok.transcribing, isSelected))
-                }
-            } else if !m.isComplete {
-                HStack(spacing: 4) {
-                    Image(systemName: "pause.circle").font(.caption2)
-                    Text("Interrupted").font(.caption2)
-                }.foregroundStyle(secondary(isSelected))
-            } else if app.missingNotes.contains(m.id) {
-                // FR-53: complete in the record is not complete on disk.
-                HStack(spacing: 4) {
-                    Image(systemName: "doc.badge.ellipsis").font(.caption2)
-                    Text("Note missing").font(.caption2)
-                }.foregroundStyle(stateTint(Tok.recording, isSelected))
-            } else {
-                HStack(spacing: Tok.s2) {
-                    ForEach(m.speakers.prefix(4), id: \.raw) { s in
-                        SpeakerChip(name: m.displayName(for: s), place: s.place,
-                                    isInferred: m.isInferred(s),
-                                    inSelectedRow: isSelected)
-                    }
-                    if m.speakers.count > 4 {
-                        Text("+\(m.speakers.count - 4)").font(.caption2)
-                            .foregroundStyle(isSelected
-                                             ? Color(nsColor: .alternateSelectedControlTextColor)
-                                             : Tok.textSecondary)
-                    }
-                }
-            }
-        }
+        rowContent(m, isSelected: selected.contains(m.id))
+    }
+
+    /// `isSelected` is a parameter rather than read from `selected`, so `--uishot`
+    /// can render both states without driving a `List`'s selection — and because
+    /// the selected state is where the colour defects live, it is the state most
+    /// worth being able to render.
+    @ViewBuilder
+    func rowContent(_ m: Meeting, isSelected: Bool) -> some View {
+        MeetingRow(meeting: m, isSelected: isSelected,
+                   isInFlight: app.inFlight.contains(m.id),
+                   noteMissing: app.missingNotes.contains(m.id))
         .padding(.vertical, 3)
         .contextMenu {
             if let f = m.noteFilename, let folder = prefs.notesFolder() {
@@ -297,9 +236,18 @@ struct MeetingDetail: View {
     /// evaluation meant every keystroke in the title or a speaker name walked all
     /// of the meeting's utterances — 598 in the longest real one.
     @State private var blocks: [Meeting.TranscriptBlock] = []
+    /// Which speaker is being renamed from inside the transcript, if any.
+    ///
+    /// The user asked for this directly: *"renaming should be possible within the
+    /// script not just the speaker list at the top."* They are right, and the
+    /// reason is that the transcript is where you *recognise* a voice — you read a
+    /// line, know who said it, and the fix should be there rather than after
+    /// scrolling back to a list that no longer says which one they were.
+    @State private var renamingInTranscript: SpeakerLabelID?
+    @State private var transcriptDraft = ""
 
     var body: some View {
-        ScrollView {
+        ShotScroll {
             VStack(alignment: .leading, spacing: Tok.cardGap) {
                 titleBlock
                 if meeting.hasFailed { failureBlock }
@@ -394,25 +342,51 @@ struct MeetingDetail: View {
         }
     }
 
-    /// Inline rename on the chip — a frequent action, so it is not buried in a
-    /// sheet (FR-24).
+    /// Who spoke, grouped by where they were.
     ///
-    /// **Two lines per speaker, not one.** The single-`HStack` version held up to
-    /// eight children including two unconstrained prose texts, so SwiftUI took the
-    /// width back out of every one of them and the pane rendered a character per
-    /// line. Increment 4 caused it: the basis note (FR-65) renders for nearly every
-    /// speaker, where the caption it sat beside had only ever appeared for an
-    /// inferred one. The shape here is the one `{components.voice-row}` already
-    /// declares — controls on top, one line of provenance underneath.
+    /// **Rebuilt after the user photographed it.** The previous version was a flat
+    /// list of one row per speaker, each two lines tall, each carrying its own copy
+    /// of "heard through MacBook Pro Microphone". On a real fourteen-speaker
+    /// meeting that is a 1100pt wall of near-identical text before the transcript,
+    /// with 28 borderless text buttons in it — and the user's words were "stuff is
+    /// squeezed together and I am not sure what buttons to click". Both halves of
+    /// that were fair.
+    ///
+    /// Three changes, each removing repetition rather than shrinking it:
+    ///
+    /// - **Grouped by place**, with the device named once per group instead of once
+    ///   per speaker. Place is the structural fact (AD-11), so it is also the
+    ///   honest way to group, and eight identical device lines collapse to one.
+    /// - **One line per speaker.** The provenance sentence stays only where it is a
+    ///   *claim* — the two rows where the app says who someone is — rather than on
+    ///   every row, where it was mostly restating the group heading.
+    /// - **Bordered buttons.** `.borderless` renders a button as plain text, which
+    ///   is precisely why the user could not tell what was clickable.
     private var speakerBlock: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SectionHeading(text: "Speakers")
+            SectionHeading(text: "Speakers", trailing: AnyView(
+                Text(meeting.speakers.count == 1 ? "1 voice"
+                                                 : "\(meeting.speakers.count) voices")
+                    .font(.caption).foregroundStyle(Tok.textSecondary)
+            ))
             Card {
-                VStack(alignment: .leading, spacing: Tok.s4) {
-                    ForEach(meeting.speakers, id: \.raw) { s in
-                        speakerRow(s)
+                VStack(alignment: .leading, spacing: Tok.s5) {
+                    ForEach(speakerGroups, id: \.title) { group in
+                        VStack(alignment: .leading, spacing: Tok.s3) {
+                            // The device, once per group rather than once per row.
+                            HStack(spacing: Tok.s2) {
+                                Text(group.title).font(.caption).fontWeight(.medium)
+                                Text("·").foregroundStyle(Tok.separator)
+                                Text(group.heardThrough).font(.caption)
+                                    .foregroundStyle(Tok.textSecondary)
+                                    .lineLimit(1).truncationMode(.middle)
+                            }
+                            ForEach(group.speakers, id: \.raw) { s in
+                                speakerRow(s)
+                            }
+                        }
                     }
-                    Text("Renaming two speakers to the same name merges them — the fix when one person was split in two.")
+                    Text("Renaming two speakers to the same name merges them — the fix when one person was split in two. You can also rename from any line in the transcript below.")
                         .font(.caption2).foregroundStyle(Tok.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -420,78 +394,140 @@ struct MeetingDetail: View {
         }
     }
 
+    /// In-room voices, then remote ones. Each group names the device once.
+    private var speakerGroups: [SpeakerGroup] {
+        let inRoom = meeting.speakers.filter { !$0.isRemote }
+        let remote = meeting.speakers.filter(\.isRemote)
+        var out: [SpeakerGroup] = []
+        if let first = inRoom.first {
+            out.append(SpeakerGroup(title: inRoom.count == 1 ? "In the room" : "In the room with you",
+                                    heardThrough: meeting.heardThrough(first),
+                                    speakers: inRoom))
+        }
+        if let first = remote.first {
+            out.append(SpeakerGroup(title: "On the call",
+                                    heardThrough: meeting.heardThrough(first),
+                                    speakers: remote))
+        }
+        return out
+    }
+
+    struct SpeakerGroup {
+        let title: String
+        let heardThrough: String
+        let speakers: [SpeakerLabelID]
+    }
+
     @ViewBuilder
     private func speakerRow(_ s: SpeakerLabelID) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 2) {
             if editingSpeaker == s {
                 HStack(spacing: Tok.s3) {
                     TextField("Name", text: $draftName)
                         .textFieldStyle(.roundedBorder)
-                        .frame(width: 180)
+                        .frame(maxWidth: 200)
                         .onSubmit { commitSpeaker(s) }
-                    Button("Save") { commitSpeaker(s) }.controlSize(.small)
-                    Button("Cancel") { editingSpeaker = nil }.controlSize(.small)
+                    Button("Save") { commitSpeaker(s) }
+                        .buttonStyle(.borderedProminent).tint(Tok.brand).controlSize(.small)
+                    Button("Cancel") { editingSpeaker = nil }
+                        .buttonStyle(.bordered).controlSize(.small)
                     Spacer(minLength: 0)
                 }
             } else {
-                HStack(spacing: Tok.s4) {
-                    SpeakerChip(name: meeting.displayName(for: s),
-                                place: s.place,
-                                isInferred: meeting.isInferred(s),
-                                basis: meeting.basis(for: s))
-                        .layoutPriority(1)
-                    Button("Rename") {
-                        draftName = meeting.displayName(for: s)
-                        editingSpeaker = s
+                // One line when it fits, two when it does not. The detail column
+                // has a 560pt minimum so one line is the real case — but the tool
+                // rendered this at 320pt and the row overflowed its container
+                // instead of adapting, which is the same class of bug as the
+                // collapse it just replaced. `ViewThatFits` makes the narrow case
+                // degrade rather than break.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: Tok.s3) {
+                        identity(s)
+                        Spacer(minLength: Tok.s3)
+                        controls(s)
                     }
-                    .buttonStyle(.borderless).font(.caption)
-                    .fixedSize()
-
-                    Spacer(minLength: Tok.s3)
-
-                    // Per-speaker, per-meeting, and never automatic. A room usually
-                    // holds participants, so the app cannot tell a colleague beside
-                    // you from a stranger beside you — but you can, instantly.
-                    Button(meeting.isExcluded(s) ? "Include" : "Exclude") {
-                        Task {
-                            await SessionCoordinator.shared
-                                .setSpeakerExcluded(!meeting.isExcluded(s),
-                                                    speaker: s, meetingID: meeting.id)
-                        }
+                    VStack(alignment: .leading, spacing: Tok.s2) {
+                        HStack(spacing: Tok.s3) { identity(s); Spacer(minLength: 0) }
+                        HStack(spacing: Tok.s3) { controls(s); Spacer(minLength: 0) }
                     }
-                    .buttonStyle(.borderless).font(.caption)
-                    .fixedSize()
-                    .help(meeting.isExcluded(s)
-                          ? "Put this speaker back in the note"
-                          : "Leave this speaker out of the note — the speech is kept here")
-
-                    Text("\(count(of: s)) lines").font(.caption).monospacedDigit()
-                        .foregroundStyle(meeting.isExcluded(s) ? Tok.textSecondary.opacity(0.6)
-                                                               : Tok.textSecondary)
-                        .fixedSize()
                 }
-                // The provenance line: what this claim rests on, and what it was
-                // heard through. Prose belongs on its own line where it has the
-                // full card width, not competing with four controls for it.
-                Text(provenanceLine(for: s))
-                    .font(.caption2).foregroundStyle(Tok.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                // Only where the app is making a claim about identity (FR-65), not
+                // on every row. On the others this line said what the group heading
+                // above it already says.
+                if let note = claimNote(for: s) {
+                    Text(note)
+                        .font(.caption2).foregroundStyle(Tok.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }
 
-    /// One line: how the app knows who this is, and what it was heard through.
-    ///
-    /// FR-65 requires a claim state its basis, and the two ways a voice becomes
-    /// "you" render identically in the transcript — one cannot be wrong, the other
-    /// is a measurement. Joined into a single sentence rather than three views, so
-    /// the row cannot go back to fighting itself for width.
-    private func provenanceLine(for s: SpeakerLabelID) -> String {
+    /// Who, and how much they said.
+    @ViewBuilder
+    private func identity(_ s: SpeakerLabelID) -> some View {
+        SpeakerChip(name: meeting.displayName(for: s),
+                    place: s.place,
+                    isInferred: meeting.isInferred(s),
+                    basis: meeting.basis(for: s))
+        Text(lineCount(s)).font(.caption).monospacedDigit()
+            .foregroundStyle(meeting.isExcluded(s) ? Tok.textSecondary.opacity(0.6)
+                                                   : Tok.textSecondary)
+            .fixedSize()
+    }
+
+    /// Bordered, so they read as controls. The previous borderless pair rendered as
+    /// two more words of grey text among four others, which is why the user could
+    /// not tell what was clickable.
+    @ViewBuilder
+    private func controls(_ s: SpeakerLabelID) -> some View {
+        Button("Rename") {
+            draftName = meeting.displayName(for: s)
+            editingSpeaker = s
+        }
+        .buttonStyle(.bordered).controlSize(.small).fixedSize()
+        // Per-speaker, per-meeting, and never automatic. A room usually holds
+        // participants, so the app cannot tell a colleague beside you from a
+        // stranger beside you — but you can, instantly.
+        Button(meeting.isExcluded(s) ? "Include" : "Exclude") {
+            Task {
+                await SessionCoordinator.shared
+                    .setSpeakerExcluded(!meeting.isExcluded(s),
+                                        speaker: s, meetingID: meeting.id)
+            }
+        }
+        .buttonStyle(.bordered).controlSize(.small).fixedSize()
+        .help(meeting.isExcluded(s)
+              ? "Put this speaker back in the note"
+              : "Leave this speaker out of the note — the speech is kept here")
+    }
+
+    private func lineCount(_ s: SpeakerLabelID) -> String {
+        let n = count(of: s)
+        return n == 1 ? "1 line" : "\(n) lines"
+    }
+
+    /// The basis, but only when it is an identity *claim* or an explicit refusal —
+    /// the two cases a reader cannot infer from the group heading.
+    private func claimNote(for s: SpeakerLabelID) -> String? {
         var parts: [String] = []
-        if let note = basisNote(for: s) { parts.append(note) }
+        switch meeting.basis(for: s) {
+        case .structural:
+            parts.append("your microphone held a single voice, so this is certain")
+        case .enrolmentMatch(let d):
+            if let d {
+                parts.append(String(format: "recognised from your recorded voice (distance %.2f — lower is closer)", d))
+            } else {
+                parts.append("recognised from your recorded voice")
+            }
+        case .inRoomUnplaceable:
+            parts.append("speech from the room that could not be matched to any voice")
+        case .inRoomAnonymous, .remote:
+            break
+        }
         if meeting.isInferred(s) { parts.append("recognised automatically — check it is right") }
-        parts.append("heard through \(meeting.heardThrough(s))")
-        return parts.joined(separator: " · ")
+        if meeting.isExcluded(s) { parts.append("left out of the note") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private func metadataBlock(_ md: MeetingMetadata) -> some View {
@@ -587,8 +623,18 @@ struct MeetingDetail: View {
                            ? (meeting.stage < .transcribed
                               ? "Not transcribed yet — this recording was interrupted before it finished."
                               : "No speech was transcribed.")
-                           : nil)
-            .equatable()
+                           : nil,
+                       renaming: $renamingInTranscript,
+                       draft: $transcriptDraft,
+                       onCommit: { label, name in
+                           renamingInTranscript = nil
+                           let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                           guard !trimmed.isEmpty else { return }
+                           Task {
+                               await SessionCoordinator.shared.renameSpeaker(
+                                   meetingID: meeting.id, label: label, to: trimmed)
+                           }
+                       })
     }
 
     private var provenanceBlock: some View {
@@ -675,6 +721,16 @@ struct MeetingDetail: View {
 private struct TranscriptCard: View, Equatable {
     let blocks: [Meeting.TranscriptBlock]
     let emptyReason: String?
+    @Binding var renaming: SpeakerLabelID?
+    @Binding var draft: String
+    let onCommit: (SpeakerLabelID, String) -> Void
+
+    /// Compares only what is rendered. The closure is not comparable and the
+    /// bindings change identity on every parent render, so both are excluded
+    /// deliberately — `renaming` is included because it *is* rendered.
+    static func == (a: TranscriptCard, b: TranscriptCard) -> Bool {
+        a.blocks == b.blocks && a.emptyReason == b.emptyReason && a.renaming == b.renaming
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -694,8 +750,27 @@ private struct TranscriptCard: View, Equatable {
                                 HStack(spacing: Tok.s3) {
                                     Text(Fmt.timestamp(b.start)).font(.caption).monospacedDigit()
                                         .foregroundStyle(Tok.textSecondary)
-                                    SpeakerChip(name: b.name, place: b.place,
-                                                isInferred: b.isInferred, basis: b.basis)
+                                    // The chip is the rename affordance here. You
+                                    // recognise a voice by reading what it said, so
+                                    // the fix belongs on the line you recognised it
+                                    // from — not in a list you have to scroll back
+                                    // to, where the speaker is a label again.
+                                    Button {
+                                        draft = b.name
+                                        renaming = b.speaker
+                                    } label: {
+                                        SpeakerChip(name: b.name, place: b.place,
+                                                    isInferred: b.isInferred, basis: b.basis)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Click to rename \(b.name) everywhere in this meeting")
+                                    .popover(isPresented: Binding(
+                                        get: { renaming == b.speaker },
+                                        set: { if !$0 && renaming == b.speaker { renaming = nil } }
+                                    ), arrowEdge: .bottom) {
+                                        renamePopover(b)
+                                    }
+                                    Spacer(minLength: 0)
                                 }
                                 // Transcript text is prose, not code — never monospaced.
                                 Text(b.text).font(.body).fixedSize(horizontal: false, vertical: true)
@@ -705,5 +780,146 @@ private struct TranscriptCard: View, Equatable {
                 }
             }
         }
+    }
+
+    /// Small, and says what the rename will do. "Everywhere in this meeting" is
+    /// the part worth stating: FR-24 renames the label, not the one line, and a
+    /// user clicking a single line could reasonably expect otherwise.
+    @ViewBuilder
+    private func renamePopover(_ b: Meeting.TranscriptBlock) -> some View {
+        VStack(alignment: .leading, spacing: Tok.s3) {
+            Text("Rename this speaker").font(.body)
+            Text("Applies to every line they spoke in this meeting, and Minutes will recognise the voice next time.")
+                .font(.caption2).foregroundStyle(Tok.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 260, alignment: .leading)
+            TextField("Name", text: $draft)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 220)
+                .onSubmit { onCommit(b.speaker, draft) }
+            HStack {
+                Button("Cancel") { renaming = nil }
+                    .buttonStyle(.bordered).controlSize(.small)
+                Spacer()
+                Button("Rename") { onCommit(b.speaker, draft) }
+                    .buttonStyle(.borderedProminent).tint(Tok.brand).controlSize(.small)
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(Tok.s5)
+    }
+}
+
+/// One row in the Meetings list.
+///
+/// Its own view, with explicit inputs and no `@EnvironmentObject`, for two
+/// reasons. It can be rendered standalone by `--uishot` — which matters because
+/// every layout defect this row has shipped was a *narrow-column* defect that the
+/// default window width hid. And a row that declares what it depends on cannot
+/// silently start depending on more, which is how it grew to eight children in
+/// the first place.
+struct MeetingRow: View {
+    let meeting: Meeting
+    let isSelected: Bool
+    let isInFlight: Bool
+    let noteMissing: Bool
+
+    var body: some View {
+        // The system fills a selected row with the user's accent and owns the
+        // foreground of everything inside it. Anything here that paints its own
+        // colour has to know that, or it paints itself invisible — which is
+        // exactly what the speaker chips were doing.
+        VStack(alignment: .leading, spacing: 3) {
+            Text(meeting.metadata?.title ?? "Untitled meeting")
+                .font(.body).lineLimit(1)
+            HStack(spacing: Tok.s3) {
+                Text(dateLabel).font(.caption).monospacedDigit()
+                    .foregroundStyle(secondary)
+                Text(Fmt.duration(meeting.duration)).font(.caption).monospacedDigit()
+                    .foregroundStyle(secondary)
+                Spacer(minLength: 0)
+            }
+            // A row carries its own state (FR-36). Every branch paints its own
+            // colour, so every branch yields it to a selection fill.
+            state
+        }
+        .padding(.vertical, 3)
+    }
+
+    @ViewBuilder
+    private var state: some View {
+        if meeting.hasFailed {
+            label("exclamationmark.triangle.fill", "Failed", stateTint(Tok.recording))
+        } else if isInFlight {
+            // A spinner means work is genuinely running, not merely that the
+            // record stopped short of `written`.
+            HStack(spacing: 4) {
+                ProgressView().controlSize(.small).scaleEffect(0.6)
+                Text(meeting.stage.displayName).font(.caption2)
+                    .foregroundStyle(stateTint(Tok.transcribing))
+            }
+        } else if !meeting.isComplete {
+            label("pause.circle", "Interrupted", secondary)
+        } else if noteMissing {
+            // FR-53: complete in the record is not complete on disk.
+            label("doc.badge.ellipsis", "Note missing", stateTint(Tok.recording))
+        } else {
+            speakers
+        }
+    }
+
+    /// Chips wrap rather than compress.
+    ///
+    /// This is the defect the user photographed: chips in a `HStack` at a narrow
+    /// width were squeezed into tall vertical ovals with one letter per line,
+    /// because an `HStack` distributes a shortfall across its children and a
+    /// `Text` with no line limit accepts it. `FlowLayout` moves the overflow to a
+    /// second line instead, and `lineLimit(1)` inside the chip refuses to be
+    /// narrowed at all. Two speakers per row at 320pt is legible; "In-ro om 1"
+    /// stacked vertically is not.
+    private var speakers: some View {
+        FlowLayout(spacing: Tok.s2) {
+            ForEach(meeting.speakers.prefix(4), id: \.raw) { s in
+                SpeakerChip(name: meeting.displayName(for: s), place: s.place,
+                            isInferred: meeting.isInferred(s),
+                            inSelectedRow: isSelected)
+            }
+            if meeting.speakers.count > 4 {
+                Text("+\(meeting.speakers.count - 4)").font(.caption2)
+                    .foregroundStyle(isSelected
+                                     ? Color(nsColor: .alternateSelectedControlTextColor)
+                                     : Tok.textSecondary)
+            }
+        }
+    }
+
+    private func label(_ glyph: String, _ text: String, _ tint: Color) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: glyph).font(.caption2)
+            Text(text).font(.caption2)
+        }.foregroundStyle(tint)
+    }
+
+    /// Secondary text inside a row: the selection's own secondary colour when the
+    /// row is filled, `{colors.text-secondary}` otherwise.
+    private var secondary: Color {
+        isSelected ? Color(nsColor: .alternateSelectedControlTextColor).opacity(0.75)
+                   : Tok.textSecondary
+    }
+
+    /// A state tint — recording red, transcribing amber — inside a row that may be
+    /// filled. On a filled row the tint is surrendered: the glyph beside it already
+    /// carries the state, and a warm tint on the user's accent is unreadable at any
+    /// contrast. DESIGN.md's rule that colour is never the only signal, arriving
+    /// where it was needed rather than where it was written.
+    private func stateTint(_ tint: Color) -> Color {
+        isSelected ? Color(nsColor: .alternateSelectedControlTextColor) : tint
+    }
+
+    private var dateLabel: String {
+        let f = DateFormatter()
+        let cal = Calendar.current
+        f.dateFormat = cal.isDateInToday(meeting.startedAt) ? "'Today' HH:mm" : "d MMM HH:mm"
+        return f.string(from: meeting.startedAt)
     }
 }

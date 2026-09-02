@@ -103,6 +103,14 @@ components:
     label-suffix: '→'
     radius: '{rounded.md}'
     note: 'The only interactive control in an outstanding checklist row.'
+  button-in-row:
+    style: 'bordered, {controlSize small}, untinted'
+    note: 'A control that shares its line with text or other controls — Rename, Exclude, Include. **Bordered, never borderless.** Added increment 4 from a defect the user reported in their own words ("I am not sure what buttons to click"): these were borderless, which renders a button as plain text, so 28 of them on one pane were indistinguishable from the grey text beside them. Borderless is only for a control that is already the sole thing on its line.'
+  rename-popover:
+    trigger: '{components.speaker-chip} in the transcript'
+    body: 'a one-line title, one line of consequence, a text field, Cancel and a prominent Rename'
+    width: '~260pt'
+    note: 'PRD FR-24 from the transcript. The consequence line is required, not decorative: the rename applies to every line that speaker said, and a user clicking one line could reasonably expect it to affect only that line.'
   button-primary:
     style: 'borderedProminent'
     tint: '{colors.brand-accent}'
@@ -151,6 +159,8 @@ components:
     local:    { background: '{colors.brand-accent}', opacity: '0.15', foreground: '{colors.brand-accent}', glyph: 'none' }
     room:     { background: '{colors.state-transcribing}', opacity: '0.16', foreground: '{colors.ink-amber}', glyph: 'person.2.fill @ 8px' }
     remote:   { background: '{colors.separator}', opacity: '0.5', foreground: '{colors.text-secondary}', glyph: 'none' }
+    sizing: 'A fixed-size token: `lineLimit(1)`, `truncationMode(.tail)`, `fixedSize(horizontal:)`. It truncates a long name and NEVER reflows. Added increment 4 after chips in a narrow list rendered as tall vertical ovals reading "In-ro om 1" one letter per line — an HStack distributes a width shortfall across its children, and a Text with no line limit accepts it. The container wraps (see components.speaker-chip.overflow); the chip does not shrink.'
+    overflow: 'A row of chips uses FlowLayout, so chips beyond the width move to a second line rather than the row compressing them.'
     selected: { background: 'alternateSelectedControlTextColor @ 0.22', foreground: 'alternateSelectedControlTextColor', glyph: 'all three places show one — person.fill / person.2.fill / antenna.radiowaves.left.and.right', note: 'Added increment 4 after the defect: inside a selected row the chips kept their place tint and rendered amber-on-blue and teal-on-blue. A selection fill owns the foreground of everything inside it, so the tint is surrendered — and place survives without it because every place gains a glyph here. This is the general rule arriving at the one place it was missing: colour is never the only signal.' }
     inferred: { suffix: 'a small "~" prefix on the name', note: 'PRD FR-25 requires an auto-applied name be recognisable as inferred.' }
     note: 'Three places, three treatments — declared in full increment 4. The room variant has shipped since AD-11 was amended and was missing here, which left the spine describing a two-place world the product left behind. Place is the structural fact (PRD §3), so it is what the chip encodes; identity may be inferred on top of it.'
@@ -294,6 +304,24 @@ Increment 4 makes this component carry more weight than it did, because the whol
 
 **`{components.progress-download}`** — determinate, always. PRD FR-18 explicitly forbids an indeterminate spinner for a model download, because a 600 MB download behind a spinner is indistinguishable from a hang.
 
+## Checking a layout claim
+
+Any statement in this document about how something lays out is checkable, and
+should be checked rather than reasoned about:
+
+```
+./Scripts/uishot.sh --open
+```
+
+It renders every pane with fixture data at 320, 460 and 720pt using
+`ImageRenderer`, which needs no screen-recording permission. Two increments of
+layout defects shipped past a green test suite before this existed, both of them
+narrow-column defects that the default window width hid.
+
+It cannot draw a `Button`, `Picker` or `ProgressView` — those come back as a
+yellow "unsupported" glyph — so it answers *does this layout hold at this width*,
+not *is the app correct*.
+
 ## Do's and Don'ts
 
 **Do**
@@ -306,6 +334,8 @@ Increment 4 makes this component carry more weight than it did, because the whol
 - Reserve `{components.egress-marker}` for the two elements that involve transmission, and nothing else.
 - Mirror the Transcription model row's anatomy in the Summaries pane. A second visual language for the same job is a defect.
 - Put card headings outside the card, flush with the pane margin.
+- Make a control in a shared row bordered. If a reader has to hover to find out what is clickable, the row has failed.
+- Let a chip truncate and let its container wrap. A chip that reflows is a chip that has been asked to be a paragraph.
 - Keep a pane to two left edges: the margin, and the card padding. A glyph goes on the title's line, never in a gutter that shifts the text column.
 - Let anything that paints its own colour ask whether it is inside a selection fill. A chip, a state tint, a secondary label — all three were painting themselves unreadable on a selected row.
 - Use monospaced digits for anything that ticks or counts.
@@ -319,6 +349,8 @@ Increment 4 makes this component carry more weight than it did, because the whol
 **Don't**
 
 - Don't hardcode a hex value for anything the system provides — this is the rule that keeps dark mode free.
+- Don't put a control in a shared row without a border. `.borderless` renders a button as text, and text is what the row is already full of.
+- Don't repeat a fact once per row that is true of every row in the group. Name it on the group.
 - Don't add shadows to cards. *(The companion rule — no borders on top of a tonal step — was withdrawn in increment 4 when the tonal step turned out to be invisible. See Elevation & Depth.)*
 - Don't use `{colors.state-recording}` for errors, destructive actions, or emphasis. It means one thing.
 - Don't repaint standard controls with `{colors.brand-accent}`.

@@ -113,6 +113,32 @@ meeting answers it.
 | 10.6 | The enrolled voice in Remembered voices, badged, deletable, named in `Forget all` | done |
 | 10.7 | The detail pane and the Note say what the identification rests on | done |
 
+## Seeing the UI: `./Scripts/uishot.sh`
+
+Added 2026-09-02, after two increments shipped layout defects past a green test
+suite and the user found both.
+
+```
+./Scripts/uishot.sh --open      # every pane, at 320 / 460 / 720pt, into ./ui-shots
+```
+
+The app renders its own view tree with `ImageRenderer`, so it needs no
+screen-recording permission — which matters because screen capture does not work
+on this machine at all (`osascript` has no assistive access, `screencapture`
+blocks on a permission prompt). It renders **fixtures deliberately harsher than
+reality**: sixteen speakers, a 40-character name, a failed meeting, an interrupted
+one. A fixture covering only the easy case is why the hard case shipped.
+
+**It cannot draw `Button`, `Picker` or `ProgressView`** — those come back as a
+yellow "unsupported" glyph, which is the renderer and not a defect. So it answers
+*does this layout hold at this width*, not *is the app correct*. Anything about
+focus, animation or the real window still needs a human.
+
+`ShotScroll` and `UIShot.isRendering` exist because `ScrollView` renders blank
+under `ImageRenderer` and `List` cannot be rendered at all. That is a documented
+render mode, not a workaround to be tidied away — deleting it makes every pane
+shot blank again.
+
 ## Read these, in this order
 
 1. `_bmad-output/implementation-artifacts/code-review-increment-4.md` — four

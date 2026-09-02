@@ -49,6 +49,34 @@ enum Tok {
     static let paneMargin: CGFloat = 20
 }
 
+// MARK: - Shot-renderable scroll
+
+/// A `ScrollView`, except while `--uishot` is rendering.
+///
+/// `ImageRenderer` does not lay out a `ScrollView`'s content — a shot of a
+/// scrolling pane comes back blank — and it cannot render a `List` at all, which
+/// is AppKit-backed and returns SwiftUI's "unsupported" glyph. Both were
+/// discovered by running the tool and looking at the output, which is the tool
+/// working as intended on its first use.
+///
+/// The substitution is a plain `VStack`, so what the shot measures is the same
+/// layout pass the real pane gets at the same width. What it loses is scrolling —
+/// which is exactly what a static image cannot show anyway, and why every shot
+/// declares its own height.
+struct ShotScroll<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        if UIShot.isRendering {
+            // `.leading`, because a bare `VStack` centres its children and the
+            // pane titles rendered clipped on the left in the first run. Found by
+            // using the tool, which is the tool earning its place twice over.
+            VStack(alignment: .leading, spacing: 0) { content }
+        } else {
+            ScrollView { content }
+        }
+    }
+}
+
 // MARK: - Card
 
 /// Tonal separation, with a hairline where the tonal step is not enough on its own.
@@ -323,8 +351,16 @@ struct SpeakerChip: View {
                 Image(systemName: glyph).font(.system(size: 8))
             }
             Text(isInferred ? "~\(name)" : name)
+                // The chip refuses to be narrowed. Without these two an `HStack`
+                // shortfall was absorbed by wrapping the label, and the chip
+                // rendered as a tall vertical oval reading "In-ro om 1" one letter
+                // per line. A chip is a fixed-size token: it truncates a long name
+                // with an ellipsis, and it never reflows.
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
         .font(.caption)
+        .fixedSize(horizontal: true, vertical: false)
         .foregroundStyle(tint)
         .padding(.horizontal, Tok.s3)
         .padding(.vertical, 2)

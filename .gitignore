@@ -6,3 +6,4 @@ dist/
 .build/stage.noindex/
 _bmad/render/
 .DS_Store
+ui-shots/

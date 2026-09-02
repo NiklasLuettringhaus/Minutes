@@ -103,7 +103,7 @@ struct PaneScaffold<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
-        ScrollView {
+        ShotScroll {
             VStack(alignment: .leading, spacing: Tok.cardGap) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.largeTitle)
