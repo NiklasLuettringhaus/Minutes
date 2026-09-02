@@ -43,7 +43,13 @@ git tag -l --format='%(contents)' "$TAG" > "$DIST/notes.md"
 
 if command -v gh >/dev/null 2>&1; then
   echo "==> publishing to GitHub"
-  git push origin "$TAG" 2>/dev/null || true
+  # Not swallowed: a failed tag push made `gh release create` fail with a
+  # confusing "tag exists locally but has not been pushed", several steps after
+  # the actual problem.
+  if ! git push origin "$TAG"; then
+    echo "!! could not push $TAG. Push it, then re-run this script." >&2
+    exit 1
+  fi
   if gh release create "$TAG" "$ZIP" "$ZIP.sha256" \
        --title "$TAG" --notes-file "$DIST/notes.md"; then
     gh release view "$TAG" --json url --jq .url | sed 's/^/    /'
