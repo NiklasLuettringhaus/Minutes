@@ -43,11 +43,13 @@ git tag -l --format='%(contents)' "$TAG" > "$DIST/notes.md"
 
 if command -v gh >/dev/null 2>&1; then
   echo "==> publishing to GitHub"
-  # Not swallowed: a failed tag push made `gh release create` fail with a
-  # confusing "tag exists locally but has not been pushed", several steps after
-  # the actual problem.
-  if ! git push origin "$TAG"; then
-    echo "!! could not push $TAG. Push it, then re-run this script." >&2
+  # Verify rather than push. Pushing needs whichever credential the operator
+  # uses, which is not this script's business — and swallowing a failed push
+  # made `gh release create` fail several steps later with a message about a
+  # symptom that pointed away from the cause.
+  if ! git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+    echo "!! $TAG is not on the remote yet. Push it first:" >&2
+    echo "     git push origin main --follow-tags" >&2
     exit 1
   fi
   if gh release create "$TAG" "$ZIP" "$ZIP.sha256" \
