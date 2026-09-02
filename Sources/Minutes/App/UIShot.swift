@@ -144,6 +144,27 @@ enum UIShot {
         shoot("transcription-medium", 560, nil) { TranscriptionPane() }
         shoot("detection-medium", 560, nil) { DetectionPane() }
 
+        // FR-66's banner, at three widths and with the two shapes that differ:
+        // a long reason with a remedy button, and a short one without. A fixture
+        // with no error would never render it, which is how a surface that only
+        // appears on failure goes unlooked-at.
+        for (name, err) in [
+            ("failure-mic", MinutesError.microphonePermissionDenied),
+            // The real generated reason, from the shape of a real stream: the
+            // author's 20260902-110315-hkt0 system stream, 757 s, peak exactly 0.
+            ("failure-silence", MinutesError.systemAudioProducedSilence(
+                AudioEvidence(peak: 0, nonSilentSeconds: 0, duration: 757).failureReason!)),
+            ("failure-noremedy", MinutesError.transcriptionFailed("the model returned no segments")),
+        ] {
+            app.lastError = err
+            shoot("\(name)-narrow", 320, nil) { FailureBanner() }
+            shoot("\(name)-medium", 560, nil) { FailureBanner() }
+            shoot("\(name)-in-pane", 560, nil) {
+                GettingStartedPane(selection: .constant(.gettingStarted))
+            }
+        }
+        app.lastError = nil
+
         print("\n\(written) image(s) written.")
         print("Fixtures only — this proves a layout holds at a width, not that the running app is correct.")
     }

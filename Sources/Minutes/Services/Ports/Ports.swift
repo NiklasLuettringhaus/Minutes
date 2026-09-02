@@ -11,7 +11,12 @@ struct CapturedStreams: Sendable {
     var systemURL: URL?
     var duration: TimeInterval
     /// False when the tap could not be established or produced only silence (FR-7).
+    /// Derived from `systemEvidence`, never from elapsed time (AD-36).
     var systemCaptured: Bool
+    /// What each stream can honestly claim about itself. Carried so a caller can
+    /// state *why* a stream produced nothing rather than only that it did.
+    var micEvidence: AudioEvidence = .none
+    var systemEvidence: AudioEvidence = .none
 }
 
 protocol Capturing: AnyObject {

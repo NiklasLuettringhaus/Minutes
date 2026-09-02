@@ -7,6 +7,10 @@ enum MinutesError: LocalizedError, Equatable {
     case microphonePermissionDenied
     case microphoneUnavailable(String)
     case systemAudioTapFailed(stage: String, status: Int32)
+    /// The tap was established and ran, and every sample it delivered was
+    /// silent. A condition the app could not previously detect at all, because
+    /// elapsed time counted as proof of capture (AD-36).
+    case systemAudioProducedSilence(String)
     case noDefaultOutputDevice
     case audioFileWriteFailed(String)
 
@@ -33,28 +37,39 @@ enum MinutesError: LocalizedError, Equatable {
     // Pipeline
     case stageFailed(stage: String, reason: String)
 
+    /// Interpolated details arrive from adapters and from the system, in no
+    /// consistent case. They were invisible until FR-66 put them on screen,
+    /// which is when "Transcription failed. the model returned no segments"
+    /// became a thing a user could read.
+    private static func sentence(_ s: String) -> String {
+        guard let f = s.first else { return s }
+        return f.uppercased() + s.dropFirst()
+    }
+
     var errorDescription: String? {
         switch self {
         case .microphonePermissionDenied:
             return "Minutes does not have permission to use the microphone."
         case .microphoneUnavailable(let d):
-            return "The microphone is unavailable. \(d)"
+            return "The microphone is unavailable. \(Self.sentence(d))"
         case .systemAudioTapFailed(let stage, let status):
             return "System audio capture failed at \(stage) (OSStatus \(status))."
+        case .systemAudioProducedSilence(let d):
+            return "Only your side of the meeting was recorded — \(d)."
         case .noDefaultOutputDevice:
             return "No default audio output device was found."
         case .audioFileWriteFailed(let d):
-            return "Could not write the recording to disk. \(d)"
+            return "Could not write the recording to disk. \(Self.sentence(d))"
         case .modelNotDownloaded(let m):
             return "The transcription model \(m) is not downloaded."
         case .modelLoadFailed(let d):
-            return "The transcription model could not be loaded. \(d)"
+            return "The transcription model could not be loaded. \(Self.sentence(d))"
         case .transcriptionFailed(let d):
-            return "Transcription failed. \(d)"
+            return "Transcription failed. \(Self.sentence(d))"
         case .diarizationFailed(let d):
-            return "Speaker separation failed. \(d)"
+            return "Speaker separation failed. \(Self.sentence(d))"
         case .voiceSampleUnreadable(let d):
-            return "The voice sample could not be read back. \(d)"
+            return "The voice sample could not be read back. \(Self.sentence(d))"
         case .voiceSampleTooShort(let s):
             return String(format: "The recording was only %.1f seconds long — too short to identify a voice from.", s)
         case .voiceSampleSilent:
@@ -62,15 +77,52 @@ enum MinutesError: LocalizedError, Equatable {
         case .voiceSampleMultipleVoices(let n):
             return "\(n) voices were in the recording, so it cannot be used."
         case .voiceEmbeddingFailed(let d):
-            return "The voice sample could not be analysed. \(d)"
+            return "The voice sample could not be analysed. \(Self.sentence(d))"
         case .notesFolderUnavailable:
             return "The notes folder is not set or is no longer reachable."
         case .notesFolderNotWritable(let p):
             return "The notes folder is not writable: \(p)"
         case .persistenceFailed(let d):
-            return "Could not save. \(d)"
+            return "Could not save. \(Self.sentence(d))"
         case .stageFailed(let stage, let reason):
-            return "\(stage) failed. \(reason)"
+            return "\(stage) failed. \(Self.sentence(reason))"
+        }
+    }
+
+    /// Something the *app* can do about it, so the remedy is a button rather than
+    /// a sentence describing where the user should click.
+    ///
+    /// Named as a value in Core rather than a closure, because Core depends on
+    /// Foundation alone; the surface that shows the error maps it to the actual
+    /// call. FR-66.
+    enum Remedy: Equatable, Sendable {
+        case openMicrophoneSettings
+        case openSystemAudioSettings
+        case chooseTranscriptionModel
+        case chooseNotesFolder
+
+        var label: String {
+            switch self {
+            case .openMicrophoneSettings:  return "Open Microphone Settings"
+            case .openSystemAudioSettings: return "Open Audio Settings"
+            case .chooseTranscriptionModel: return "Open Transcription"
+            case .chooseNotesFolder:       return "Open General"
+            }
+        }
+    }
+
+    var remedy: Remedy? {
+        switch self {
+        case .microphonePermissionDenied, .microphoneUnavailable:
+            return .openMicrophoneSettings
+        case .systemAudioTapFailed, .systemAudioProducedSilence:
+            return .openSystemAudioSettings
+        case .modelNotDownloaded, .modelLoadFailed:
+            return .chooseTranscriptionModel
+        case .notesFolderUnavailable, .notesFolderNotWritable:
+            return .chooseNotesFolder
+        default:
+            return nil
         }
     }
 
@@ -79,8 +131,14 @@ enum MinutesError: LocalizedError, Equatable {
         switch self {
         case .microphonePermissionDenied:
             return "Open System Settings > Privacy & Security > Microphone and enable Minutes."
+        case .microphoneUnavailable:
+            return "Check that an input device is connected and selected in System Settings > Sound."
+        case .audioFileWriteFailed, .persistenceFailed:
+            return "Check there is free disk space, then try again."
         case .systemAudioTapFailed:
             return "macOS revokes system-audio permission when Minutes is rebuilt. Run the reset command shown in Settings, then try again."
+        case .systemAudioProducedSilence:
+            return "macOS gives no way to check this permission, so silence is the only symptom. Enable Minutes under Audio Recording, or run the reset command in Settings, then use the test in Getting Started."
         case .modelNotDownloaded:
             return "Download it in Settings > Transcription."
         case .voiceSampleTooShort, .voiceSampleSilent:

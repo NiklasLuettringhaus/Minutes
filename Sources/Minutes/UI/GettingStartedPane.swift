@@ -331,11 +331,20 @@ struct GettingStartedPane: View {
                 .font(.body)
                 .fixedSize(horizontal: false, vertical: true)
 
-            VStack(spacing: 7) {
+            VStack(alignment: .leading, spacing: 7) {
                 LevelMeter(label: "Microphone", level: r.micHadAudio ? 0.4 : 0,
                            status: r.micHadAudio ? "✓ audio" : "✗ none", statusOK: r.micHadAudio)
+                // FR-47: a failure is named, not just marked. "✗ none" leaves the
+                // user guessing between a muted mic, the wrong device and a
+                // permission that was never granted.
+                if let why = r.micFailure {
+                    Text(why).font(.caption).foregroundStyle(Tok.textSecondary)
+                }
                 LevelMeter(label: "System audio", level: r.systemHadAudio ? 0.3 : 0,
                            status: r.systemHadAudio ? "✓ audio" : "✗ none", statusOK: r.systemHadAudio)
+                if let why = r.systemFailure {
+                    Text(why).font(.caption).foregroundStyle(Tok.textSecondary)
+                }
             }
 
             Divider()

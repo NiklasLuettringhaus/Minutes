@@ -105,6 +105,10 @@ struct PaneScaffold<Content: View>: View {
     var body: some View {
         ShotScroll {
             VStack(alignment: .leading, spacing: Tok.cardGap) {
+                // Above the title, and on every pane: a failure the user needs to
+                // see should not depend on which pane they happen to be looking
+                // at (FR-66).
+                FailureBanner()
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title).font(.largeTitle)
                     Text(subtitle).font(.body).foregroundStyle(Tok.textSecondary)
