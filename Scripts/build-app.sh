@@ -27,6 +27,24 @@ cp "$ROOT/Scripts/Info.plist" "$APP/Contents/Info.plist"
 cp "$ROOT/Scripts/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
+# AD-33: the version comes from the tag, never from a literal in the plist.
+# Without this every build claims to be the same release, which makes every bug
+# report ambiguous.
+DESCRIBE="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
+LAST_TAG="$(git -C "$ROOT" describe --tags --abbrev=0 2>/dev/null || echo '')"
+COMMITS="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 0)"
+if [ -n "$LAST_TAG" ] && [ "$DESCRIBE" = "$LAST_TAG" ]; then
+  SHORT="${LAST_TAG#v}"; RELEASE=true
+else
+  SHORT="${LAST_TAG#v}"; [ -n "$SHORT" ] || SHORT="0.0.0"; RELEASE=false
+fi
+PB=/usr/libexec/PlistBuddy
+"$PB" -c "Set :CFBundleShortVersionString $SHORT" "$APP/Contents/Info.plist"
+"$PB" -c "Set :CFBundleVersion $COMMITS" "$APP/Contents/Info.plist"
+"$PB" -c "Add :MinutesGitDescribe string $DESCRIBE" "$APP/Contents/Info.plist"
+"$PB" -c "Add :MinutesIsRelease bool $RELEASE" "$APP/Contents/Info.plist"
+echo "    version $SHORT ($COMMITS) · $DESCRIBE · release=$RELEASE"
+
 echo "==> ad-hoc signing (hardened runtime)"
 codesign --force --sign - \
   --options runtime \

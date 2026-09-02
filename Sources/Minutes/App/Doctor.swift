@@ -80,6 +80,13 @@ enum Doctor {
         print("  match threshold:    \(VoiceMatch.sameSpeakerThreshold) (calibrated 2026-09-01, not a setting)")
         print("  ambiguity margin:   \(VoiceMatch.ambiguityMargin)")
 
+        section("Version")
+        print("  version:            \(AppVersion.short) (\(AppVersion.build))")
+        print("  built from:         \(AppVersion.describe)")
+        if !AppVersion.isRelease {
+            print("  NOTE:               development build, not a tagged release")
+        }
+
         section("Startup")
         print("  bundle path:        \(Bundle.main.bundlePath)")
         print("  SMAppService:       \(LoginItem.statusDescription)")

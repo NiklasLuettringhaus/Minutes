@@ -1,134 +1,87 @@
 # Minutes
 
-A small macOS menu bar app that records a meeting, transcribes it on this Mac,
-works out who said what, and writes one Markdown file.
+Records a meeting on your Mac, transcribes it locally, works out who said what,
+writes one Markdown file. Menu bar only. Nothing leaves the machine except the
+transcription model it downloads once.
 
-Nothing leaves the machine. There is no account, no server, and no network
-traffic at run time — the only network use is downloading a transcription model.
+Apple Silicon, macOS 15+.
 
-## Your data stays on your Mac
+## Install
 
-Not a slogan; it is where the files are. Everything Minutes knows about you
-lives in one folder you can open, inspect and delete:
-
-```
-~/Library/Application Support/Minutes/
-├── Meetings/          audio, transcript, per-speaker voice centroids
-├── speakers.json      remembered voices, and your enrolled fingerprint if you made one
-└── models/            downloaded transcription models
+```bash
+curl -fsSL https://raw.githubusercontent.com/NiklasLuettringhaus/Minutes/main/Scripts/install.sh | bash
 ```
 
-…plus the Markdown notes, in the folder you choose in Settings → General
-(default `~/Documents/Minutes`).
+The app is signed, but not with an Apple Developer ID, so macOS refuses to open
+it after a download. This script strips the quarantine attribute — a deliberate
+Gatekeeper bypass. It says so while it runs. Only run it if you trust the
+source.
 
-Delete that folder and Minutes knows nothing about you. None of it is ever sent
-anywhere, and none of it can reach this repository: a pre-commit hook and a CI
-job reject meeting audio, voice embeddings and settings by shape as well as by
-filename. See [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Installing
-
-**On another Mac, today:** build from source. A one-command install via Homebrew
-is planned — see
-[`_bmad-output/planning-artifacts/RELEASE-PLAN.md`](_bmad-output/planning-artifacts/RELEASE-PLAN.md)
-for what it needs and where it stands.
+Bypassing nothing: build it. A locally compiled app is never quarantined. Needs
+Xcode, takes about a minute.
 
 ```bash
 git clone https://github.com/NiklasLuettringhaus/Minutes.git
-cd Minutes
-./Scripts/build-app.sh
-open /Applications/Minutes.app
+cd Minutes && ./Scripts/build-app.sh
 ```
 
-That installs `/Applications/Minutes.app`, ad-hoc signed with the hardened
-runtime. Signing is part of the build, not packaging: macOS ties audio
-permission to the code signature, and an unsigned binary never even gets the
-prompt.
+## First run
 
-To verify the whole chain without clicking anything:
+Click the icon to start and stop — red recording, amber transcribing. When Slack
+or Teams takes the microphone, a notification asks whether to record; it never
+starts on its own.
 
-```bash
-# records 10s, transcribes, prints the resulting note
-/Applications/Minutes.app/Contents/MacOS/Minutes --selftest 10
-
-# permissions, models, pipeline state
-/Applications/Minutes.app/Contents/MacOS/Minutes --doctor
-```
-
-## Using it
-
-- **Click the menu bar icon** to start and stop. The icon turns red while
-  recording and amber while transcribing.
-- **When Slack or Teams takes your microphone**, a notification asks whether to
-  record. It never starts on its own.
-- **Notes** are written to the folder you choose in Settings → General.
-
-Six panes: Getting Started (setup checklist, a five-second audio test, and
-optional voice enrolment), Transcription (model choice), Detection (watched
-apps), Summaries (how the title and summary are produced), General (folder,
-retention, login), and Meetings (the library).
-
-## How it works
-
-Two audio streams are recorded separately: your microphone, and everything else
-the Mac is playing. That is the design bet — your microphone *is* you, so "who is
-the user" is a fact rather than a model's guess. Only the system stream needs
-diarizing, which is the easier remaining problem.
-
-| Concern | Choice |
-| --- | --- |
-| Transcription | WhisperKit or NVIDIA Parakeet, both CoreML on the Neural Engine |
-| Speaker separation | SpeakerKit / pyannote v4 |
-| Recognising your own voice | 256-dimensional embedding, cosine distance, threshold 0.35 measured against real meetings |
-| Title, tags, summary | Apple Foundation Models when available, otherwise a deterministic local extractor |
-| System audio | CoreAudio process tap |
-| Storage | One directory per meeting; the Markdown note is a projection of it |
-
-Voice identification is deliberately plain maths on a fixed-length embedding,
-with no Apple-specific dependency on the identification path — `VoiceMatch.swift`
-must compile against Foundation alone. Apple-only tricks are allowed as adapters
-behind a port, never as the mechanism.
-
-## If recording stops working
-
-The app is ad-hoc signed because there is no Apple Developer certificate yet.
-macOS ties consent to the signature, so **rebuilding revokes it**:
+- macOS asks for the microphone. It also needs system-audio permission, which no
+  API can check — Getting Started has a five-second test that reports, per
+  stream, whether audio actually arrived. Run it once.
+- The first meeting downloads a model, 460–630 MB.
+- **Updates revoke both permissions**, because consent is tied to the signature
+  and the signature changes every build. That is why recording stops working
+  after an update:
 
 ```bash
-tccutil reset SystemAudioCaptureRequests dev.niklas.minutes
 tccutil reset Microphone dev.niklas.minutes
+tccutil reset SystemAudioCaptureRequests dev.niklas.minutes
 ```
 
-Then run the test in Getting Started. It reports, per stream, whether audio was
-actually captured — which is the only reliable way to check, because macOS
-provides no API to query system-audio permission.
+## Your data
 
-Fixing this properly is the first item in the release plan: a Developer ID gives
-a stable signature, so consent survives an update instead of being revoked by it.
+All of it, nowhere else:
 
-## Requirements
+```
+~/Library/Application Support/Minutes/
+├── Meetings/       audio, transcripts, per-speaker voice centroids
+├── speakers.json   remembered voices, and your enrolled voice if you made one
+└── models/         downloaded transcription models
+```
 
-macOS 15 or later, Apple Silicon. App Sandbox is off (audio taps are unreliable
-under it); Hardened Runtime is on.
+Plus the notes folder you pick. Nothing is transmitted anywhere. Settings are
+still in `~/Library/Preferences/` — a known gap.
+
+## Why it gets speakers right
+
+The microphone and the system output are recorded as two separate streams, so
+"which voice is yours" is a fact rather than a guess. Only the system stream
+needs diarizing. Transcription is WhisperKit or Parakeet on the Neural Engine;
+speaker separation is pyannote v4; your own voice is matched by cosine distance
+against a threshold measured on real meetings, not chosen.
+
+## Uninstall
+
+```bash
+rm -rf /Applications/Minutes.app
+rm -f  ~/Library/LaunchAgents/dev.niklas.minutes.login.plist
+rm -f  ~/Library/Preferences/dev.niklas.minutes.plist
+rm -rf ~/Library/Application\ Support/Minutes    # your meetings. destructive.
+```
 
 ## Development
 
 ```bash
-./Scripts/setup-dev.sh    # enable the pre-commit hook
-swift test                # 153 tests, 4 skipped (they need real meetings or an audio device)
-./Scripts/uishot.sh --open   # render every pane at 320 / 460 / 720pt and look at it
+./Scripts/setup-dev.sh   # pre-commit hook
+swift test               # 153 tests
+./Scripts/uishot.sh      # render every pane and look at it
 ```
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the branching model and what a change
-needs before it merges.
-
-## Planning
-
-Built through the full BMAD pipeline. Artifacts in `_bmad-output/`:
-brief → PRD (65 requirements) → UX spines (`DESIGN.md`, `EXPERIENCE.md`) →
-architecture spine (32 decisions) → 63 stories across 10 epics → sprint status →
-code reviews.
-
-Two conventions in there are load-bearing: **no measurement is asserted that was
-not taken**, and nothing is ever renumbered — an FR, AD, story or epic ID means
-the same thing for the life of the project.
+[CONTRIBUTING.md](CONTRIBUTING.md) for branching and review rules. `_bmad-output/`
+for requirements, architecture decisions and the release plan.

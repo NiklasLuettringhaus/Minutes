@@ -1,7 +1,7 @@
 ---
 title: Release plan — getting Minutes onto someone else's Mac
 date: 2026-09-02
-status: draft, awaiting one decision
+status: amended 2026-09-02 — the distribution decision was taken
 scope: increments 6, 7 and 8 (Epics 11, 12, 13)
 supersedes: nothing; this is the first plan aimed at a machine other than the author's
 ---
@@ -203,7 +203,33 @@ a nicety — you cannot ship a second release without it.
 
 # Increment 7 — One command to install
 
-**Epic 12.** Gated on the Developer ID decision. Nothing here is speculative
+> **Amended 2026-09-02. Decision taken: no Homebrew, no Developer ID yet.**
+>
+> The shipped path is a GitHub Release archive plus a one-line installer that
+> strips the quarantine attribute. That **is** the Gatekeeper bypass AD-34 was
+> written to forbid, so AD-34 was amended in place to say so rather than left
+> contradicting what ships. Two costs are accepted rather than solved:
+> every update still revokes microphone and system-audio consent (FR-73 stays
+> open), and the first install teaches a bypass. Two things keep it honest — the
+> installer states what it is doing while it does it, and building from source is
+> documented as the path that bypasses nothing, because a locally compiled app is
+> never quarantined.
+>
+> **Revisit when there is more than one or two users**, at which point the
+> recurring consent cost exceeds $99/year.
+>
+> **New measurement that changes the build-from-source option.** Command Line
+> Tools alone *cannot* build this app: the `FoundationModels` `@Generable` macro
+> plugin ships only inside Xcode. But exactly one file imports
+> `FoundationModels`, and stubbing it made a CLT-only release build succeed — so
+> a 3.7 GB Xcode prerequisite is caused by one optional feature that already has
+> a deterministic fallback. Making it conditional drops the prerequisite to
+> `xcode-select --install`. That is now the highest-leverage story in Epic 12.
+>
+> Measured on a fresh clone: 1 s to clone, 6.2 MB, **67 s** for a clean build,
+> bundle and sign, 1.1 GB of build artifacts.
+
+**Epic 12.** Originally gated on the Developer ID decision. Nothing here is speculative
 about mechanism; all of it is documented, and the pieces that are not documented
 are flagged.
 
@@ -380,11 +406,10 @@ first real install will teach us something the documents did not.
 
 # What I need from you
 
-- **The $99 decision.** Everything in Increment 7 waits on it.
-- **Push access.** The repo is owned by `NiklasLuettringhaus`; this machine is
-  authenticated as `niklas-luettringhaus-pm`, which has read-only access. One
-  `gh auth login` as the personal account, or add the other account as a
-  collaborator.
+- ~~The $99 decision.~~ **Taken: not yet.** Shipping the archive-plus-bypass path
+  instead, with the costs recorded above. Revisit at more than one or two users.
+- ~~Push access.~~ **Solved** — a fine-grained token for the personal account.
+  50 commits pushed, `main` protected, first CI run green on all three jobs.
 - **Your colleague's Mac** — Apple Silicon, or Intel? It changes 12.4.
 - **Whether an export may include a voice fingerprint at all**, and in what
   words (13.3).
