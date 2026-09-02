@@ -37,12 +37,19 @@ cat "$ZIP.sha256" | sed 's/^/    /'
 lipo -archs "$APP/Contents/MacOS/Minutes" | sed 's/^/    arch: /'
 codesign --verify --strict "$APP" && echo "    signature verifies"
 
+# Release notes are the tag's own annotation. Writing them twice is how they
+# drift apart.
+git tag -l --format='%(contents)' "$TAG" > "$DIST/notes.md"
+
 if command -v gh >/dev/null 2>&1; then
   echo "==> publishing to GitHub"
-  gh release create "$TAG" "$ZIP" "$ZIP.sha256" \
-     --title "$TAG" --notes-file "$ROOT/dist/notes.md" 2>/dev/null \
-  || gh release create "$TAG" "$ZIP" "$ZIP.sha256" --title "$TAG" --generate-notes \
-  || echo "!! gh could not publish; upload $ZIP and $ZIP.sha256 manually"
+  git push origin "$TAG" 2>/dev/null || true
+  if gh release create "$TAG" "$ZIP" "$ZIP.sha256" \
+       --title "$TAG" --notes-file "$DIST/notes.md"; then
+    gh release view "$TAG" --json url --jq .url | sed 's/^/    /'
+  else
+    echo "!! gh could not publish; upload $ZIP and $ZIP.sha256 to the $TAG release"
+  fi
 else
   echo "==> gh not installed; upload these two files to the $TAG release:"
   echo "    $ZIP"
