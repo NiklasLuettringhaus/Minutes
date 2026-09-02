@@ -1,6 +1,10 @@
 ---
 stepsCompleted: [1, 2, 3, 4]
 revisions:
+  - 2026-09-02 increment 5 — added Epics 11, 12 and 13 (15 stories, FR-66 to FR-76) after
+    the repository was published and the app was audited for the first time against a
+    machine other than the author's. Epics 1-10 untouched and not renumbered. First
+    increment whose defects were all found by reading code rather than by using the app.
   - 2026-09-01 increment 4 — added Epic 10 (7 stories, FR-62 to FR-65 plus the FR-21,
     FR-25 and FR-46 amendments) headless, after a spike and a threshold calibration.
     Epics 1-9 untouched and not renumbered. First epic whose central constant was
@@ -18,17 +22,18 @@ inputDocuments:
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/addendum.md
   - _bmad-output/planning-artifacts/spikes/spike-mic-isolation-2026-09-01.md
   - _bmad-output/planning-artifacts/spikes/calibration-speaker-threshold-2026-09-01.md
+  - _bmad-output/planning-artifacts/RELEASE-PLAN.md
 ---
 
 # Minutes - Epic Breakdown
 
 ## Overview
 
-This document decomposes the 65 functional requirements, 8 cross-cutting NFRs, the 32 architecture decisions and the two UX spines into 63 implementable stories across 10 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build; Epic 9 is increment 3; Epic 10 is increment 4. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
+This document decomposes the 76 functional requirements, 8 cross-cutting NFRs, the 38 architecture decisions and the two UX spines into 78 implementable stories across 13 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build; Epic 9 is increment 3; Epic 10 is increment 4; Epics 11-13 are increment 5, the first aimed at a machine other than the author's. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
 
 Every FR is covered by exactly one story — verified programmatically, see the FR Coverage Map for increment 1 and each later epic's own coverage table.
 
-**Requirements inventory scope.** The inventory below covers FR-1 to FR-48, the requirement set that existed when this document was created. Every increment since has carried its new requirements inside its own epic section, restated there rather than duplicated at the top. Epic 10 follows that convention.
+**Requirements inventory scope.** The inventory below covers FR-1 to FR-48, the requirement set that existed when this document was created. Every increment since has carried its new requirements inside its own epic section, restated there rather than duplicated at the top. Epic 10 and Epics 11-13 follow that convention.
 
 ## Requirements Inventory
 
@@ -2121,3 +2126,556 @@ So that I can tell the difference between something that cannot be wrong and som
 Amended requirements stay owned by their original stories — FR-21 by 1.8, FR-25 by 4.3, FR-46 by 2.6 — and the amendments are covered here: FR-21 by 10.4, FR-25 by 10.1 and 10.2, FR-46 by 10.5.
 
 FR-62, FR-64 and FR-65 are each split across stories on purpose, and in each case the split separates a *mechanism* from its *surface* so that the mechanism can be verified before anything is drawn on top of it. FR-65's split is the sharpest: its calibration half (10.1) ships first and alone, and its disclosure half (10.7) ships last, because there is nothing to disclose until 10.4 makes a claim.
+
+---
+
+## Epic 11: Works on a Mac That Is Not Mine
+
+**Why this epic exists.** The app has run on exactly one machine for its whole
+life, and a colleague is about to install it. Reading the code with that question
+in mind found a class of defect no test could have caught and no amount of use on
+the author's Mac would ever surface: the failures that only happen when the
+environment differs. Every item below was verified at a file and line, not
+inferred from behaviour.
+
+The headline is the smallest change and the largest one. `AppState.lastError` is
+written on four failure paths and read by one command-line file. A colleague who
+declines the microphone prompt gets no explanation from the interface at all —
+while the correct, actionable sentence already exists in `MinutesError` and is
+simply unreachable. The app has been unable to say why it failed for its entire
+existence, and it never mattered until now.
+
+Two findings are worse than cosmetic. The evidence that system-audio capture
+worked accepts a quarter second of silence as proof, which makes FR-42's entire
+permission story vacuous on any machine where the tap quietly fails. And every
+launch can delete `~/Documents/huggingface` in full — safe on one machine,
+data loss on a colleague's.
+
+**Ordering is load-bearing.** 11.1 first: an app that cannot say why it failed
+should not be handed to anyone. 11.6 (version) is a hard prerequisite for Epic
+12, because you cannot ship a second release when every build claims to be 1.0.
+
+**What this epic explicitly does not build:** a crash reporter or any telemetry
+(PRD §9.1 governs, and the app has no network path at run time); a support-bundle
+uploader; retries around permission failures, which hide the problem the user
+needs to see.
+
+### Story 11.1: A failure states its reason and its remedy
+
+*(tier T1 · FR-66)*
+
+As someone using Minutes for the first time on my own Mac, when recording does
+not start, I want the app to tell me why and what to do, so that I am not left
+guessing whether the app is broken or I am.
+
+**Acceptance Criteria:**
+
+**Given** any failure that prevents a recording from starting
+**When** the user has attempted to start one
+**Then** the reason and its remedy appear in the interface, not only in the log
+**And** the text is `MinutesError`'s existing description and recovery sentence
+
+**And** each of the following holds:
+
+- Both the window and the menu bar surface it. The menu is where the user just
+  clicked, so a failure that is only visible in a window they have not opened is
+  still silent.
+- The four paths in `SessionCoordinator` that set `lastError` are all covered:
+  permission denied, persistence failure, a capture error, and an unavailable
+  microphone.
+- A Mac with no input device attached produces a stated reason, not a no-op. The
+  author's machine has a built-in microphone, so this path has never run.
+- The error clears when a subsequent attempt succeeds. A stale error is its own
+  bug.
+- The remedy is actionable without leaving the app to search: where a System
+  Settings pane is the answer, the app offers to open it.
+
+**Implementation constraints:**
+
+- `MinutesError`'s strings are already correct and already reviewed. Surface
+  them; do not write new ones.
+- No new error type. This is a wiring story, and it should read as one.
+
+### Story 11.2: Evidence of capture is signal, never duration
+
+*(tier T1 · FR-67)*
+
+As someone whose meeting notes depend on system audio being captured, I want the
+app's claim that it worked to rest on hearing something, so that a green tick
+means the thing it says.
+
+**Acceptance Criteria:**
+
+**Given** a completed capture on either stream
+**When** the app reports whether audio was produced
+**Then** the answer is derived from signal in the samples
+**And** elapsed duration is never sufficient on its own
+
+**And** each of the following holds:
+
+- `SystemTapCapture.stop()`'s `|| d > 0.25` clause is gone. Frames are written
+  whether or not anything is playing, so duration proves only that the tap ran.
+- `TestPlayground`'s `micHadAudio` stops meaning "the file exists".
+- The threshold that decides "signal" is stated with the reasoning for its value,
+  and is not a setting.
+- A test constructs a silent buffer of ample duration and asserts the answer is
+  false. That test would have failed before this story.
+- Every sentence that currently asserts capture succeeded — the checklist row,
+  the Test Playground chip, `--doctor` — is true after this change or is
+  reworded.
+
+**Implementation constraints:**
+
+- FR-42 rests entirely on this: macOS offers no API to query system-audio
+  permission, so measured evidence is the only evidence available. A vacuous
+  measurement is worse than an admitted unknown, because it is indistinguishable
+  from success.
+- AD-36 governs.
+
+### Story 11.3: The app never removes a directory it did not create
+
+*(tier T1 · FR-68)*
+
+As someone who keeps machine-learning models in my home folder, I want Minutes to
+leave my files alone, so that installing it costs me nothing I did not agree to.
+
+**Acceptance Criteria:**
+
+**Given** a `~/Documents/huggingface` directory containing models Minutes did not
+download
+**When** Minutes launches and adopts any legacy downloads
+**Then** only the subtree Minutes created is removed
+**And** the parent directory survives with its other contents intact
+
+**And** each of the following holds:
+
+- Adoption remains best-effort and silent on success; it is a migration, not a
+  feature.
+- A test builds a legacy tree containing one adoptable model and one unrelated
+  directory, runs adoption, and asserts the unrelated directory still exists.
+- If adoption cannot complete, nothing is deleted at all.
+
+**Implementation constraints:**
+
+- The current code removes `legacy` — the whole `~/Documents/huggingface` — when
+  only its `models/argmaxinc/whisperkit-coreml` subtree is empty. That is the
+  defect; narrow the target, do not add a guard around the same call.
+
+### Story 11.4: The notes folder's default matches the privacy claim
+
+*(tier T1 · FR-69)*
+
+As someone who was told nothing leaves this Mac, I want that to be true of where
+my notes are written, so that the claim and the filesystem agree.
+
+**Acceptance Criteria:**
+
+**Given** a Mac with iCloud Desktop & Documents sync enabled
+**When** Minutes chooses or reports the default notes folder
+**Then** either the default sits outside the synced tree, or the app states
+plainly that notes in this location are synced to iCloud
+**And** no pane asserts that nothing leaves the Mac while notes are being synced
+
+**And** each of the following holds:
+
+- The detection, if used, is a fact about the folder rather than a guess about
+  the user's settings.
+- The user may still choose a synced folder deliberately. This story removes a
+  false claim, not a capability.
+- The folder is reported as ready only if it was actually created. Today the
+  creation uses `try?` and reports success either way.
+
+**Implementation constraints:**
+
+- `SummariesPane` and `GettingStartedPane` both carry the absolute claim. Whatever
+  this story decides, those sentences are part of it.
+
+### Story 11.5: A model is a prerequisite, not a mid-meeting discovery
+
+*(tier T2 · FR-70)*
+
+As someone recording my first meeting, I want to know a 600 MB download is needed
+before the meeting depends on it, so that I do not lose a recording to a
+surprise.
+
+**Acceptance Criteria:**
+
+**Given** no transcription model on the machine
+**When** the user is about to rely on one
+**Then** the requirement is stated and the download is offered before the meeting
+**And** a meeting recorded without a model still keeps its audio and can be
+transcribed later
+
+**And** each of the following holds:
+
+- Progress is visible while a model downloads, wherever that download was
+  triggered.
+- Offline with no model produces a stated reason before recording, not a failure
+  after it.
+- Nothing in this story deletes or refuses to keep audio. A meeting already
+  captured is not the place to enforce a prerequisite.
+
+### Story 11.6: The app knows its own version, and the version comes from the tag
+
+*(tier T1 · FR-71)*
+
+As someone reading a bug report, I want the version in it to identify a specific
+build, so that "1.0" does not mean every release ever made.
+
+**Acceptance Criteria:**
+
+**Given** a build produced from a tagged commit
+**When** the app reports its version
+**Then** the value derives from that tag
+**And** an untagged development build is identifiable as one
+
+**And** each of the following holds:
+
+- `CFBundleShortVersionString` and `CFBundleVersion` are substituted at bundle
+  time. The plist in the repository stops carrying a literal version.
+- `--doctor` prints it, and the window shows it somewhere a user can find and
+  quote.
+- The bug report template asks for it and the command to obtain it works.
+
+**Implementation constraints:**
+
+- AD-33 governs. **Prerequisite for Epic 12** — a release process that cannot
+  distinguish two releases is not one.
+- No update-check mechanism in this story. Homebrew is the update mechanism
+  (Epic 12); an in-app checker would be a second, competing one.
+
+### Story 11.7: The remaining single-machine assumptions
+
+*(tier T2 · FR-66 shared)*
+
+As someone whose Mac differs from the author's, I want the app's claims about my
+machine to be about my machine, so that its statements are worth reading.
+
+**Acceptance Criteria:**
+
+**Given** hardware, installed apps or capabilities that differ from the author's
+**When** Minutes reports on them
+**Then** each statement reflects what was actually determined
+**And** no unavailability is explained by a reason that was not the reason
+
+**And** each of the following holds:
+
+- The default transcription model is guaranteed to appear in the picker, and
+  something is always shown as selected. *Suspected, not confirmed: on an M1 the
+  hardcoded turbo variant may be absent from WhisperKit's supported list, in
+  which case the curated list filters it out and the "always offer the active
+  model" fallback fails too. Verify on an M1 before writing the fix.*
+- Apple Intelligence unavailability states the real reason, which
+  `FoundationModelsBackend` already receives and currently discards.
+- Detection covers the call apps people actually use, not two bundle
+  identifiers. Classic Teams is not a prefix match for `teams2`.
+- Disk space is checked before a model download and before a long recording.
+- `--doctor` stops printing note filenames, which are derived meeting titles,
+  given that the README asks users to share its output.
+
+**FR Coverage — Epic 11**
+
+| FR | Story |
+| --- | --- |
+| FR-66 | 11.1 (with 11.7) |
+| FR-67 | 11.2 |
+| FR-68 | 11.3 |
+| FR-69 | 11.4 |
+| FR-70 | 11.5 |
+| FR-71 | 11.6 |
+
+---
+
+## Epic 12: One Command to Install
+
+**Why this epic exists.** The ask was a single terminal command. Two things
+found while planning it turned that from a packaging problem into a purchasing
+decision.
+
+First, permissions. Apple's TN3127 states that macOS records an app's designated
+requirement when consent is granted and re-checks it on every access, and that
+ad-hoc signed code's requirement "is tied to that specific version of the code".
+A Developer ID requirement checks the Apple anchor, the bundle identifier and the
+Team ID — not a hash. So ad-hoc signing costs the user their microphone and
+system-audio consent on **every** update, and a Developer ID does not.
+
+Second, the escape hatch closed. Homebrew applies quarantine to every cask
+install from any tap, and `--no-quarantine` has been removed — verified on
+Homebrew 6.0.20 on this machine: absent from `brew install --cask --help` and
+rejected as an argument. Official `homebrew/cask` began removing casks that fail
+Gatekeeper checks on 1 September 2026. And macOS 15 removed the Control-click
+bypass, so an unnotarized app now requires a trip through System Settings.
+
+**This epic is therefore gated on an Apple Developer Program membership.**
+Without it there is no honest one-command install through Homebrew; the fallback
+is building from source on the colleague's machine, which is a different promise.
+
+**Ordering.** 12.1 before 12.2 — get signing and notarization working by hand
+once, so that when CI fails it fails for one reason instead of two. 12.3 last,
+because a cask pointing at a release that does not exist is untestable.
+
+**What this epic explicitly does not build:** an in-app updater or Sparkle
+(Homebrew is the update mechanism, and two updaters is worse than one); a `.dmg`
+with a drag-to-install background; submission to official `homebrew/cask`, which
+wants notability the project does not have and would gain nothing today; a
+`curl | bash` installer, which for a GUI app is strictly worse than a cask.
+
+### Story 12.1: Signed with a Developer ID, notarized and stapled
+
+*(tier T1 · FR-73)*
+
+As someone installing an update, I want my microphone permission to survive it,
+so that every release does not cost me a trip through System Settings.
+
+**Acceptance Criteria:**
+
+**Given** a Developer ID Application certificate
+**When** a release bundle is produced
+**Then** it is signed with hardened runtime and a secure timestamp, notarized,
+and the ticket is stapled to the `.app`
+**And** `spctl --assess` accepts it
+
+**And** each of the following holds:
+
+- The ticket is stapled to the app bundle and the app is then **re-**archived. A
+  zip cannot be stapled; getting this backwards yields a release that works
+  online and fails offline.
+- The bundle identifier does not change, now or later. Consent is keyed to it.
+- A build with no certificate available still produces an ad-hoc bundle for local
+  development, and says which one it made.
+- The entitlements file is XML and carries no `get-task-allow`. Both are
+  documented notarization rejections.
+
+**Implementation constraints:**
+
+- AD-34 governs. `notarytool`, not `altool` — the notary service stopped
+  accepting `altool` in November 2023.
+- Sandbox stays off. Notarization does not require it, and
+  `com.apple.security.device.audio-input` is a normal hardened-runtime
+  entitlement that attracts no extra scrutiny.
+- Do the first one by hand and record what the notary log said, including
+  warnings on success.
+
+### Story 12.2: A tag produces a release
+
+*(tier T2 · FR-72)*
+
+As the author, I want pushing a tag to produce a published, notarized release, so
+that shipping is not a sequence I have to remember correctly.
+
+**Acceptance Criteria:**
+
+**Given** a tag matching `v*` pushed to `main`
+**When** CI runs
+**Then** it builds, signs, notarizes, staples, packages and publishes a GitHub
+Release with a checksum
+**And** the version in the bundle matches the tag
+
+**And** each of the following holds:
+
+- Credentials are an App Store Connect API key rather than an Apple ID, because
+  a key does not interact with two-factor authentication.
+- The signing keychain is created, unlocked, has its partition list set, and is
+  deleted afterwards even on failure. A keychain that exists but is locked or
+  absent from the search list fails in a way that looks like a signing problem.
+- A release cannot be published if tests or the user-data guard failed.
+- The workflow is runnable manually for a dry run that signs but does not
+  publish.
+
+### Story 12.3: `brew install --cask` and it is installed
+
+*(tier T2 · FR-72)*
+
+As a colleague who was sent one command, I want it to work, so that I can use
+the app without being walked through it.
+
+**Acceptance Criteria:**
+
+**Given** a published, notarized release
+**When** the user runs `brew install --cask NiklasLuettringhaus/minutes/minutes`
+**Then** Minutes is installed and opens
+**And** no separate `brew tap` step is required
+
+**And** each of the following holds:
+
+- The cask declares `depends_on macos: ">= :sequoia"` and `arch: :arm64`.
+- `uninstall quit: "dev.niklas.minutes"` is present so an upgrade can close a
+  running menu-bar app rather than replacing it underneath itself.
+- `zap trash:` covers the app's **whole** footprint, including the login-item
+  launch agent that survives deleting the app.
+- `livecheck` discovers new releases; CI bumps the cask's version and checksum,
+  because a personal tap has no bot to do it.
+- Gatekeeper is satisfied, never bypassed. No quarantine-stripping in a
+  postflight block — that is precisely the protection Homebrew has just finished
+  enforcing.
+
+### Story 12.4: Apple Silicon, said out loud
+
+*(tier T2 · FR-72 shared)*
+
+As someone on an Intel Mac, I want to be told this app is not for my machine, so
+that I do not install something that runs badly.
+
+**Acceptance Criteria:**
+
+**Given** a Mac that is not Apple Silicon
+**When** installation is attempted
+**Then** it refuses with a plain sentence naming the requirement
+**And** nothing is partially installed
+
+**Implementation constraints:**
+
+- The declared support is arm64 because that is where every measurement in this
+  repository was taken. Whether the CoreML dependencies build for x86_64 at all
+  is **unverified** — do not claim universal support without testing it.
+
+**FR Coverage — Epic 12**
+
+| FR | Story |
+| --- | --- |
+| FR-72 | 12.2, 12.3, 12.4 |
+| FR-73 | 12.1 |
+
+---
+
+## Epic 13: One Folder Is the Whole Footprint
+
+**Why this epic exists.** The user's framing: *"all user data is local only"* —
+meetings, the voice mapping, and settings, in one place the app loads, so that
+working with GitHub is never a worry.
+
+Most of this is already true and was true before the repository existed.
+Meetings, remembered voices and models live under one directory, and no commit in
+the project's history has ever contained audio, a meeting record or a speaker
+directory. Two gaps remain between that and what the README now claims.
+
+Settings are the odd one out: they are in `~/Library/Preferences/`, so "delete
+that folder and Minutes knows nothing about you" is not currently true. And full
+removal takes six steps, of which the README names three — the one that matters
+being a launch agent that survives deleting the app and keeps trying to start
+something that is no longer there.
+
+**One design question inside this epic needs an answer before its code.** An
+export is the first feature in the app's life that lets a voice fingerprint leave
+the machine, and PRD §9.1 treats it as biometric-adjacent. The default is that it
+does not leave; whether and how the user may override that is a decision to be
+taken deliberately, not defaulted.
+
+**What this epic explicitly does not build:** sync of any kind; a remote backup;
+an account; a settings format anyone else is expected to author by hand.
+
+### Story 13.1: Settings become a document in the user-data folder
+
+*(tier T2 · FR-74)*
+
+As someone who was told one folder holds everything, I want that to include my
+settings, so that the claim is true and I can read what the app stored.
+
+**Acceptance Criteria:**
+
+**Given** an existing installation with settings in `UserDefaults`
+**When** Minutes launches after this change
+**Then** settings are migrated once into a readable document in the user-data
+directory
+**And** the notes-folder permission survives the migration
+
+**And** each of the following holds:
+
+- The file is human-readable and stable enough to diff.
+- Migration runs once, is idempotent, and afterwards `UserDefaults` is not read.
+- A missing or corrupt file yields defaults and a stated reason, never a crash
+  and never a silent reset of everything.
+- The security-scoped bookmark for the notes folder round-trips. If it cannot,
+  the user is asked to pick the folder again rather than silently losing access.
+- Deleting the user-data directory returns the app to a first-run state, with
+  nothing about the user surviving anywhere else.
+
+**Implementation constraints:**
+
+- AD-37 governs. `Preferences` remains the only reader and writer of settings
+  (the AD-21 pattern), so this is a change of store, not of ownership.
+
+### Story 13.2: The app can show you everything it stores about you
+
+*(tier T2 · FR-75)*
+
+As a privacy-conscious user, I want to see the app's whole footprint on my Mac,
+so that its promise is a list I can click rather than a sentence I have to trust.
+
+**Acceptance Criteria:**
+
+**Given** any installation state
+**When** the user asks what Minutes stores
+**Then** every location is listed with its size and what it holds
+**And** each can be revealed in Finder
+
+**And** each of the following holds:
+
+- The list is derived from the same constants the app writes through, so it
+  cannot drift out of date.
+- It names the launch agent and the notes folder, not only the user-data
+  directory.
+- No meeting content, speaker name or embedding appears in the listing itself.
+
+### Story 13.3: Export and import the folder
+
+*(tier T3 · FR-75)*
+
+As someone moving to a new Mac, I want to take my meetings, voices and settings
+with me deliberately, so that changing machines does not mean starting over.
+
+**Acceptance Criteria:**
+
+**Given** an export the user has requested
+**When** it is produced
+**Then** it contains meetings, notes and settings
+**And** it contains no voice fingerprint unless the user separately chose to
+include one
+
+**And** each of the following holds:
+
+- The separate choice for voices is explicit, off by default, and accompanied by
+  a plain statement of what a fingerprint is and why it is treated differently.
+- Import states what it is about to overwrite before it does so.
+- An import from a different app version either migrates or refuses with a
+  reason. It never partially applies.
+- Neither direction touches the network.
+
+**Implementation constraints:**
+
+- AD-38 governs. **Blocked on a product decision:** whether a fingerprint may be
+  exported at all, and in what words. Do not default it.
+
+### Story 13.4: Uninstall is complete, and documented completely
+
+*(tier T3 · FR-76)*
+
+As someone removing Minutes, I want everything gone, so that I am not left with
+a launch agent starting an app that no longer exists.
+
+**Acceptance Criteria:**
+
+**Given** an installation with Launch at Login enabled
+**When** the user follows the documented uninstall
+**Then** nothing of Minutes remains
+**And** no launch agent refers to a missing bundle
+
+**And** each of the following holds:
+
+- The launch agent is removed. It lives outside the app bundle and survives
+  deleting it.
+- The cask's `zap` stanza matches the documented list exactly, and both are
+  derived from the same source as the 13.2 inventory.
+- The documentation names the permission reset commands, since macOS retains
+  consent records after the app is gone.
+- Removing the app without the data is still possible and is still the default;
+  a user's meetings are not deleted by an uninstall they did not ask to be
+  destructive.
+
+**FR Coverage — Epic 13**
+
+| FR | Story |
+| --- | --- |
+| FR-74 | 13.1 |
+| FR-75 | 13.2, 13.3 |
+| FR-76 | 13.4 |

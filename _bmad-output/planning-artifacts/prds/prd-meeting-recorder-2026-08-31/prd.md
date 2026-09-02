@@ -2,7 +2,7 @@
 title: Minutes — local-first meeting recorder for macOS
 status: final
 created: 2026-08-31
-updated: 2026-09-01
+updated: 2026-09-02
 owner: Niklas
 mode: headless (-A); increment 2 applied headless (-H update)
 revisions:
@@ -14,6 +14,12 @@ revisions:
     FR-27 and FR-52, and amends NFR-1 for the first time in the project's life.
     Preceded by a spike (planning-artifacts/spikes/spike-local-llm-2026-08-31.md)
     and a review (prds/.../review-llm-key-proposal.md).
+  - 2026-09-02 increment 5 — running on someone else's Mac. Adds FR-66 through FR-76 and
+    amends §12 (the absence of a signing certificate stops being an accepted condition
+    once anyone but the author installs the app). Driven by publishing the repository and
+    by the first audit of the code against a machine other than the one it was written on;
+    every requirement answers a defect verified at a file and line. See
+    planning-artifacts/RELEASE-PLAN.md.
   - 2026-09-01 increment 4 — voice enrolment. Adds FR-62 through FR-65, amends FR-21,
     FR-25, FR-46, SM-2, §9.1 and the Glossary, and reverses one line of §6.2. Driven
     by the first four real meetings and by two measurement runs on their audio:
@@ -857,6 +863,143 @@ A Backend that fails, times out, or is offline costs the user nothing that was a
 
 ---
 
+### 4.11 Running on Someone Else's Mac
+
+**Description:** Everything above was specified, built and operated on one machine. This section covers what a second machine requires: that failures explain themselves, that claims about the environment are about *that* environment, that installing is one command, that an update does not cost the user their permissions, and that the app's whole footprint is one folder the user can see, move and remove. Added in increment 5, after the repository was published and the code was audited for the first time with a different Mac in mind. Every requirement here answers a defect verified at a file and line, not a hypothetical.
+
+**Functional Requirements:**
+
+#### FR-66: A failure states its reason and its remedy
+When Minutes cannot do what the user asked, it says why, in the interface, with the remedy.
+
+**Consequences (testable):**
+- Every failure that prevents a recording from starting is surfaced where the user acted — the menu bar as well as the window. A reason visible only in a window the user has not opened is still silence.
+- The text is the reason and the remedy together. "Recording failed" without "enable Minutes in System Settings > Privacy & Security > Microphone" leaves the user exactly where they were.
+- A reason is cleared by a subsequent success. A stale error asserting a present failure is its own defect.
+- Where the remedy is a System Settings pane, the app offers to open it rather than describing where it is.
+- No statement about the machine is made unless it was determined on *that* machine. An unavailability is explained by the reason that actually applied, never by the most likely one.
+
+**Notes:**
+- The strings already exist and are already good. `AppState.lastError` is written on four failure paths in `SessionCoordinator` and read by exactly one file, `App/SelfTest.swift` — a command-line path. The app has never been able to explain a failure through its interface, and on one machine, with permissions long since granted, that never showed.
+
+#### FR-67: Evidence that audio was captured is signal, never duration
+Any claim that a stream produced audio rests on there having been audio in it.
+
+**Consequences (testable):**
+- Elapsed time is never sufficient. Frames are written whether or not anything is playing, so duration establishes only that the capture ran.
+- A silent capture of any length reports that it produced no audio, and a test asserts exactly that.
+- "The file exists" is not evidence either. The Test Playground's per-stream verdicts test the samples.
+- Every sentence in the product that asserts capture succeeded is true after this requirement, or is reworded.
+
+**Notes:**
+- This is load-bearing for FR-42 rather than incidental to it. macOS exposes no API to query system-audio permission, so a measurement is the only evidence obtainable — and a measurement that cannot fail is indistinguishable from success. Verified: `SystemTapCapture.stop()` accepts `duration > 0.25` as proof, three lines below a comment calling the value "the only evidence we can have that system-audio capture actually worked".
+
+#### FR-68: Minutes never removes a directory it did not create
+The app deletes only what it wrote.
+
+**Consequences (testable):**
+- Migration of previously downloaded models removes the subtree Minutes created and leaves its parent and the parent's other contents intact.
+- A migration that cannot complete deletes nothing at all.
+- A test places unrelated content beside adoptable content and asserts the unrelated content survives.
+
+**Notes:**
+- Verified: every launch can remove the whole of `~/Documents/huggingface` when only its `models/argmaxinc/whisperkit-coreml` subtree is empty. Harmless on a machine that keeps no other models there; silent data loss on one that does.
+
+#### FR-69: Where notes are written matches what the app claims about them
+The default note location does not contradict the privacy statement.
+
+**Consequences (testable):**
+- Either the default sits outside a cloud-synced tree, or the app states plainly that notes in this location are synced off the Mac.
+- No surface asserts that nothing leaves this Mac while notes are being synchronised from it.
+- The user may still choose a synced folder deliberately; this removes a false claim, not a capability.
+- A folder is reported ready only if it was created. Reporting success from a failed creation is a separate defect in the same code path.
+
+**Notes:**
+- Verified: the default is `~/Documents/Minutes`, and iCloud's Desktop & Documents sync — common on managed fleets — uploads everything in it, while the Summaries pane states "Nothing about your meetings leaves this Mac". The app is not lying; it does not know. §9.1 makes this a requirement rather than a nicety.
+
+#### FR-70: A transcription model is a declared prerequisite
+The user learns a model is needed before a meeting depends on one.
+
+**Consequences (testable):**
+- The requirement is stated and the download offered before the first meeting that would need it, not discovered inside the pipeline that already has the audio.
+- Progress is visible while a model downloads, wherever the download began.
+- A meeting recorded without a model keeps its audio and can be transcribed later. A prerequisite is never enforced by discarding something already captured.
+- Offline and without a model, the user is told before recording rather than after.
+
+#### FR-71: The app knows its own version, and the version identifies the build
+A reported version distinguishes one release from another.
+
+**Consequences (testable):**
+- The version derives from the release tag and is applied when the bundle is assembled. No version literal is maintained by hand.
+- `--doctor` prints it, and the interface shows it somewhere a user can find and quote.
+- A development build is identifiable as one rather than claiming to be a release.
+
+**Notes:**
+- Verified: `Info.plist` carries `1.0`/`1` and nothing in the source reads either key. There is no About surface. Without this, every bug report from every user of every future release says the same thing.
+
+#### FR-72: Installing on another Mac is a single command
+A person who has never seen the project installs it with one command and opens it.
+
+**Consequences (testable):**
+- One command, with no separate tap, clone, build or unarchive step.
+- The installed app opens. Gatekeeper is satisfied, never bypassed, disabled, or worked around.
+- Hardware and OS requirements are declared by the installer and enforced before anything is written. An unsupported Mac is refused with a sentence naming the requirement, not given a degraded install.
+- Uninstalling is available through the same mechanism.
+
+**Notes:**
+- The mechanism is a Homebrew cask in a first-party tap. Official `homebrew/cask` requires notability the project does not have, and — since 1 September 2026 — that the cask pass Gatekeeper checks; the second is a requirement the project intends to meet regardless, the first is not worth pursuing.
+- `[ASSUMPTION: the target is Apple Silicon. Every measurement in the project was taken there. Whether the CoreML dependencies build for x86_64 at all is untested, so universal support is not claimed.]`
+
+#### FR-73: An update does not cost the user their permissions
+Installing a new version preserves consent already granted.
+
+**Consequences (testable):**
+- Microphone and system-audio consent survive an update. The user does not re-grant permissions or re-run the audio test because a new version arrived.
+- The bundle identifier is stable across releases, permanently.
+- An update closes a running instance cleanly rather than replacing it underneath itself.
+
+**Notes:**
+- This is the requirement that justifies the signing cost, and it is a mechanism rather than a preference. Apple's TN3127 states that macOS records an app's designated requirement when consent is granted and re-checks it on each access, and that ad-hoc signed code's requirement "is tied to that specific version of the code". A Developer ID requirement checks the Apple anchor, the identifier and the Team ID, and not a hash — so consent survives updates, and survives certificate renewal.
+- Amends §12, which recorded the absence of a signing certificate as an accepted condition. It is no longer acceptable once someone other than the author installs the app.
+
+#### FR-74: Settings live in the single user-data directory
+The app's configuration is part of the footprint the user can see.
+
+**Consequences (testable):**
+- Settings are a readable document in the same directory as meetings and remembered voices.
+- Deleting that directory returns Minutes to a first-run state, with nothing about the user surviving elsewhere.
+- Migration from the previous store happens once, is idempotent, and afterwards the previous store is not read.
+- The notes-folder permission survives migration. If it cannot, the user is asked to choose the folder again rather than silently losing access to it.
+- A missing or unreadable settings document yields defaults with a stated reason, never a crash and never a silent reset.
+
+**Notes:**
+- Requested directly: all user data local, in one place the app loads. Meetings, voices and models already satisfy that; settings are the exception, which is why "delete that folder and Minutes knows nothing about you" is not currently true.
+
+#### FR-75: The user can see, and deliberately move, their whole footprint
+Minutes can show everything it stores, and the user can take it to another Mac.
+
+**Consequences (testable):**
+- Every location is listed with its size and what it holds, and each can be revealed in Finder. The list derives from the same constants the app writes through, so it cannot drift.
+- The listing itself contains no meeting content, speaker name or embedding.
+- An export contains meetings, notes and settings. **It contains no Voice Fingerprint unless the user separately and explicitly chose to include one**, off by default, with a plain statement of why that data is treated differently.
+- Import states what it will overwrite before overwriting it, and either migrates or refuses across versions — never partially applies.
+- Neither direction uses the network.
+
+**Notes:**
+- §9.1 governs. An export is the first capability in the product's life that lets a Voice Fingerprint leave the machine that recorded it, which is why the opt-in is separate from the export itself rather than a line item within it.
+- `[NOTE FOR PM]` Whether a fingerprint may be exported at all is a product decision, not an implementation default. It is deliberately left open here.
+
+#### FR-76: Uninstalling removes everything, and the documentation says what everything is
+A user who removes Minutes is left with nothing of it.
+
+**Consequences (testable):**
+- The login-item launch agent is removed. It lives outside the app bundle, survives deleting it, and otherwise keeps trying to start an application that no longer exists.
+- The documented list, the uninstall mechanism's own list, and the footprint listing of FR-75 are derived from one source and agree.
+- The documentation names the permission-reset commands, since macOS retains consent records after an app is gone.
+- Removing the application without removing the meetings remains possible and remains the default. An uninstall is not destructive of the user's data unless they asked for that.
+
+---
+
 ## 5. Non-Goals (Explicit)
 
 These exist to stop the "let me also add the nearby thing" failure mode at epic, story and code level.
@@ -1083,10 +1226,11 @@ So a 25-second enrolment sample costs well under a second, and the 10-second tar
 *This section exists because the product's largest delivery risk is not a feature — it is macOS consent mechanics, and no template cluster names it.*
 
 - **Two separate permissions are required**, with asymmetric ergonomics. Microphone access has a normal request API and a queryable state. System-audio capture has **neither** — there is no public API to request it or to query it. Its state can only be inferred from whether Capture succeeds and yields non-silent audio. FR-42 is written around that limitation, and the UI must not fake certainty.
-- **Consent is bound to the app's code signature.** No codesigning identity exists on the target machine, so the app is ad-hoc signed. Ad-hoc identity is derived from the binary hash, which means **rebuilding the app invalidates previously granted consent**. The user-facing consequence is a re-grant after rebuilds, and a documented reset command. This is an accepted condition of v1, and the single most likely cause of "it stopped working".
+- **Consent is bound to the app's code signature.** macOS records the app's *designated requirement* when consent is granted and re-checks it on every access. Ad-hoc signed code has a requirement, but — in Apple's own words (TN3127) — it "is tied to that specific version of the code", so **rebuilding invalidates previously granted consent**. The user-facing consequence is a re-grant after every rebuild, and a documented reset command.
+- **Amended in increment 5: this stops being an accepted condition.** It was tolerable while the only user was the author, who rebuilds deliberately and knows the reset command. It is not tolerable once anyone else installs the app, because every update silently costs them their microphone and system-audio consent. FR-73 requires that consent survive an update, which requires a Developer ID certificate: that requirement checks the Apple anchor, the bundle identifier and the Team ID rather than a binary hash, so it is satisfied by a later build and even by a renewed certificate. The bundle identifier is therefore fixed permanently, and signing moves from ad-hoc to Developer ID with notarization (§12 continues to forbid bypassing Gatekeeper rather than satisfying it).
 - **Truly unsigned builds never receive the permission prompt at all.** Signing — even ad-hoc — is therefore part of the build, not an optional packaging step.
 - **App Sandbox must be disabled** for v1; audio taps behave unreliably under sandbox. Hardened Runtime stays on. This forecloses App Store distribution, which §5 already excludes.
-- The app must be installed at a **stable path** so consent is not additionally invalidated by moving the bundle.
+- The app must be installed at a **stable path** so consent is not additionally invalidated by moving the bundle. `[ASSUMPTION: path stability matters for consent. TN3127 describes the designated-requirement check purely in terms of code identity and does not mention filesystem location; the well-documented path-sensitive mechanism is Gatekeeper's app translocation, which is related but distinct. Installing to /Applications avoids translocation and remains the right practice, but the specific claim that moving the bundle invalidates consent is not something this project has verified or found an Apple source for.]`
 
 ## 13. Open Questions
 

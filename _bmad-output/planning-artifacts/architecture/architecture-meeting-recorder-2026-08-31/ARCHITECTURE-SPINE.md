@@ -7,8 +7,8 @@ paradigm: 'layered ports-and-adapters with a staged, resumable pipeline'
 scope: 'The whole Minutes application: menu bar control, dual-stream capture, detection, transcription, diarization, metadata, Markdown output, library, settings.'
 status: final
 created: '2026-08-31'
-updated: 2026-09-01
-binds: [FR-1..FR-65, NFR-1..NFR-8]
+updated: 2026-09-02
+binds: [FR-1..FR-76, NFR-1..NFR-8]
 sources:
   - ../../prds/prd-meeting-recorder-2026-08-31/prd.md
   - ../../prds/prd-meeting-recorder-2026-08-31/addendum.md
@@ -18,12 +18,15 @@ sources:
   - ../../spikes/spike-local-llm-2026-08-31.md
   - ../../spikes/spike-mic-isolation-2026-09-01.md
   - ../../spikes/calibration-speaker-threshold-2026-09-01.md
+  - ../../RELEASE-PLAN.md
 companions: []
 ---
 
 # Architecture Spine — Minutes
 
 Four spikes were run before this spine was written; each committed decision below that touches an OS or ML boundary was verified by running code on the target machine, not asserted. Findings are in `.memlog.md`.
+
+AD-33 … AD-38 (2026-09-02) come from a different kind of investigation: the first audit of the code against a machine other than the one it was written on, plus current Apple and Homebrew documentation on what it takes to install an app somewhere else. Two of those decisions are forced by mechanism rather than chosen — see AD-34's recorded note.
 
 Two further measurement runs (2026-09-01) inform AD-11 and AD-28 … AD-32: a spike on isolating the user's voice from a conversation happening beside them, and a calibration of the speaker-matching threshold against the centroids of five real Meetings. The threshold is the first number in this spine that was *measured* rather than chosen.
 
@@ -270,6 +273,43 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 - **Prevents:** an enrolment recording accumulating on disk beside the fingerprint. That single failure converts the thing §9.1 permits — a vector nobody can play back — into the thing it does not: a voice recording of a named person, kept for identification.
 - **Rule:** One operation records, embeds, and deletes. The sample is written to a temporary directory outside the Meetings root; the fingerprint is derived; the directory is removed on **every** exit path, including failure and cancellation — a `defer`, never a happy-path cleanup. The sample never enters a Meeting directory, never becomes a Meeting record, and never reaches the Notes Folder. Nothing is persisted at all until the fingerprint exists, so a cancelled enrolment is indistinguishable from one that never started. A re-record **replaces** the fingerprint rather than averaging into it, which also means no history of samples exists to leak.
 
+### AD-33 — Release identity comes from the tag, never from a maintained literal
+
+- **Binds:** FR-71, FR-72
+- **Prevents:** two different builds claiming the same version, which makes every bug report ambiguous and every "did you update?" unanswerable. Also prevents the routine failure where the literal is bumped in one place and forgotten in the other.
+- **Rule:** The version is derived from the git tag at bundle-assembly time and substituted into `Info.plist`. The plist in the repository carries a placeholder, never a version. A build from an untagged commit is marked as a development build rather than inheriting the last release's number. Exactly one component knows how to derive it, and both `--doctor` and the interface read it back from the bundle rather than recomputing it.
+
+### AD-34 — Signing is Developer ID with notarization; Gatekeeper is satisfied, never bypassed
+
+- **Binds:** FR-72, FR-73, PRD §12
+- **Prevents:** two distinct failures with one rule. First, consent loss on every update: macOS re-checks an app's designated requirement on each access, and ad-hoc code's requirement is tied to that specific binary (Apple TN3127), so every rebuild revokes microphone and system-audio consent. Second, the instinct to reach for a workaround — stripping the quarantine attribute, a postflight `xattr -cr`, telling a colleague to right-click — each of which defeats the check rather than passing it, and each of which the project would then depend on.
+- **Rule:** Release bundles are signed with a Developer ID Application certificate, with hardened runtime and a secure timestamp, then notarized and **stapled to the `.app`** — not to the archive, which cannot carry a ticket — and re-archived afterwards. The bundle identifier `dev.niklas.minutes` is permanent; consent is keyed to it. App Sandbox stays off (notarization does not require it, and AD-16's reasoning is unchanged). No release ever ships depending on a quarantine bypass. A local development build with no certificate present remains ad-hoc signed and says which it is.
+- **Recorded, because it removes the alternative:** `--no-quarantine` is gone from Homebrew as of 6.0.20, verified on this machine — absent from `brew install --cask --help` and rejected as an argument. macOS 15 removed the Control-click override. There is no longer a low-friction path for an unnotarized app, so this is a mechanism rather than a preference.
+
+### AD-35 — Distribution is a cask in a first-party tap
+
+- **Binds:** FR-72, FR-76
+- **Prevents:** a bespoke installer, a `curl | bash` script, or a hand-written updater — three mechanisms the project would own forever to deliver what one already-installed tool does. Also prevents a second update path competing with the first.
+- **Rule:** A Homebrew cask in a tap owned by the project. Homebrew is the *only* update mechanism; the app contains no update check and no in-app updater. The cask declares its OS and architecture requirements so an unsupported Mac is refused rather than served. It declares how to quit the running app, so an upgrade closes a menu-bar process instead of replacing it underneath itself. Its removal list and the documented uninstall are generated from the same source as the footprint inventory (AD-37), so the three cannot disagree. Submission to official `homebrew/cask` is out of scope: it requires notability the project does not have, and gains nothing a first-party tap does not already give.
+
+### AD-36 — Evidence of capture is signal; elapsed time is never evidence
+
+- **Binds:** FR-42, FR-67, FR-47
+- **Prevents:** the failure this rule was written from — a check that cannot fail. macOS exposes no API to query system-audio permission, so a measurement is the only evidence available, and a measurement satisfied by silence is indistinguishable from success. The app then asserts a green tick on a machine where capture is quietly broken, which is worse than admitting the unknown.
+- **Rule:** Any claim that a stream produced audio is derived from the samples — a peak above a stated floor, or a proportion of non-silent frames. Duration never contributes. The existence of a file never contributes. Every constant in that decision carries the reasoning for its value, and none is a setting. A test asserts that a silent capture of ample duration reports no audio; that test is the rule's enforcement, because this defect is invisible on any machine where capture works.
+
+### AD-37 — The user-data directory is the whole footprint
+
+- **Binds:** FR-74, FR-75, FR-76, PRD §9.1
+- **Prevents:** the footprint drifting apart from the claim made about it. The product's central promise is that everything stays on this Mac; a promise whose scope nobody can enumerate is not checkable, and today it is already wrong in two places — settings live in a different directory, and the login-item launch agent survives deleting the app.
+- **Rule:** One directory holds meetings, remembered voices, models and settings. Settings move into it as a readable document, migrated once from `UserDefaults`, which is then no longer read; `Preferences` remains their sole reader and writer (AD-21's pattern, a different store). Deleting that directory returns the app to a first-run state. Anything the app writes outside it — the launch agent, the user's chosen Notes Folder — is enumerated in one place in the code, and the footprint listing, the uninstall documentation and the cask's removal list are all derived from that enumeration rather than maintained in parallel.
+
+### AD-38 — Biometric-adjacent data leaves the machine only by a separate, explicit choice
+
+- **Binds:** FR-75, PRD §9.1, AD-29, AD-32
+- **Prevents:** a Voice Fingerprint leaving on the coat-tails of something the user asked for. Export is the first capability in the product's life that can move data off the Mac at all, and a fingerprint bundled into "export my meetings" would be a §9.1 breach performed by a feature nobody thought of as a transmission.
+- **Rule:** A Voice Fingerprint is excluded from any export by default. Including one requires a choice distinct from the choice to export, off by default, accompanied by a plain statement of what the data is and why it is treated unlike everything else. No export or import touches the network. This rule is about the *default* and the *separateness*; whether the override should exist at all is a product decision that remains open, and the code must not settle it by defaulting.
+
 ## Consistency Conventions
 
 
@@ -283,7 +323,7 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 | Durations in UI | Monospaced digits, `mm:ss` under an hour, `h:mm:ss` over. |
 | Errors | One `MinutesError` enum per adapter domain, each case carrying a user-presentable reason. No `NSError`, no string-typed errors. |
 | Logging | `os.Logger` with subsystem `dev.niklas.minutes` and one category per layer. Every CoreAudio call's `OSStatus` is logged at the boundary — the spikes proved this is how a silent failure gets found. Never log transcript text. |
-| Config / preferences | `UserDefaults` for scalars; the Notes Folder as a security-scoped bookmark, not a path string. |
+| Config / preferences | A readable settings document in the user-data directory, migrated once from `UserDefaults` (AD-37); the Notes Folder as a security-scoped bookmark, not a path string. Until that migration ships, `UserDefaults` for scalars. |
 | Security-scoped access | `Preferences` resolves the Notes Folder bookmark and owns the single balanced `startAccessingSecurityScopedResource` / `stop…` pair. No other component starts or stops access. |
 | Meeting record writes | Field-level updates through `MeetingStore` only (AD-21). Adapters return values. |
 | State mutation | Only `SessionCoordinator` writes `AppState` (AD-7). |
@@ -291,6 +331,9 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 | Persistence format | `meeting.json` via `Codable` with explicit `CodingKeys`; unknown-key tolerant on read so an older record still loads. |
 | Visual tokens | Never hardcode a colour or metric present in `DESIGN.md`; resolve semantic colours from AppKit at render time. |
 | Voice fingerprints | `[Float]` plus a producer identifier and a dimension, persisted in `speakers.json` alongside Speaker Profiles (AD-29). Compared only in Core. Never logged, never rendered as numbers to the user beyond a single measured distance stated as a fact, never transmitted (PRD §9.1). |
+| Version | Derived from the git tag at bundle time and read back from the bundle (AD-33). No version literal is maintained in source or in the plist. |
+| Evidence of capture | Signal in the samples. Never duration, never the existence of a file (AD-36). |
+| Paths outside the user-data directory | Enumerated in exactly one place, and the footprint listing, uninstall documentation and cask removal list all derive from it (AD-37). |
 | Calibrated constants | A number derived from measurement carries the measurement's date and a path to the report, in a comment at its declaration. If it cannot cite one it is a guess and must be labelled as one (AD-31). |
 | Decodable evolution | Every persisted `Codable` type that has shipped gets a hand-written `init(from:)` using `decodeIfPresent` with defaults. Swift ignores a property's default value when the key is absent and throws `keyNotFound` instead, which is how adding one field to `Meeting` silently orphaned five real recordings. `SpeakerDirectory.Profile` gains fields in increment 4 and therefore gains the same treatment. |
 
@@ -418,6 +461,17 @@ Minutes/
 | Library management (FR-49…54) | `UI/MeetingsPane`, `UI/GeneralPane`, `Services/AppState` | AD-9, AD-8, AD-21 |
 | Summarisation intelligence (FR-55…61) | `Adapters/Metadata/*`, `Services/SummarizerCatalog`, `Adapters/System/KeyStore`, `UI/SummariesPane` | AD-12, AD-22, AD-23, AD-24, AD-25, AD-26, AD-27 |
 | Voice enrolment (FR-62…65) | `Core/VoiceMatch`, `Services/VoiceEnrolment`, `Services/SpeakerDirectory`, `Adapters/Diarize/SpeakerKitVoiceEmbedder`, `UI/GettingStartedPane` + `UI/GeneralPane` | AD-11 (amended), AD-28, AD-29, AD-30, AD-31, AD-32 |
+
+## Build and Delivery Envelope, Increment 5
+
+Increment 5 is the first whose subject *is* the build and delivery envelope, so this section changes substantively rather than asserting that nothing moved.
+
+- **The build script grows a signing decision.** It signs Developer ID when a certificate is present and ad-hoc when none is, and states which it did. AD-16's reasoning is unchanged — signing remains part of the build, not packaging — but the identity is no longer always ad-hoc, and that is what makes consent survive an update (AD-34).
+- **The plist stops carrying a version.** Bundle assembly substitutes it from the tag (AD-33). This is the first value in the bundle that is computed rather than copied.
+- **A release path exists, separate from the build path.** Notarization and stapling happen only on a tagged release, in CI, with credentials that never exist on a developer machine. `./Scripts/build-app.sh` remains the local path and gains no network dependency.
+- **A second repository enters the picture** — the Homebrew tap (AD-35). It holds one cask file and is updated by CI on release. It is not a submodule and the app does not know it exists.
+- **One new persisted file shape, and this one is a migration.** Settings move out of `UserDefaults` into the user-data directory (AD-37). Unlike increment 4's additive change to `speakers.json`, this one moves data between stores, so it runs once, is idempotent, and must carry the Notes Folder's security-scoped bookmark across intact — the one piece that cannot be recreated from a default.
+- **No new entitlement, and no new dependency.** Nothing in this increment needs either.
 
 ## Build and Delivery Envelope, Increment 4
 

@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-31-2026 11:23
-last_updated: 09-01-2026 13:40
+last_updated: 09-02-2026
 project: Minutes
 project_key: NOKEY
 tracking_system: file-system
@@ -127,3 +127,27 @@ development_status:
   10-6-the-stored-voice-is-visible-distinguishable-and-deletable: review
   10-7-the-identification-says-what-it-rests-on: review
   epic-10-retrospective: optional
+
+  epic-11: backlog
+  11-1-a-failure-states-its-reason-and-its-remedy: backlog
+  11-2-evidence-of-capture-is-signal-never-duration: backlog
+  11-3-the-app-never-removes-a-directory-it-did-not-create: backlog
+  11-4-the-notes-folder-s-default-matches-the-privacy-claim: backlog
+  11-5-a-model-is-a-prerequisite-not-a-mid-meeting-discovery: backlog
+  11-6-the-app-knows-its-own-version-and-the-version-comes-from-the: backlog
+  11-7-the-remaining-single-machine-assumptions: backlog
+  epic-11-retrospective: optional
+
+  epic-12: backlog
+  12-1-signed-with-a-developer-id-notarized-and-stapled: backlog
+  12-2-a-tag-produces-a-release: backlog
+  12-3-brew-install-cask-and-it-is-installed: backlog
+  12-4-apple-silicon-said-out-loud: backlog
+  epic-12-retrospective: optional
+
+  epic-13: backlog
+  13-1-settings-become-a-document-in-the-user-data-folder: backlog
+  13-2-the-app-can-show-you-everything-it-stores-about-you: backlog
+  13-3-export-and-import-the-folder: backlog
+  13-4-uninstall-is-complete-and-documented-completely: backlog
+  epic-13-retrospective: optional
