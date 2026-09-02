@@ -92,6 +92,10 @@ final class SessionCoordinator: ObservableObject {
             m.systemSource = sysName
         }
 
+        // A previous failure is over: this attempt worked. A stale reason claiming
+        // a present failure is its own defect (FR-66).
+        AppState.shared.lastError = nil
+
         // The icon turns Recording only once audio is actually being captured (FR-3).
         AppState.shared.setSessionState(.recording(since: startedAt!, degraded: cap.isDegraded))
         startTicking()
@@ -117,8 +121,20 @@ final class SessionCoordinator: ObservableObject {
             m.systemStreamCaptured = streams.systemCaptured
         }
 
-        // The only evidence available about system-audio permission (FR-42).
+        // The only evidence available about system-audio permission (FR-42),
+        // and now derived from the samples rather than from elapsed time (AD-36).
         Preferences.shared.lastSystemCaptureOK = streams.systemCaptured
+
+        // A degraded recording is a thing the user can act on, so say so rather
+        // than only logging it. Gated on the tap having been established, not on
+        // duration: a tap that started and delivered no callbacks at all has zero
+        // duration, and suppressing that case would reproduce exactly the silence
+        // FR-66 exists to remove. A tap that never started already reported
+        // itself at start.
+        if streams.systemTapEstablished, !streams.systemCaptured,
+           let why = streams.systemEvidence.failureReason {
+            AppState.shared.lastError = .systemAudioProducedSilence(why)
+        }
 
         AppState.shared.setSessionState(.transcribing(meetingID: id, title: nil))
         Log.session.info("session stopped \(id, privacy: .public) duration=\(streams.duration) system=\(streams.systemCaptured)")

@@ -81,6 +81,27 @@ struct MenuBarContent: View {
 
     var body: some View {
         Group {
+            // The reason the last attempt failed, above everything (FR-66). The
+            // user clicked here, so this is where an explanation has to appear;
+            // a reason that only exists in a window they have not opened is
+            // indistinguishable from no reason at all.
+            if let e = app.lastError {
+                Text(e.errorDescription ?? "Something went wrong.")
+                if let s = e.recoverySuggestion { Text(s) }
+                if let r = e.remedy {
+                    Button(r.label) {
+                        // A remedy that selects a pane needs the window to exist:
+                        // paneRequest is only observed by MainWindow, which is
+                        // created lazily, so pressing this with the window closed
+                        // would otherwise do nothing at all.
+                        if r.opensAPane { openWindow(r.pane ?? .gettingStarted) }
+                        FailureBanner.perform(r)
+                    }
+                }
+                Button("Dismiss") { app.lastError = nil }
+                Divider()
+            }
+
             // A pending ask sits above everything else. It is repeated here because
             // the notification that normally carries it can be denied, dismissed or
             // missed, and then this is the only place it survives.

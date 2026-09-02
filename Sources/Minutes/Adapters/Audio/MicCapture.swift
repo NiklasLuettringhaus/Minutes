@@ -74,17 +74,29 @@ final class MicCapture {
         set { writer?.isMuted = newValue }
     }
 
-    func stop() -> TimeInterval {
-        guard isRunning else { return 0 }
+    /// Ends capture and reports what it can honestly claim (AD-36).
+    ///
+    /// Both figures are read **after** `writer.stop()`, because that call is what
+    /// flushes the rest of the ring — its own comment records that draining only
+    /// once "truncated the tail of every recording". Reading before it therefore
+    /// under-reports, which for `duration` was a long-standing inaccuracy and for
+    /// evidence would be a wrong verdict: on a five-second Test Playground where
+    /// the speech lands late, the unflushed tail could hold all of the signal.
+    func stop() -> (duration: TimeInterval, evidence: AudioEvidence) {
+        guard isRunning else { return (0, .none) }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        let d = writer?.duration ?? 0
-        writer?.stop()
+        // Hold the writer past the teardown so its counters can be read once it
+        // has finished flushing.
+        let w = writer
+        w?.stop()
         ring?.reset()
         writer = nil; ring = nil
         isRunning = false
-        Log.audio.info("mic capture stopped duration=\(d)")
-        return d
+        let d = w?.duration ?? 0
+        let e = w?.evidence ?? .none
+        Log.audio.info("mic capture stopped duration=\(d) peak=\(e.peak) nonSilent=\(e.nonSilentSeconds)")
+        return (d, e)
     }
 
     var level: Float { writer?.peak ?? 0 }

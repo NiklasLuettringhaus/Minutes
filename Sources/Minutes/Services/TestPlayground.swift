@@ -26,8 +26,15 @@ final class TestPlayground: ObservableObject {
     /// Failures are staged and named, never one generic error (FR-47).
     struct Result: Equatable {
         var transcript: String
+        /// Whether each stream actually contained sound. Derived from the samples
+        /// (AD-36) — this used to be `micURL != nil`, which reports that a file
+        /// exists and passes on a dead or muted input device.
         var micHadAudio: Bool
         var systemHadAudio: Bool
+        /// Why, when a stream produced nothing. FR-47's rule is that failures are
+        /// staged and named; "no audio" without a reason is neither.
+        var micFailure: String?
+        var systemFailure: String?
         var model: String
         var transcriptionSeconds: Double
         var audioSeconds: Double
@@ -112,6 +119,19 @@ final class TestPlayground: ObservableObject {
             try? FileManager.default.removeItem(at: dir)
             return
         }
+        // A file that exists but holds silence is the dead-input-device case, and
+        // it used to pass this test and then produce an empty transcript with no
+        // explanation (AD-36).
+        if !streams.micEvidence.producedAudio {
+            let why = streams.micEvidence.failureReason ?? "no sound was recorded"
+            // Not "check Minutes is not muted": run() builds a fresh
+            // DualStreamCapture and never sets isMicMuted, so a mute is not a
+            // possible cause here. Naming an impossible cause is the same defect
+            // as naming none.
+            phase = .failed("The microphone recorded no sound — \(why). Check that the right input device is selected in System Settings > Sound, and that its input volume is not at zero.")
+            try? FileManager.default.removeItem(at: dir)
+            return
+        }
 
         let started = Date()
         let transcriber: Transcribing = ParakeetModel.isParakeet(model) ? ParakeetTranscriber() : WhisperKitTranscriber()
@@ -127,8 +147,10 @@ final class TestPlayground: ObservableObject {
 
             let result = Result(
                 transcript: text.isEmpty ? "(no speech detected — the capture worked, but nothing was said)" : text,
-                micHadAudio: streams.micURL != nil,
+                micHadAudio: streams.micEvidence.producedAudio,
                 systemHadAudio: streams.systemCaptured,
+                micFailure: streams.micEvidence.failureReason,
+                systemFailure: streams.systemEvidence.failureReason,
                 model: model,
                 transcriptionSeconds: elapsed,
                 audioSeconds: max(streams.duration, 0.1))

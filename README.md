@@ -81,7 +81,7 @@ rm -rf ~/Library/Application\ Support/Minutes    # your meetings. destructive.
 
 ```bash
 ./Scripts/setup-dev.sh   # pre-commit hook
-swift test               # 153 tests
+swift test               # 174 tests
 ./Scripts/uishot.sh      # render every pane and look at it
 ```
 

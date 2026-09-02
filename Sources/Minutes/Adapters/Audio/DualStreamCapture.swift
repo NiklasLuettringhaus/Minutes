@@ -51,14 +51,18 @@ final class DualStreamCapture: Capturing {
         guard isRunning, let dir = directory else {
             return CapturedStreams(micURL: nil, systemURL: nil, duration: 0, systemCaptured: false)
         }
-        let micDuration = mic.stop()
+        let micResult = mic.stop()
+        let micDuration = micResult.duration
+        let micEvidence = micResult.evidence
         var systemDuration: TimeInterval = 0
-        var produced = false
+        var systemEvidence = AudioEvidence.none
+        let tapEstablished = (system != nil)
         if let s = system {
             let r = s.stop()
             systemDuration = r.duration
-            produced = r.producedAudio
+            systemEvidence = r.evidence
         }
+        let produced = systemEvidence.producedAudio
         system = nil
         isRunning = false
 
@@ -67,6 +71,9 @@ final class DualStreamCapture: Capturing {
         // a cross-check (the spike showed a possible framing discrepancy).
         let duration = max(wall, max(micDuration, systemDuration))
         Log.audio.info("capture stopped wall=\(wall) mic=\(micDuration) sys=\(systemDuration) produced=\(produced)")
+        if let why = systemEvidence.failureReason {
+            Log.audio.error("system stream unusable: \(why, privacy: .public)")
+        }
 
         let micURL = dir.appendingPathComponent("mic.wav")
         let sysURL = dir.appendingPathComponent("system.wav")
@@ -75,7 +82,10 @@ final class DualStreamCapture: Capturing {
             micURL: fm.fileExists(atPath: micURL.path) ? micURL : nil,
             systemURL: (produced && fm.fileExists(atPath: sysURL.path)) ? sysURL : nil,
             duration: duration,
-            systemCaptured: produced)
+            systemCaptured: produced,
+            micEvidence: micEvidence,
+            systemEvidence: systemEvidence,
+            systemTapEstablished: tapEstablished)
     }
 
     /// Mutes only the Mic Stream. The System Stream — the far end of the meeting —

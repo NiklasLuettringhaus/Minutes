@@ -35,7 +35,15 @@ final class StreamFileWriter {
     /// Counts frames written to the file, i.e. output frames at 16 kHz — not
     /// captured frames. `duration` divides by the output rate accordingly.
     private(set) var framesWritten: AVAudioFramePosition = 0
+    /// The UI level meter. Decays on purpose so the meters fall when someone
+    /// stops talking — which is exactly why it must never be used as evidence
+    /// that a capture worked (AD-36). Use `evidence` for that.
     private(set) var peak: Float = 0
+    /// Highest absolute sample over the whole capture. Never decays.
+    private(set) var peakEver: Float = 0
+    /// Captured frames belonging to a chunk whose peak cleared the silence floor.
+    /// Counted at input rate, which is what `nonSilentSeconds` divides by.
+    private(set) var nonSilentInputFrames: AVAudioFramePosition = 0
 
     /// When true, silence is written instead of the captured audio.
     ///
@@ -113,6 +121,15 @@ final class StreamFileWriter {
         Double(framesWritten) / Self.outputSampleRate
     }
 
+    var nonSilentSeconds: TimeInterval {
+        Double(nonSilentInputFrames) / max(1, format.sampleRate)
+    }
+
+    /// What this capture can honestly claim (AD-36).
+    var evidence: AudioEvidence {
+        AudioEvidence(peak: peakEver, nonSilentSeconds: nonSilentSeconds, duration: duration)
+    }
+
     private func drainLoop() {
         while running {
             if ring.count == 0 { usleep(20_000); continue }
@@ -141,6 +158,16 @@ final class StreamFileWriter {
             for i in 0..<(frames * channels) { localPeak = max(localPeak, abs(p[i])) }
         }
         peak = isMuted ? 0 : max(peak * 0.85, localPeak)
+
+        // Evidence, kept separately from the meter. Muted means silence really is
+        // written to the file, so the evidence must agree with the file rather
+        // than with what the microphone heard.
+        if !isMuted {
+            peakEver = max(peakEver, localPeak)
+            if localPeak > AudioEvidence.silenceFloor {
+                nonSilentInputFrames += AVAudioFramePosition(frames)
+            }
+        }
 
         guard let out = convert(src, using: converter) else { return }
         if isMuted, let ch = out.floatChannelData?[0] {

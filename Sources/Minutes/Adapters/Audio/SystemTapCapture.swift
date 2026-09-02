@@ -163,15 +163,22 @@ final class SystemTapCapture {
         selfRef?.release(); selfRef = nil
     }
 
-    /// Returns (duration, producedAudio). `producedAudio` is the only evidence we
-    /// can have that system-audio capture actually worked — macOS exposes no API
-    /// to query the permission (FR-42).
-    func stop() -> (duration: TimeInterval, producedAudio: Bool) {
-        let d = writer?.duration ?? 0
-        let gotAudio = (writer?.peak ?? 0) > 0.0001 || d > 0.25
+    /// What the capture can honestly claim. This is the only evidence available
+    /// that system-audio capture worked, because macOS exposes no API to query
+    /// the permission (FR-42) — so it is derived from the samples and never from
+    /// elapsed time (AD-36).
+    func stop() -> (duration: TimeInterval, evidence: AudioEvidence) {
+        // Hold the writer past teardown: teardown calls writer.stop(), which is
+        // what flushes the remainder of the ring. Reading the counters before it
+        // under-reports the tail.
+        let w = writer
         teardown()
-        Log.audio.info("system capture stopped duration=\(d) producedAudio=\(gotAudio)")
-        return (d, gotAudio)
+        let e = w?.evidence ?? .none
+        Log.audio.info("system capture stopped duration=\(e.duration) peak=\(e.peak) nonSilent=\(e.nonSilentSeconds) producedAudio=\(e.producedAudio)")
+        if let why = e.failureReason {
+            Log.audio.error("system stream produced no usable audio: \(why, privacy: .public)")
+        }
+        return (e.duration, e)
     }
 
     var level: Float { writer?.peak ?? 0 }
