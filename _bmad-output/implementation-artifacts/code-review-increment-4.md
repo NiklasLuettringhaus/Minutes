@@ -1,7 +1,7 @@
 ---
 title: Code review — increment 4, voice enrolment
 date: 2026-09-01
-scope: commits aad4266..HEAD (Epic 10 · PRD FR-62…FR-65 · AD-11 amended, AD-28…AD-32)
+scope: commits fe7e7b8..HEAD (Epic 10 · PRD FR-62…FR-65 · AD-11 amended, AD-28…AD-32)
 verdict: shipped and installed; five defects found and fixed, one gap closed against real audio, two gaps still needing a human voice
 tests: 149 passing via `swift test` (76 before this increment), plus 4 ML integration tests behind `MINUTES_ML_TESTS=1`
 ---
