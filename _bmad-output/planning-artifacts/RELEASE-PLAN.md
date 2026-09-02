@@ -205,18 +205,24 @@ a nicety — you cannot ship a second release without it.
 
 > **Amended 2026-09-02. Decision taken: no Homebrew, no Developer ID yet.**
 >
-> The shipped path is a GitHub Release archive plus a one-line installer that
-> strips the quarantine attribute. That **is** the Gatekeeper bypass AD-34 was
-> written to forbid, so AD-34 was amended in place to say so rather than left
-> contradicting what ships. Two costs are accepted rather than solved:
-> every update still revokes microphone and system-audio consent (FR-73 stays
-> open), and the first install teaches a bypass. Two things keep it honest — the
-> installer states what it is doing while it does it, and building from source is
-> documented as the path that bypasses nothing, because a locally compiled app is
-> never quarantined.
+> The shipped path is a GitHub Release archive fetched by a one-line `curl`
+> installer. **v0.1.0 is published and this was tested end to end.**
 >
-> **Revisit when there is more than one or two users**, at which point the
-> recurring consent cost exceeds $99/year.
+> It needs no Gatekeeper bypass, and the reason inverts the finding this plan was
+> written around: macOS blocks an unnotarized app only when the file is
+> quarantined, and quarantine is set by browsers — and by Homebrew, deliberately
+> — but **not by `curl`**. Measured here: a `curl`-fetched release carries no
+> quarantine attribute and launches normally; the identical bundle with a
+> browser's quarantine flag is blocked outright. So dropping Homebrew removed the
+> Gatekeeper problem rather than merely the tap requirement. The installer still
+> clears the attribute defensively for a hand-downloaded zip; on the documented
+> path it is a no-op, and the installer and README say so instead of claiming a
+> bypass that is not happening.
+>
+> **One cost is unfixed and it recurs: every update still revokes microphone and
+> system-audio consent**, because the signature is ad-hoc. FR-73 stays open. That,
+> not Gatekeeper, is what $99/year would buy. Revisit at more than one or two
+> users.
 >
 > **New measurement that changes the build-from-source option.** Command Line
 > Tools alone *cannot* build this app: the `FoundationModels` `@Generable` macro

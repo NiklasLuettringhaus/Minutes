@@ -4,14 +4,18 @@
 #   curl -fsSL https://raw.githubusercontent.com/NiklasLuettringhaus/Minutes/main/Scripts/install.sh | bash
 #
 # WHAT THIS DOES THAT YOU SHOULD KNOW ABOUT:
-# Minutes is signed, but not with an Apple Developer ID, so macOS will not open
-# it after a download. This script removes the quarantine attribute macOS puts
-# on downloaded files, which is what lets it open. That is a deliberate bypass
-# of a security check. It is stated here rather than buried because you should
-# only run this if you trust where the app came from.
+# Minutes is signed, but not with an Apple Developer ID. macOS blocks such an
+# app only when the file carries a quarantine flag, and quarantine is set by
+# browsers, not by curl — so an app fetched by this script is not quarantined
+# and opens normally. Measured, not assumed: a curl download has no quarantine
+# attribute and launches; the same app with a browser's quarantine flag is
+# blocked outright.
 #
-# The alternative, which bypasses nothing: clone the repository and run
-# ./Scripts/build-app.sh. An app you compiled yourself is never quarantined.
+# The xattr call below is therefore defensive, and usually a no-op. It matters
+# if you downloaded the zip yourself from the Releases page in a browser.
+#
+# What this does not fix: because the signature is ad-hoc, installing a new
+# version revokes microphone and system-audio consent, and macOS will ask again.
 set -euo pipefail
 
 REPO="NiklasLuettringhaus/Minutes"
@@ -86,7 +90,7 @@ SRC="$TMP/out/Minutes.app"
 [ -d "$SRC" ] || die "The archive did not contain Minutes.app."
 
 # --- the bypass, announced --------------------------------------------------
-echo "==> removing the quarantine attribute (this is the Gatekeeper bypass)"
+echo "==> clearing any quarantine flag (normally none: curl does not set one)"
 xattr -dr com.apple.quarantine "$SRC" 2>/dev/null || true
 
 # --- install ----------------------------------------------------------------

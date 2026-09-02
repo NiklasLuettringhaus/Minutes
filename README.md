@@ -12,13 +12,15 @@ Apple Silicon, macOS 15+.
 curl -fsSL https://raw.githubusercontent.com/NiklasLuettringhaus/Minutes/main/Scripts/install.sh | bash
 ```
 
-The app is signed, but not with an Apple Developer ID, so macOS refuses to open
-it after a download. This script strips the quarantine attribute — a deliberate
-Gatekeeper bypass. It says so while it runs. Only run it if you trust the
-source.
+That works with no security prompt, and not by bypassing one: macOS blocks an
+app like this only when the file is quarantined, and quarantine is set by
+browsers, not by `curl`. **If you download the zip from the Releases page in a
+browser instead, macOS will block it** — that copy needs
+`xattr -dr com.apple.quarantine Minutes.app`, or System Settings → Privacy &
+Security → Open Anyway.
 
-Bypassing nothing: build it. A locally compiled app is never quarantined. Needs
-Xcode, takes about a minute.
+Or build it, which needs no download at all. Requires Xcode; takes about a
+minute.
 
 ```bash
 git clone https://github.com/NiklasLuettringhaus/Minutes.git
