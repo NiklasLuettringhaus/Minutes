@@ -64,7 +64,7 @@ The **titles**, by contrast, are fine: "Pricing Page", "Page Redesigned Together
 ### 2. The transcript is not the user's alone to send
 
 - **Where:** proposal point 3
-- **Problem:** The payload is other people's speech, verbatim, named, timestamped and attributed. Your own Spirii all-hands had 37 participants. None of them agreed to have their words sent to an API vendor.
+- **Problem:** The payload is other people's speech, verbatim, named, timestamped and attributed. Your own company all-hands had 37 participants. None of them agreed to have their words sent to an API vendor.
 - **Fix:** If this ships, sending must be per-meeting and opt-in, with the participant list shown at the moment of sending — never a global default that applies to every future meeting.
 - **If unaddressed:** One settings toggle silently exports every colleague's words from then on.
 

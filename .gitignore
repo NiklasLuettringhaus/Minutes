@@ -7,3 +7,19 @@ dist/
 _bmad/render/
 .DS_Store
 ui-shots/
+
+# User data never belongs in this repository. These live in
+# ~/Library/Application Support/Minutes/ and your chosen notes folder;
+# the patterns exist for the case where someone copies one in to debug.
+# Enforced by Scripts/check-no-user-data.sh (pre-commit hook + CI).
+*.wav
+*.m4a
+*.caf
+*.aiff
+*.mp3
+meeting.json
+centroids.json
+speakers.json
+settings.json
+Meetings/
+dev.niklas.minutes.plist

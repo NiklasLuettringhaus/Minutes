@@ -1,0 +1,8 @@
+#!/bin/bash
+# Blocks user data before it can be committed. Enable with:
+#   git config core.hooksPath .githooks     (or ./Scripts/setup-dev.sh)
+#
+# The same check runs in CI over the whole tree, because a hook lives in a
+# clone and a clone can be made without running setup. The hook is the fast
+# feedback; CI is the enforcement.
+exec "$(git rev-parse --show-toplevel)/Scripts/check-no-user-data.sh" --staged

@@ -1,0 +1,47 @@
+name: Bug report
+description: Something the app did that it should not have
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Please do not attach meeting audio, transcripts or notes.** They are
+        yours and they should stay on your Mac. A description of what happened
+        is more useful than a recording of it, and if a specific meeting is
+        involved, its ID (the folder name, e.g. `20260902-133039-y8tp`) is
+        enough for the author to look at their own copy.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "Minutes → About, or: `defaults read /Applications/Minutes.app/Contents/Info.plist CFBundleShortVersionString`"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac model
+      placeholder: "15.4, MacBook Pro M3"
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of --doctor
+      description: "`/Applications/Minutes.app/Contents/MacOS/Minutes --doctor`. It reports permissions, models and pipeline state, and names no meeting content."
+      render: shell
+  - type: checkboxes
+    id: audio
+    attributes:
+      label: Recording
+      options:
+        - label: Recording had worked before on this Mac
+        - label: This started after an update
+        - label: The audio test in Getting Started reports a failure

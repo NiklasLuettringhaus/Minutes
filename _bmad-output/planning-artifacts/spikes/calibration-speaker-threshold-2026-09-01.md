@@ -55,13 +55,13 @@ temporal overlap and text:
 ```
 kndb  remote-0 (70 utterances) vs room-3 (57 utterances)
       82.7% of remote-0's speaking time overlaps room-3's; 92.6% the other way
-      remote-0  54.7-56.1  "I'm I'm good"
-      room-3    55.0-56.2  "I'm I'm good"
+      remote-0  54.7-56.1  [4-word utterance]
+      room-3    55.0-56.2  [the same 4 words]
 
 kndb  remote-1 (17 utterances) vs room-4 (20 utterances)
       85.1% / 80.0% overlap
-      remote-1 1310.8-1318.9 "I would like to mention that Zaptec Pro"
-      room-4   1313.0-1316.3 "I would like to mention that Zaptech Pro"
+      remote-1 1310.8-1318.9 [8-word utterance naming a product]
+      room-4   1313.0-1316.3 [the same 8 words, product name transcribed differently]
 ```
 
 A colleague sitting in the room who is *also* joined to the huddle on their own laptop

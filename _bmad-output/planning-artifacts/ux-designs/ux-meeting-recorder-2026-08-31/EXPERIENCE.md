@@ -450,7 +450,7 @@ The flow that this increment exists for. Niklas has read four meeting notes whos
 
 ### KF-7. Niklas considers sending a transcript away, and sees who is in it *(PRD FR-59)*
 
-1. He has entered a key. He records the Spirii all-hands.
+1. He has entered a key. He records the company all-hands.
 2. At the moment of sending, the ask names the recipient, the transcript length, the estimated cost — and lists the participants whose speech it contains. Thirty-seven names.
 3. He declines. The note keeps its transcript, title and tags.
 

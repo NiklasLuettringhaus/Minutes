@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Cheap, fast, and the one check that must never be skippable: no meeting
+  # audio, no voice embeddings, no settings in the repository. Runs on Linux
+  # because it only needs bash and git, and so it cannot be starved by a
+  # queue for macOS runners.
+  no-user-data:
+    name: No user data
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./Scripts/check-no-user-data.sh
+
+  build-and-test:
+    name: Build and test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          uname -m
+          xcodebuild -version || true
+          swift --version
+
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Resolve dependencies
+        run: swift package resolve
+
+      # Pinned exactly in Package.swift (AD-15). If this diff is non-empty a
+      # dependency moved under us, which is a decision, not a build detail.
+      - name: Package.resolved is unchanged by resolution
+        run: git diff --exit-code Package.resolved
+
+      - name: Build
+        run: swift build -c debug 2>&1 | tee build.log
+
+      # The ML integration tests need model downloads and an audio device, so
+      # they stay behind MINUTES_ML_TESTS. The calibration tests read real
+      # meetings from Application Support and skip cleanly when there are
+      # none — which on a runner is always.
+      - name: Test
+        run: swift test -c debug 2>&1 | tee test.log
+
+      - name: Test summary
+        if: always()
+        run: |
+          if [ -f test.log ]; then
+            grep -E "Executed [0-9]+ tests" test.log | tail -3 >> "$GITHUB_STEP_SUMMARY" || true
+            grep -E "^.*: error:|failed" test.log | head -20 >> "$GITHUB_STEP_SUMMARY" || true
+          fi
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: |
+            build.log
+            test.log
+          if-no-files-found: ignore
+
+  # The bundle has to assemble and sign, not just compile. Ad-hoc signing is
+  # all that is possible without a Developer ID, and it is enough to catch a
+  # broken Info.plist, a missing entitlement or an unsignable binary.
+  package:
+    name: Bundle and sign
+    runs-on: macos-15
+    needs: build-and-test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache SwiftPM
+        uses: actions/cache@v4
+        with:
+          path: |
+            .build
+            ~/Library/Caches/org.swift.swiftpm
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-
+      - name: Assemble bundle
+        run: INSTALL=0 ./Scripts/build-app.sh
+      - name: Verify signature and bundle shape
+        run: |
+          APP=.build/stage.noindex/Minutes.app
+          codesign --verify --strict --verbose=2 "$APP"
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$APP/Contents/Info.plist"
+          test -f "$APP/Contents/Resources/AppIcon.icns"
+          test -x "$APP/Contents/MacOS/Minutes"
+          lipo -archs "$APP/Contents/MacOS/Minutes"

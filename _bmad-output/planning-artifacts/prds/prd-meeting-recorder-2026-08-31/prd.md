@@ -1112,7 +1112,7 @@ Raised by increment 3:
 14. **What is the peak resident memory for a 9B 4-bit model plus KV cache on a two-hour Transcript**, and does NFR-4 hold on 24 GB? Determines the largest model the curated list may offer, and whether long Transcripts need the FR-27 chunking contract regardless of Backend.
 15. **Which local model family?** The spike found `Qwen3.5`, `Qwen3.6` and `Qwen3.8` conversions all present on `mlx-community`, with download counts favouring older Llama and Qwen builds. The list must be built from a live query (FR-56), but the *curation* still needs a judgement, and that judgement needs Q13's measurement first.
 16. **Does the Metal toolchain prerequisite survive distribution?** It is a build-time dependency here. Whether a user of a built app needs it too depends on the metallib being correctly bundled as a resource — which the current build script does not do. Informs FR-58 and the build pipeline.
-17. **Which remote endpoint, if any?** Left open deliberately. If Spirii has an approved vendor under a data processing agreement, that is the answer and it changes FR-59's consent copy. If not, the honest answer may be that FR-59 should not ship at all.
+17. **Which remote endpoint, if any?** Left open deliberately. If your employer has an approved vendor under a data processing agreement, that is the answer and it changes FR-59's consent copy. If not, the honest answer may be that FR-59 should not ship at all.
 
 Raised by increment 4:
 

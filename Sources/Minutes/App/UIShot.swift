@@ -170,7 +170,7 @@ enum UIShot {
             m.micDevice = "MacBook Pro Microphone"
             m.systemSource = "system audio — Microsoft Teams"
             m.noteFilename = "shot.md"
-            m.metadata = MeetingMetadata(title: "Easy", tags: ["csms", "migration"],
+            m.metadata = MeetingMetadata(title: "Platform migration", tags: ["migration", "rollback"],
                                          summary: "", decisions: [], actionItems: [],
                                          backend: .heuristic)
             var t = 0.0
