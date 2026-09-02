@@ -244,3 +244,83 @@ final class NoteTranscriptGroupingTests: XCTestCase {
         XCTAssertTrue(writer.renderTranscript(m).contains("Every speaker in this meeting has been excluded"))
     }
 }
+
+// MARK: - The popover keying defect
+
+/// Renaming from the transcript keyed its popover by `SpeakerLabelID`, so clicking
+/// one chip presented every popover for that speaker at once and SwiftUI drew the
+/// first in tree order — a row far above the one clicked.
+///
+/// Measured on the user's own meeting when they reported it: 708 blocks, with
+/// `In-room 4` appearing 9 times and `Speaker 2` 173 times. The fix is to key by
+/// block id, and what makes that correct is that block ids are unique per block
+/// even when the speaker repeats. These tests pin exactly that.
+final class TranscriptRenameKeyingTests: XCTestCase {
+
+    /// A speaker who talks, is interrupted, and talks again — the ordinary case,
+    /// and the one that broke.
+    private func interleaved(blocksPerSpeaker: Int) -> Meeting {
+        var m = Meeting(id: "k", startedAt: Date())
+        m.multipleInRoom = true
+        m.speakerNames = [SpeakerLabelID.inRoom(0).raw: "In-room 1",
+                          SpeakerLabelID.inRoom(1).raw: "In-room 2"]
+        var t = 0.0
+        for _ in 0..<blocksPerSpeaker {
+            for who in [SpeakerLabelID.inRoom(0), .inRoom(1)] {
+                m.utterances.append(Utterance(start: t, end: t + 2, text: "line at \(t)",
+                                              speaker: who, origin: .mic))
+                t += 2
+            }
+        }
+        return m
+    }
+
+    func testOneSpeakerProducesManyBlocksWithUniqueIDs() {
+        let m = interleaved(blocksPerSpeaker: 12)
+        let blocks = m.transcriptBlocks()
+        XCTAssertEqual(blocks.count, 24, "each turn is its own paragraph")
+
+        // The condition that made keying by speaker wrong.
+        let forOneSpeaker = blocks.filter { $0.speaker == .inRoom(0) }
+        XCTAssertEqual(forOneSpeaker.count, 12,
+                       "one speaker legitimately owns many blocks — this is why a speaker key cannot identify a row")
+
+        // The condition that makes keying by block id right.
+        XCTAssertEqual(Set(blocks.map(\.id)).count, blocks.count,
+                       "block ids must be unique, or the popover would still be ambiguous")
+    }
+
+    /// The keying itself: exactly one block matches a block id, and many match a
+    /// speaker id. Expressed as the predicate the view uses.
+    func testABlockIDSelectsExactlyOneBlockWhereASpeakerIDSelectsMany() {
+        let blocks = interleaved(blocksPerSpeaker: 9).transcriptBlocks()
+        guard let target = blocks.first(where: { $0.speaker == .inRoom(1) }) else {
+            return XCTFail("no block for that speaker")
+        }
+        XCTAssertEqual(blocks.filter { $0.id == target.id }.count, 1,
+                       "`renamingBlock == b.id` presents exactly one popover")
+        XCTAssertGreaterThan(blocks.filter { $0.speaker == target.speaker }.count, 1,
+                             "`renaming == b.speaker` presented one per block — 9 in the reported meeting")
+    }
+
+    /// Block ids come from the first utterance in the block, so they survive the
+    /// rename that follows — the row keeps its identity while its label changes.
+    func testABlockIDSurvivesTheRenameItTriggers() {
+        var m = interleaved(blocksPerSpeaker: 4)
+        let before = m.transcriptBlocks()
+        m.speakerNames[SpeakerLabelID.inRoom(1).raw] = "Mikkel"
+        let after = m.transcriptBlocks()
+        XCTAssertEqual(before.map(\.id), after.map(\.id))
+        XCTAssertNotEqual(before.map(\.name), after.map(\.name))
+    }
+
+    /// Two labels renamed to one name merge into one block, so the id set shrinks —
+    /// worth pinning because it is the one case where ids legitimately change.
+    func testMergingTwoSpeakersCollapsesBlocksAndTheirIDs() {
+        var m = interleaved(blocksPerSpeaker: 5)
+        XCTAssertEqual(m.transcriptBlocks().count, 10)
+        m.speakerNames[SpeakerLabelID.inRoom(1).raw] = "In-room 1"
+        XCTAssertEqual(m.transcriptBlocks().count, 1,
+                       "renaming both to one name merges every turn into one paragraph (FR-24)")
+    }
+}

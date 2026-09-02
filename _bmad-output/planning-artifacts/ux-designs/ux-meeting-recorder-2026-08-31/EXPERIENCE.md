@@ -337,6 +337,8 @@ Rules that apply to all four:
 - **Single-click** activates in lists; no double-click-to-open. Selection and activation are the same gesture in a list this shallow.
 - **Return** commits an inline edit; **Escape** cancels it and restores the prior value.
 - **No drag and drop** anywhere. No custom gestures. No hover-only affordances — anything actionable is visible without hovering. A borderless button in a row full of text is a hover-only affordance in practice, whatever the code says.
+- **A per-row affordance is keyed by the row, never by what the row is about.** A speaker owns one transcript block per turn, so keying a rename popover by speaker presented one popover per block — nine for a single click in a real meeting, and the one SwiftUI drew was not the one clicked. The key is the block's own identity. The general form: if two rows can share the value you keyed on, the key is wrong.
+- **A modifier that can only present once is attached once.** Putting a `.popover` on all 708 transcript rows cost a layout pass per row per click, which is what "slow to pop up" was. Attach it to the row that is actually presenting.
 - **A row of controls adapts rather than assuming a width.** `ViewThatFits`: one line where it fits, stacked where it does not. A row that overflows its container is the same defect as a row that compresses its children, and the second one shipped twice.
 - **Global hotkey:** none in v1. It is a real convenience but it is a new permission surface and a conflict-resolution UI, and PRD §5 keeps the surface small. Logged as a v2 candidate.
 - **Window behaviour:** closing the window does not quit the app (it is menu-bar-resident). Reopening restores the last sidebar selection. Only one window ever exists (PRD FR-5).

@@ -236,14 +236,21 @@ struct MeetingDetail: View {
     /// evaluation meant every keystroke in the title or a speaker name walked all
     /// of the meeting's utterances — 598 in the longest real one.
     @State private var blocks: [Meeting.TranscriptBlock] = []
-    /// Which speaker is being renamed from inside the transcript, if any.
+    /// Which **block** is being renamed from inside the transcript, if any.
+    ///
+    /// A block id, not a `SpeakerLabelID`, and that distinction was a real defect:
+    /// keyed by speaker, clicking one chip presented every popover for that
+    /// speaker at once — 9 of them for `In-room 4` in the user's own meeting, 173
+    /// for `Speaker 2` — and SwiftUI drew the first in tree order, which is a row
+    /// far above the one clicked. A block id is unique, so exactly one popover can
+    /// ever be presented and it is the one you pointed at.
     ///
     /// The user asked for this directly: *"renaming should be possible within the
     /// script not just the speaker list at the top."* They are right, and the
     /// reason is that the transcript is where you *recognise* a voice — you read a
     /// line, know who said it, and the fix should be there rather than after
     /// scrolling back to a list that no longer says which one they were.
-    @State private var renamingInTranscript: SpeakerLabelID?
+    @State private var renamingInTranscript: UUID?
     @State private var transcriptDraft = ""
 
     var body: some View {
@@ -624,7 +631,7 @@ struct MeetingDetail: View {
                               ? "Not transcribed yet — this recording was interrupted before it finished."
                               : "No speech was transcribed.")
                            : nil,
-                       renaming: $renamingInTranscript,
+                       renamingBlock: $renamingInTranscript,
                        draft: $transcriptDraft,
                        onCommit: { label, name in
                            renamingInTranscript = nil
@@ -721,15 +728,20 @@ struct MeetingDetail: View {
 private struct TranscriptCard: View, Equatable {
     let blocks: [Meeting.TranscriptBlock]
     let emptyReason: String?
-    @Binding var renaming: SpeakerLabelID?
+    @Binding var renamingBlock: UUID?
     @Binding var draft: String
     let onCommit: (SpeakerLabelID, String) -> Void
 
     /// Compares only what is rendered. The closure is not comparable and the
-    /// bindings change identity on every parent render, so both are excluded
-    /// deliberately — `renaming` is included because it *is* rendered.
+    /// bindings change identity on every parent render, so both are excluded.
+    ///
+    /// `renamingBlock` is **also** excluded, deliberately. Including it meant one
+    /// click invalidated the whole card and re-laid-out every row — 708 of them in
+    /// the user's meeting, each with a `fixedSize` text forcing its own layout
+    /// pass, which is why the popover was slow to appear. Exclusivity does not
+    /// need the parent to re-render: each row compares its own `isRenaming`.
     static func == (a: TranscriptCard, b: TranscriptCard) -> Bool {
-        a.blocks == b.blocks && a.emptyReason == b.emptyReason && a.renaming == b.renaming
+        a.blocks == b.blocks && a.emptyReason == b.emptyReason
     }
 
     var body: some View {
@@ -746,47 +758,84 @@ private struct TranscriptCard: View, Equatable {
                 } else {
                     VStack(alignment: .leading, spacing: Tok.s4) {
                         ForEach(blocks) { b in
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(spacing: Tok.s3) {
-                                    Text(Fmt.timestamp(b.start)).font(.caption).monospacedDigit()
-                                        .foregroundStyle(Tok.textSecondary)
-                                    // The chip is the rename affordance here. You
-                                    // recognise a voice by reading what it said, so
-                                    // the fix belongs on the line you recognised it
-                                    // from — not in a list you have to scroll back
-                                    // to, where the speaker is a label again.
-                                    Button {
-                                        draft = b.name
-                                        renaming = b.speaker
-                                    } label: {
-                                        SpeakerChip(name: b.name, place: b.place,
-                                                    isInferred: b.isInferred, basis: b.basis)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help("Click to rename \(b.name) everywhere in this meeting")
-                                    .popover(isPresented: Binding(
-                                        get: { renaming == b.speaker },
-                                        set: { if !$0 && renaming == b.speaker { renaming = nil } }
-                                    ), arrowEdge: .bottom) {
-                                        renamePopover(b)
-                                    }
-                                    Spacer(minLength: 0)
-                                }
-                                // Transcript text is prose, not code — never monospaced.
-                                Text(b.text).font(.body).fixedSize(horizontal: false, vertical: true)
-                            }
+                            TranscriptBlockRow(
+                                block: b,
+                                isRenaming: renamingBlock == b.id,
+                                draft: $draft,
+                                onBeginRename: {
+                                    draft = b.name
+                                    renamingBlock = b.id
+                                },
+                                onCancel: { renamingBlock = nil },
+                                onCommit: { onCommit(b.speaker, draft) })
                         }
                     }
                 }
             }
         }
     }
+}
 
-    /// Small, and says what the rename will do. "Everywhere in this meeting" is
-    /// the part worth stating: FR-24 renames the label, not the one line, and a
-    /// user clicking a single line could reasonably expect otherwise.
+/// One paragraph of the transcript.
+///
+/// Its own `Equatable` view so that opening a rename popover re-renders **one**
+/// row instead of every row. `isRenaming` is part of the comparison, so the two
+/// rows whose state actually changed are the only two whose bodies re-run.
+private struct TranscriptBlockRow: View, Equatable {
+    let block: Meeting.TranscriptBlock
+    let isRenaming: Bool
+    @Binding var draft: String
+    let onBeginRename: () -> Void
+    let onCancel: () -> Void
+    let onCommit: () -> Void
+
+    static func == (a: TranscriptBlockRow, b: TranscriptBlockRow) -> Bool {
+        a.block == b.block && a.isRenaming == b.isRenaming
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: Tok.s3) {
+                Text(Fmt.timestamp(block.start)).font(.caption).monospacedDigit()
+                    .foregroundStyle(Tok.textSecondary)
+                chip
+                Spacer(minLength: 0)
+            }
+            // Transcript text is prose, not code — never monospaced.
+            Text(block.text).font(.body).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// The chip is the rename affordance: you recognise a voice by reading what it
+    /// said, so the fix belongs on the line you recognised it from.
+    ///
+    /// The `.popover` modifier is attached **only while this row is the one being
+    /// renamed**. Attaching it unconditionally put one popover modifier on every
+    /// row — 708 of them — for a thing that can only ever be shown once.
     @ViewBuilder
-    private func renamePopover(_ b: Meeting.TranscriptBlock) -> some View {
+    private var chip: some View {
+        let button = Button(action: onBeginRename) {
+            SpeakerChip(name: block.name, place: block.place,
+                        isInferred: block.isInferred, basis: block.basis)
+        }
+        .buttonStyle(.plain)
+        .help("Click to rename \(block.name) everywhere in this meeting")
+
+        if isRenaming {
+            button.popover(isPresented: Binding(get: { true },
+                                                set: { if !$0 { onCancel() } }),
+                           arrowEdge: .bottom) {
+                renamePopover
+            }
+        } else {
+            button
+        }
+    }
+
+    /// Small, and says what the rename will do. "Every line" is the part worth
+    /// stating: FR-24 renames the label, not the one line, and a user clicking a
+    /// single line could reasonably expect otherwise.
+    private var renamePopover: some View {
         VStack(alignment: .leading, spacing: Tok.s3) {
             Text("Rename this speaker").font(.body)
             Text("Applies to every line they spoke in this meeting, and Minutes will recognise the voice next time.")
@@ -796,12 +845,12 @@ private struct TranscriptCard: View, Equatable {
             TextField("Name", text: $draft)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 220)
-                .onSubmit { onCommit(b.speaker, draft) }
+                .onSubmit(onCommit)
             HStack {
-                Button("Cancel") { renaming = nil }
+                Button("Cancel", action: onCancel)
                     .buttonStyle(.bordered).controlSize(.small)
                 Spacer()
-                Button("Rename") { onCommit(b.speaker, draft) }
+                Button("Rename", action: onCommit)
                     .buttonStyle(.borderedProminent).tint(Tok.brand).controlSize(.small)
                     .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }

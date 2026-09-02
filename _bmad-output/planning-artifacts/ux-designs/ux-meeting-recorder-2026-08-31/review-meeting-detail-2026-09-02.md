@@ -4,7 +4,7 @@ date: 2026-09-02
 intent: validate
 subject: the Speakers section of the meeting detail, from the user's screenshot and from rendered shots
 lens: built-UI conformance, run for the first time against images rather than inference
-verdict: one critical density defect, one critical affordance defect, one missing capability; all three fixed and visually verified
+verdict: two critical layout defects, one critical behavioural defect found after the first fixes shipped, one missing capability; all fixed, layout verified in images and behaviour verified in tests
 ---
 
 # UX review: the meeting detail pane
@@ -164,6 +164,51 @@ user's latest screenshot still shows vertical ovals in the list. The complete fi
 is two parts: `lineLimit(1)` plus `truncationMode(.tail)` inside the chip so it
 refuses to be narrowed at all, and `FlowLayout` in the row so overflow wraps to a
 second line instead of being distributed into the chips. Both verified.
+
+## F6 — CRITICAL, reported after the fixes above shipped. The popover opened on the wrong row, slowly
+
+*"Clicking rename speaker, makes the popup not appear on the actual row I pointed
+it to and it was quite slow to pup up."*
+
+Both symptoms, one cause, and it was in the fix for F3 — so F3 was half-right and
+shipped a worse bug than the one it solved.
+
+The popover was keyed by **speaker**: `isPresented: renaming == b.speaker`. A
+speaker owns one block per *turn*, not one block per meeting, so clicking one chip
+set that condition true on **every** block that speaker ever had. SwiftUI presented
+all of them and drew the first in tree order, which is a row far above the one
+clicked — exactly what the screenshot shows.
+
+Measured on the user's own meeting rather than assumed: **708 blocks**, with
+`In-room 4` (the chip in the screenshot) appearing **9 times** and `Speaker 2`
+appearing **173 times**. Nine simultaneous popovers for one click.
+
+The slowness has the same root. Every one of the 708 rows carried a `.popover`
+modifier for a thing that can only be shown once, and `renaming` was part of
+`TranscriptCard`'s `==`, so each click invalidated the card and re-laid-out all
+708 paragraphs — each a `fixedSize` text forcing its own layout pass. The delay
+was the transcript re-rendering, not the popover.
+
+**Fix, in three parts:**
+
+- **Key by block id, not speaker.** A block id is unique per block, so exactly one
+  popover can be presented and it is the one pointed at.
+- **Attach the `.popover` modifier only to the row being renamed.** One modifier
+  in the tree instead of 708.
+- **Split each paragraph into its own `Equatable` row** and drop `renaming` from
+  the card's `==`. A click now re-renders the two rows whose state changed rather
+  than all 708.
+
+Four tests pin the condition that made the old keying wrong — that one speaker
+legitimately owns many blocks — and the condition that makes the new keying right:
+block ids are unique, and they survive the rename they trigger.
+
+**What this says about the previous review.** F3 was verified as *"the popover
+opens"* and not as *"the popover opens on the row you clicked, on a meeting with
+708 paragraphs"*. The tool cannot render a popover, so the verification stopped at
+the layout — and the defect lived in behaviour under repetition, which no single
+rendered image would have caught. Worth recording plainly: the tool moved the line
+between *reasoned* and *observed*; it did not move it to *proven*.
 
 ## Spine changes
 
