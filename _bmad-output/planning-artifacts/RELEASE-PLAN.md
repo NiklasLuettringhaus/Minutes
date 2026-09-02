@@ -1,7 +1,7 @@
 ---
 title: Release plan — getting Minutes onto someone else's Mac
 date: 2026-09-02
-status: amended 2026-09-02 — the distribution decision was taken
+status: amended 2026-09-02 — distribution decided, stories 11.1 and 11.2 shipped in v0.1.1
 scope: increments 6, 7 and 8 (Epics 11, 12, 13)
 supersedes: nothing; this is the first plan aimed at a machine other than the author's
 ---
@@ -84,7 +84,7 @@ to a colleague would hand them an app that fails without saying why. Every item
 below was verified by reading the code, with the file and line recorded — none is
 inferred from behaviour.
 
-## 11.1 — BLOCKER. A failed start says nothing at all
+## 11.1 — ~~BLOCKER~~ **DONE 2026-09-02.** A failed start said nothing at all
 
 `AppState.lastError` is written on four different failure paths in
 `SessionCoordinator.swift` (lines 38, 48, 57, 61) and read by exactly one place
@@ -104,7 +104,7 @@ The same silence covers a desktop Mac with no microphone attached
 the single highest-value change in the plan — it is the difference between "it
 didn't work" and "it told me what to do".
 
-## 11.2 — HIGH. The evidence that system audio worked does not test for audio
+## 11.2 — ~~HIGH~~ **DONE 2026-09-02.** The evidence that system audio worked did not test for audio
 
 `SystemTapCapture.swift:171`:
 
