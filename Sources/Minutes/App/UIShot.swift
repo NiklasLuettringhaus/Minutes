@@ -138,6 +138,14 @@ enum UIShot {
                 MeetingDetail(meeting: Fixtures.unreliableRate)
             }
         }
+        // The echo state (increment 9), at every width for the same reason: the
+        // sentence has to carry a proportion, what Minutes did about it, and the
+        // remedy, and a truncated remedy is the half the user needs.
+        for (label, w) in widths {
+            shoot("detail-echo-\(label)", w, nil) {
+                MeetingDetail(meeting: Fixtures.echoing)
+            }
+        }
         shoot("row-unreliable-rate", 320, nil) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach([Fixtures.unreliableRate, Fixtures.simple], id: \.id) { m in
@@ -232,7 +240,7 @@ enum UIShot {
 
         static var all: [Meeting] {
             [crowded, longNames, simple, failed, interrupted,
-             userRenamed, noteLost, noteAmbiguous, unreliableRate]
+             userRenamed, noteLost, noteAmbiguous, unreliableRate, echoing]
         }
 
         /// A recording whose far end came out at three times speed (increment 8).
@@ -250,6 +258,27 @@ enum UIShot {
                                      framesObserved: 16_000 * 1565, elapsedSeconds: 1565)
             m.systemRate = RateFidelity(declaredRate: 16_000,
                                         framesObserved: 5_333 * 1565, elapsedSeconds: 1565)
+            return m
+        }()
+
+        /// A call taken on loudspeakers, so the microphone heard the far end too
+        /// (increment 9).
+        ///
+        /// Worth a fixture because this state looked like nothing at all: the
+        /// affected notes read as merely verbose, and the only visible symptom
+        /// was six people in a room that held two.
+        static var echoing: Meeting = {
+            var m = simpleShaped(id: "20260903-141500-echo", title: "3 September, 14:15")
+            m.systemSource = "system audio — Microsoft Teams"
+            m.micDevice = "the built-in microphone"
+            m.noteFilename = "2026-09-03 1415 3-September-1415.md"
+            m.noteFilenameWritten = m.noteFilename
+            let frames = (0..<100).map { i in
+                EchoAnalysis.Frame(micActive: true, systemActive: true,
+                                   correlation: i < 45 ? 0.9 : 0.05)
+            }
+            m.echo = EchoAnalysis.make(frames: frames, delaySeconds: 0.039,
+                                       peakCorrelation: 0.94)
             return m
         }()
 
