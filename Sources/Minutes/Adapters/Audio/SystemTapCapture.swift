@@ -37,6 +37,25 @@ final class SystemTapCapture {
         let r = RingBuffer(capacity: Int(asbd.mSampleRate) * channels * 10)
         ring = r
         let w = StreamFileWriter(url: url, format: fmt, ring: r)
+        // FR-84: the user finds out during the meeting, not at the end.
+        //
+        // This was claimed in the requirement and left unwired in the first pass:
+        // the writer raised the callback and nobody subscribed, so a disagreement
+        // only surfaced at stop. A requirement whose code does not implement it is
+        // worse than an unwritten one, because the document says it is done.
+        w.onRateDisagreement = { fidelity in
+            Task { @MainActor in
+                if let corrected = fidelity.correctedTo {
+                    // Corrected, so this is information rather than a failure —
+                    // and it is worth saying, because the alternative is the app
+                    // quietly compensating for a broken device for ever.
+                    Log.audio.info("system stream rate corrected to \(corrected, privacy: .public) Hz mid-recording")
+                } else if let why = fidelity.explanation {
+                    AppState.shared.lastError = .captureRateMismatch(
+                        stream: "the far end of the call", detail: why)
+                }
+            }
+        }
         try w.start()
         writer = w
 

@@ -209,8 +209,16 @@ final class StreamFileWriterRateTests: XCTestCase {
         XCTAssertEqual(f.observedRate, 16_000, accuracy: 2_500,
                        "observed \(f.observedRate); the writer must see the real rate")
         XCTAssertEqual(f.ratio, 3, accuracy: 0.35)
-        XCTAssertFalse(f.isTrustworthy)
-        XCTAssertNotNil(f.explanation)
+        // Updated when the correction landed. This used to assert the stream was
+        // untrustworthy and carried an explanation, which was the right contract
+        // while the app could only *detect* the disagreement. Now that it
+        // corrects the converter, a noticed stream is a fixed stream — so the
+        // assertion moves to that, and the untrustworthy path is asserted where
+        // it still applies: a rate no real device uses
+        // (`testANonStandardObservedRateIsRefusedRatherThanGuessed`).
+        XCTAssertEqual(f.correctedTo, 16_000, "noticing it means fixing it")
+        XCTAssertTrue(f.isTrustworthy)
+        XCTAssertNil(f.explanation, "nothing to warn about once the file is right")
     }
 
     /// And the same writer must not cry wolf when the rate is right. Run at the
@@ -253,5 +261,112 @@ final class StreamFileWriterRateTests: XCTestCase {
         private var n = 0
         func bump() { lock.lock(); n += 1; lock.unlock() }
         var value: Int { lock.lock(); defer { lock.unlock() }; return n }
+    }
+}
+
+/// AD-44's *prevention*, as opposed to its detection.
+///
+/// Detecting a wrong rate leaves the recording ruined and merely honest about it.
+/// These assert the thing that actually matters: with the device delivering at a
+/// rate other than the one it declared, the **file on disk comes out right**.
+final class RateCorrectionTests: XCTestCase {
+
+    private var dir: URL!
+    override func setUpWithError() throws {
+        dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("corr-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    }
+    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: dir) }
+
+    /// Feeds `seconds` of audio at `actualRate` into a writer told `declaredRate`,
+    /// and returns the duration of the file that resulted plus what the writer
+    /// concluded about the rate.
+    private func capture(declaredRate: Double, actualRate: Double,
+                         seconds: TimeInterval, name: String)
+        throws -> (fileSeconds: Double, fidelity: RateFidelity) {
+        let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: declaredRate,
+                                channels: 1, interleaved: false)!
+        let ring = RingBuffer(capacity: Int(max(declaredRate, actualRate)) * 12)
+        let url = dir.appendingPathComponent(name)
+        let w = StreamFileWriter(url: url, format: fmt, ring: ring)
+        try w.start()
+
+        // A realistic cadence. A real tap delivers roughly every 170 ms at 48 kHz,
+        // and the rate measurement is only as clean as the delivery: a producer
+        // that dumps a second of audio and then sleeps makes the observation
+        // jitter by ~10%, which is enough to push it outside the 5% window the
+        // correction needs to identify a standard rate. That is an artefact of a
+        // synthetic producer, not of the mechanism — so the test produces at the
+        // cadence the real one does.
+        let chunks = max(12, Int(seconds / 0.15))
+        let framesPerChunk = Int(actualRate * seconds) / chunks
+        var block = [Float](repeating: 0, count: framesPerChunk)
+        for i in 0..<framesPerChunk { block[i] = sinf(Float(i) * 0.05) * 0.4 }
+        for _ in 0..<chunks {
+            block.withUnsafeBufferPointer { ring.write($0.baseAddress!, count: framesPerChunk) }
+            usleep(useconds_t(seconds / Double(chunks) * 1_000_000))
+        }
+        let f = w.rateFidelity
+        w.stop()
+
+        let file = try AVAudioFile(forReading: url)
+        return (Double(file.length) / file.fileFormat.sampleRate, f)
+    }
+
+    /// **The defect, prevented.** A device delivering 16 kHz while declaring
+    /// 48 kHz used to produce a file three times too fast. The file must now hold
+    /// the real elapsed time.
+    func testAThreeTimesWrongDeclaredRateStillProducesACorrectFile() throws {
+        let seconds: TimeInterval = 5
+        let r = try capture(declaredRate: 48_000, actualRate: 16_000,
+                            seconds: seconds, name: "corrected.wav")
+        XCTAssertEqual(r.fileSeconds, seconds, accuracy: 1.0,
+                       "the file is \(r.fileSeconds)s for \(seconds)s of audio")
+        XCTAssertEqual(r.fidelity.correctedTo, 16_000, "and it says it corrected itself")
+        XCTAssertTrue(r.fidelity.isTrustworthy, "a corrected recording is trustworthy")
+        XCTAssertNil(r.fidelity.explanation, "so there is nothing to warn the user about")
+    }
+
+    /// The ratio-2 case, which is five of the seven real recordings.
+    func testATwiceWrongDeclaredRateStillProducesACorrectFile() throws {
+        let seconds: TimeInterval = 5
+        let r = try capture(declaredRate: 48_000, actualRate: 24_000,
+                            seconds: seconds, name: "corrected2.wav")
+        XCTAssertEqual(r.fileSeconds, seconds, accuracy: 1.0)
+        XCTAssertEqual(r.fidelity.correctedTo, 24_000)
+    }
+
+    /// And a device behaving correctly must be left entirely alone — no
+    /// correction, no warning, and the same duration as before.
+    func testACorrectDeviceIsNotTouched() throws {
+        let seconds: TimeInterval = 5
+        let r = try capture(declaredRate: 16_000, actualRate: 16_000,
+                            seconds: seconds, name: "untouched.wav")
+        XCTAssertEqual(r.fileSeconds, seconds, accuracy: 1.0)
+        XCTAssertNil(r.fidelity.correctedTo, "nothing to correct")
+        XCTAssertTrue(r.fidelity.isTrustworthy)
+    }
+
+    /// A rate no real device uses is the case the app must not guess at: it keeps
+    /// the declared rate, so the file is wrong, and AD-45 refuses to build on it.
+    func testANonStandardObservedRateIsRefusedRatherThanGuessed() throws {
+        let seconds: TimeInterval = 5
+        // 48000 / 3.7 = 12973 Hz — not near any standard rate.
+        let r = try capture(declaredRate: 48_000, actualRate: 12_973,
+                            seconds: seconds, name: "weird.wav")
+        XCTAssertNil(r.fidelity.correctedTo, "guessing here would hide a different defect")
+        XCTAssertFalse(r.fidelity.isTrustworthy)
+        XCTAssertNotNil(r.fidelity.explanation, "and the user is told")
+    }
+
+    /// A capture shorter than the settling period must still produce a file. The
+    /// held opening is written when stop forces the decision — without that, a
+    /// five-second Test Playground recording would come out empty.
+    func testAShortCaptureStillWritesItsAudio() throws {
+        let seconds: TimeInterval = 1.5
+        let r = try capture(declaredRate: 16_000, actualRate: 16_000,
+                            seconds: seconds, name: "short.wav")
+        XCTAssertGreaterThan(r.fileSeconds, 0.5, "the held opening must reach the file")
     }
 }
