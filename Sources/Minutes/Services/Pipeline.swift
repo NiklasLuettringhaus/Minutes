@@ -136,6 +136,20 @@ actor Pipeline {
         }
     }
 
+    /// Where the Echo-muted copy of the Mic Stream lives while Diarization runs.
+    ///
+    /// Caches, not the Meeting folder: it is derived, it is recomputable from the
+    /// recording plus the stored intervals (AD-49), and a 50-minute meeting's
+    /// copy is nearly 100 MB — "one folder is the whole footprint" (Epic 13) did
+    /// not mean doubling it.
+    private static func retainedMicURL(id: String) -> URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let dir = base.appendingPathComponent("Minutes", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("retained-\(id).wav")
+    }
+
     // MARK: - Stages
 
     private func transcribeStage(_ id: String) async throws {
@@ -152,21 +166,70 @@ actor Pipeline {
             return out.isEmpty ? nil : out
         }
 
-        // The Mic Stream is the Local Speaker, structurally and without inference (AD-11).
-        if let mic = await store.audioURL(id: id, stream: .mic) {
-            for s in try await transcriber(for: model).transcribe(url: mic, model: model) {
-                guard let text = clean(s.text) else { continue }
-                utterances.append(Utterance(start: s.start, end: s.end, text: text,
-                                            speaker: .local, origin: .mic))
-            }
+        let micURL = await store.audioURL(id: id, stream: .mic)
+        let systemURL = await store.audioURL(id: id, stream: .system)
+
+        // FR-89. Measured before anything is transcribed, because the result
+        // decides what the Transcript keeps and what Diarization clusters.
+        var echo = EchoAnalysis.notApplicable
+        do {
+            echo = try EchoDetector.analyse(micURL: micURL, systemURL: systemURL)
+        } catch {
+            // A failure to measure is `undetermined`, never `clean` (AD-49).
+            echo = .undetermined
+            Log.audio.info("echo: \(error.localizedDescription, privacy: .public) — undetermined")
+        }
+
+        // The Mic Stream is the room; the System Stream is the far end. That
+        // split is structural (AD-11) and holds only over Mic Stream audio the
+        // far end did not arrive in (AD-47).
+        var micSegments: [TranscribedSegment] = []
+        if let micURL {
+            micSegments = try await transcriber(for: model).transcribe(url: micURL, model: model)
+        }
+        var systemSegments: [TranscribedSegment] = []
+        if let systemURL {
+            systemSegments = try await transcriber(for: model).transcribe(url: systemURL, model: model)
+        }
+
+        // FR-90. A Mic Stream segment is dropped only where the audio *and* the
+        // text agree it repeats the far end. Either signal alone is unsafe: the
+        // audio test costs 13% of the user's own words at the recall it needs,
+        // and the text test cannot tell an echo from two people agreeing.
+        //
+        // The System Stream spans are shifted onto the Mic Stream's timeline
+        // first. The two files do not start at the same instant — measured
+        // length differences across the real library run from -364 ms to
+        // +3,278 ms — so comparing raw offsets would misalign the very
+        // recordings this is for.
+        let shift = echo.verdict == .present ? (echo.delaySeconds ?? 0) : 0
+        let outcome = EchoDeduplication.apply(
+            mic: micSegments.map { .init(start: $0.start, end: $0.end, text: $0.text) },
+            system: systemSegments.map {
+                .init(start: $0.start + shift, end: $0.end + shift, text: $0.text)
+            },
+            echoFlagged: { span in
+                echo.verdict == .present && echo.isMostlyEcho(from: span.start, to: span.end)
+            })
+        let dropped = Set(outcome.droppedIndices)
+        if !dropped.isEmpty {
+            Log.audio.info("""
+                echo: dropped \(dropped.count, privacy: .public) mic segments \
+                (\(outcome.droppedWords, privacy: .public) words), \
+                \(outcome.residualDuplicateWords, privacy: .public) residual
+                """)
+        }
+
+        for (index, segment) in micSegments.enumerated() where !dropped.contains(index) {
+            guard let text = clean(segment.text) else { continue }
+            utterances.append(Utterance(start: segment.start, end: segment.end, text: text,
+                                        speaker: .local, origin: .mic))
         }
         // System Stream segments start unassigned; diarization names them next.
-        if let sys = await store.audioURL(id: id, stream: .system) {
-            for s in try await transcriber(for: model).transcribe(url: sys, model: model) {
-                guard let text = clean(s.text) else { continue }
-                utterances.append(Utterance(start: s.start, end: s.end, text: text,
-                                            speaker: SpeakerLabelID.remote(0), origin: .system))
-            }
+        for segment in systemSegments {
+            guard let text = clean(segment.text) else { continue }
+            utterances.append(Utterance(start: segment.start, end: segment.end, text: text,
+                                        speaker: SpeakerLabelID.remote(0), origin: .system))
         }
         guard !utterances.isEmpty else {
             throw MinutesError.transcriptionFailed("No speech was found in the recording.")
@@ -174,6 +237,7 @@ actor Pipeline {
         _ = try await store.update(id: id) {
             $0.utterances = utterances.sorted { $0.start < $1.start }
             $0.transcriptionModel = model
+            $0.echo = echo
         }
     }
 
@@ -201,7 +265,35 @@ actor Pipeline {
         var localMatchDistance: Float?
 
         // --- Microphone: the room ---
-        if let mic = await store.audioURL(id: id, stream: .mic) {
+        //
+        // FR-90 / AD-47. Clustering runs on Mic Stream audio with the Echo
+        // muted. This is the requirement the defect actually broke: on one real
+        // recording the far end arriving through the loudspeakers produced
+        // **six** in-room speakers and the user was never identified at all.
+        // Duplicated text was the visible symptom; a phantom attendee is a false
+        // statement about who was in the room.
+        let meetingForEcho = try? await store.load(id: id)
+        let retained = Self.retainedMicURL(id: id)
+        var micForDiarization = await store.audioURL(id: id, stream: .mic)
+        if let source = micForDiarization,
+           let analysis = meetingForEcho?.echo, analysis.verdict == .present {
+            do {
+                try EchoDetector.writeRetained(micURL: source, analysis: analysis, to: retained)
+                micForDiarization = retained
+                Log.audio.info("""
+                    echo: diarizing from retained mic audio, \
+                    \(Int(analysis.excludedProportion * 100), privacy: .public)% muted
+                    """)
+            } catch {
+                // Falling back to the raw stream keeps the Meeting processable.
+                // It is logged rather than silent: the speaker count that comes
+                // out cannot be trusted the way an excluded one can.
+                Log.audio.error("echo: could not write retained mic audio — \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        defer { try? FileManager.default.removeItem(at: retained) }
+
+        if let mic = micForDiarization {
             do {
                 let (spans, c) = try await diarizer.diarizeFull(url: mic)
                 let voices = Set(spans.map(\.speakerIndex))

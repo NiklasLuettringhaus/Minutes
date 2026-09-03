@@ -64,6 +64,20 @@ final class StreamFileWriter {
     /// point removes the bias entirely rather than hiding it under a wider
     /// tolerance.
     private var lastDrainAt: Date?
+
+    /// The clock the rate measurement reads.
+    ///
+    /// Injected so a test can drive it deterministically, and because a test
+    /// that sleeps to pace a synthetic producer is measuring the scheduler
+    /// rather than this code. `RateCorrectionTests` did exactly that and was
+    /// **flaky under load**: a true 24 kHz stream measured a few per cent low
+    /// and snapped to 22050 Hz.
+    ///
+    /// It is also the seam FR-94 needs. The device supplies its own sample-time
+    /// and host-time counters in every IOProc callback, and the honest fix is to
+    /// measure the rate against those rather than against any wall clock. This
+    /// is where that will attach.
+    var now: () -> Date = { Date() }
     /// `Date` rather than the audio clock, deliberately: the whole failure was the
     /// audio clock not being what the app believed, so the check must come from
     /// outside it.
@@ -272,11 +286,11 @@ final class StreamFileWriter {
         inputFramesConsumed += AVAudioFramePosition(frames)
         // The baseline is taken *after* the first chunk, so the startup transient
         // is outside the measurement window rather than dominating it.
-        let now = Date()
+        let instant = now()
         if measureBaseline == nil {
-            measureBaseline = (frames: inputFramesConsumed, at: now)
+            measureBaseline = (frames: inputFramesConsumed, at: instant)
         }
-        lastDrainAt = now
+        lastDrainAt = instant
 
         // Nothing reaches the file until the rate is settled (AD-44). Held rather
         // than written-then-corrected, so a corrected recording has no compressed
@@ -309,12 +323,12 @@ final class StreamFileWriter {
             rateSettled = true
         case .wrong(let ratio):
             rateSettled = true
-            guard let snapped = RateFidelity.standardRate(nearest: f.observedRate) else {
+            guard let snapped = f.correctionTarget else {
                 // Not near any rate a real device uses. Keep the declared rate,
                 // let the file come out wrong, and let AD-45 refuse to build
                 // anything on it — guessing here is how a different defect would
                 // get silently resampled into this one.
-                Log.audio.error("rate disagreement x\(ratio, privacy: .public) but observed \(f.observedRate, privacy: .public) Hz is not a standard rate; keeping the declared rate and marking the stream untrustworthy")
+                Log.audio.error("rate disagreement x\(ratio, privacy: .public) but observed \(f.observedRate, privacy: .public) Hz is neither a whole-number factor of the declared rate nor a standard rate; keeping the declared rate and marking the stream untrustworthy")
                 checkRate()
                 break
             }

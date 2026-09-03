@@ -109,6 +109,8 @@ final class UnlinkAllowlistTests: XCTestCase {
         "ModelCatalog.swift": "the same, for a model file",
         "ModelStorage.swift": "one-time cleanup of a legacy migration path",
         "LoginItem.swift": "the launch agent plist — app configuration, not user data",
+        "EchoDetector.swift": "the derived Echo-muted copy of the Mic Stream, in Caches. The recording itself is never touched (AD-49) and this copy is recomputable from it plus the stored intervals.",
+        "Pipeline.swift": "the same derived copy, deleted when Diarization is done. Trashing it would put a near-100 MB duplicate of a meeting in the user's Trash for no reason.",
     ]
 
     func testNoNewUnlinkOfAnythingTheUserCanLose() throws {

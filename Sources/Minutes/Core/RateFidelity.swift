@@ -156,10 +156,36 @@ struct RateFidelity: Equatable, Sendable, Codable {
     /// a non-integer ratio is a different defect and must not be silently rounded
     /// into this one.
     var integerRatio: Int? {
+        // `finalVerdict` rather than `verdict`, so this answers "what is the
+        // ratio" for any stream that has produced enough to judge, including
+        // mid-Session where the live correction needs it.
         guard case .wrong(let r) = finalVerdict else { return nil }
         let nearest = r.rounded()
         guard nearest >= 2, nearest <= 8, abs(r - nearest) / nearest <= 0.05 else { return nil }
         return Int(nearest)
+    }
+
+    /// The rate to convert from, when the samples are not at the declared rate.
+    ///
+    /// **Prefers `declared / integerRatio` over the raw observation**, and that
+    /// order matters. The declared rate is exact and the ratio is a small
+    /// integer, so their quotient is exact; the observation carries the noise of
+    /// whatever clock measured it. `WavRateRepair` has documented this since
+    /// increment 8 — "the true rate is `declared / integerRatio`, **not** the
+    /// raw observation" — but the live correction path snapped the observation
+    /// anyway, and that inconsistency was a real defect.
+    ///
+    /// It showed up as a **flaky test**. 22050 Hz and 24000 Hz are 8.8% apart
+    /// and `standardRate(nearest:)` accepts a 5% window, so a true 24000 Hz
+    /// measured 4% low under CPU load snapped to 22050 and the recording came
+    /// out wrong. Under the ratio rule the same measurement gives
+    /// `48000 / 2 = 24000` exactly, and load cannot move it.
+    ///
+    /// Falls back to snapping when there is no integer ratio, and returns nil
+    /// when neither applies — the case the app must refuse rather than guess.
+    var correctionTarget: Double? {
+        if let ratio = integerRatio { return (declaredRate / Double(ratio)).rounded() }
+        return Self.standardRate(nearest: observedRate)
     }
 
     static let unknown = RateFidelity(declaredRate: 0, framesObserved: 0, elapsedSeconds: 0)

@@ -3373,6 +3373,18 @@ needing a gate that integrated loudness demonstrably cannot provide (§13 Q20).
 And it does not de-duplicate utterances after transcription, which would tidy
 the text and leave the speaker count just as wrong.
 
+**One story rewrote three others before any of them was built.** Story 16.3
+asked for the frame test to be *energy dominance* rather than correlation.
+Calibrated, energy dominance bought 1.1 points over plain correlation and the
+honest ceiling for any audio-only rule was 86% recall at **13% of the user's own
+words** — because the echo path is not linear, the same fact that ruled out
+cancellation. What was wrong was not the statistic but the premise that
+Diarization and the Transcript need the same test. They do not: clustering
+tolerates missing frames, and the Transcript has a second signal available in
+the text. FR-90, FR-91, AD-47 and Stories 16.3, 16.4 and 16.7 were amended
+before implementation, and the Transcript's cost in unique content went from 13%
+to nil. See `spikes/calibration-echo-threshold-2026-09-03.md`.
+
 **Ordering.** The instrument first, because every story after it is validated
 with it. Then the safety floor *before* the exclusion it constrains — the same
 discipline as Epic 14, where what has already been lost outranks dependency
@@ -3470,13 +3482,18 @@ is speaking, so that removing an echo does not remove me.
   activity, unambiguously the room**.
 - Speech concurrent with the far end but uncorrelated with it is retained as
   double-talk: 787 frames, 13% of mic activity, on the same recording.
-- The test is **energy dominance, not correlation alone**. Correlation alone
-  costs 10.7% of unique mic words on the worst recording; a frame is excluded
-  only where the aligned system stream explains the frame's energy, so a frame
-  carrying the user's voice *and* an echo is retained.
-- That cost is a **release criterion with a number**: unique mic words retained
-  is measured before and after, and a change that lowers it is a regression even
-  if it removes more echo.
+- **The transcript loses no unique content at all**, because the rule that
+  touches it requires two independent signals to agree (Story 16.4). This story
+  was rewritten by its own calibration: it originally demanded *energy
+  dominance* rather than correlation, and measurement showed energy dominance
+  buys 1.1 points over plain correlation while the honest ceiling for any
+  audio-only rule is 86% recall at **13% of the user's own words**. The floor
+  did not change; what changed is that the transcript no longer relies on it
+  alone.
+- The frame test is known to be **weak on mild echo**: at the calibrated
+  threshold it reaches 86% recall on the worst recording and 18% on the
+  moderate one. That is acceptable only because its false positives reach
+  clustering and never the transcript.
 - This story is ordered before the one that excludes, deliberately. The floor
   has to exist before the thing it constrains.
 
@@ -3496,21 +3513,27 @@ transcript is a record of the meeting rather than of the room's acoustics.
 
 **And** each of the following holds:
 
-- Exclusion is a stage **upstream of both**, never a pass over their output.
-  Post-hoc de-duplication is explicitly rejected: it tidies the text and leaves
-  the speaker count wrong (AD-47).
-- Excluded audio is **muted in the processing path, not deleted**. The app never
-  edits the user's recording to fix its own problem, and a threshold change must
-  remain re-evaluable against the original audio (AD-49).
-- Measured targets, from the validation run that muted echo frames and
-  re-transcribed through the shipping engine: duplication on the severely
-  affected recording falls from **57.6% to 11.6%** of mic words — 91% of the
-  duplication gone — and on the moderate one from 15.5% to 10.1% with its unique
-  content *increasing* by 20 words.
-- Muting uses ramps rather than hard cuts, so no click is introduced into audio
-  the model then has to interpret.
-- A recording with no echo is byte-identical through the stage, proven rather
-  than assumed.
+- **Nothing is excluded unless the recording clears the gate.** Seven of the
+  nine clean real recordings hold literally zero coincidentally duplicated
+  words, so a headphones recording must pass through untouched — proven, not
+  assumed.
+- **Diarization** clusters from audio with echo frames excluded, muted in the
+  processing path with ramps rather than hard cuts. The app never edits the
+  user's recording to fix its own problem (AD-49).
+- **The transcript** drops a mic Utterance only where the frame test *and* the
+  text agree — flagged as echo **and** substantially repeating a time-overlapping
+  system Utterance. It cannot delete unique content, because it only ever
+  removes a duplicate of something already held on the other stream.
+- Post-hoc de-duplication *of the transcript alone* stays rejected: it tidies
+  the text and leaves the speaker count wrong, which was the larger harm
+  (AD-47). The two rules are not alternatives; both run.
+- Measured effect across the three affected recordings: **16%, 58% and 59%** of
+  mic words removed as duplicates, of which **98% sit in Utterances longer than
+  two words**. Coincidental agreement is short; verbatim multi-word repetition
+  at the same instant is the loudspeaker.
+- A **partial overlap** — echo and a room voice inside one Utterance — is not
+  fixed by the text rule and stays in the residual. A test asserts the residual
+  is reported rather than assumed to be zero.
 
 ### Story 16.5: The people in the room are counted from the room
 
@@ -3584,7 +3607,10 @@ its own echo.
 - The invariant is a test over the merged output, not a property assumed from
   the upstream stage — the stage can regress and this must catch it.
 - The check reports the proportion, so the 33.6% and 32.2% measured on real
-  recordings become a number that must stay near zero.
+  recordings become a number that is tracked. It is **not** asserted to reach
+  zero: partial overlaps survive the Utterance-level rule by construction, and a
+  test that demanded zero would be asserting something the design does not
+  deliver.
 - A word-rate sanity signal is available: the two affected recordings read
   **226 and 270 words per minute** against a library median of 148, and natural
   speech is 110–160.

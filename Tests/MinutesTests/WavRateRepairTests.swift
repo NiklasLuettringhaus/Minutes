@@ -1,4 +1,5 @@
 import XCTest
+import Foundation
 import AVFoundation
 @testable import Minutes
 
@@ -303,10 +304,25 @@ final class RateCorrectionTests: XCTestCase {
         let framesPerChunk = Int(actualRate * seconds) / chunks
         var block = [Float](repeating: 0, count: framesPerChunk)
         for i in 0..<framesPerChunk { block[i] = sinf(Float(i) * 0.05) * 0.4 }
+
+        // The clock is driven, not slept through. Pacing a synthetic producer
+        // with `usleep` measured the scheduler rather than the writer, and under
+        // load a true 24 kHz stream read a few per cent low and snapped to
+        // 22050 Hz — a flaky test hiding a real fragility (see `correctionTarget`).
+        let tick = seconds / Double(chunks)
+        let origin = Date()
+        let elapsed = ElapsedClock()
+        w.now = { origin.addingTimeInterval(elapsed.value) }
         for _ in 0..<chunks {
             block.withUnsafeBufferPointer { ring.write($0.baseAddress!, count: framesPerChunk) }
-            usleep(useconds_t(seconds / Double(chunks) * 1_000_000))
+            // Let the drain thread consume the chunk before the clock advances,
+            // so frames and elapsed stay in step.
+            var spun = 0
+            while ring.count > 0, spun < 2000 { usleep(200); spun += 1 }
+            elapsed.advance(by: tick)
         }
+        // The writer's own settle happens on a drain; give it one more.
+        usleep(50_000)
         let f = w.rateFidelity
         w.stop()
 
@@ -352,8 +368,12 @@ final class RateCorrectionTests: XCTestCase {
     /// the declared rate, so the file is wrong, and AD-45 refuses to build on it.
     func testANonStandardObservedRateIsRefusedRatherThanGuessed() throws {
         let seconds: TimeInterval = 5
-        // 48000 / 3.7 = 12973 Hz — not near any standard rate.
-        let r = try capture(declaredRate: 48_000, actualRate: 12_973,
+        // 48000 / 3.5 = 13714 Hz. Deliberately *mid-way* between whole-number
+        // factors: 3.5 is 12.5% from both 3 and 4, and 13714 Hz is more than
+        // 14% from every standard rate. The first version used 3.7, which sits
+        // inside a hair of the 5% window around 4 — so a 3% measurement wobble
+        // flipped it to "correctable" and the test blamed the code.
+        let r = try capture(declaredRate: 48_000, actualRate: 13_714,
                             seconds: seconds, name: "weird.wav")
         XCTAssertNil(r.fidelity.correctedTo, "guessing here would hide a different defect")
         XCTAssertFalse(r.fidelity.isTrustworthy)
@@ -368,5 +388,25 @@ final class RateCorrectionTests: XCTestCase {
         let r = try capture(declaredRate: 16_000, actualRate: 16_000,
                             seconds: seconds, name: "short.wav")
         XCTAssertGreaterThan(r.fileSeconds, 0.5, "the held opening must reach the file")
+    }
+}
+
+
+/// A clock the test advances by hand.
+///
+/// Locked because the writer reads it from its drain thread while the test
+/// advances it, and a data race here would be a flaky test about flaky tests.
+private final class ElapsedClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seconds: Double = 0
+
+    var value: Double {
+        lock.lock(); defer { lock.unlock() }
+        return seconds
+    }
+
+    func advance(by delta: Double) {
+        lock.lock(); defer { lock.unlock() }
+        seconds += delta
     }
 }

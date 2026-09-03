@@ -226,6 +226,16 @@ struct Meeting: Codable, Sendable, Identifiable {
     var micRate: RateFidelity?
     var systemRate: RateFidelity?
 
+    // --- Echo (AD-47). One field, because the question is about the pair of
+    // streams and not about either one alone. ---
+    /// Whether the Mic Stream was carrying a delayed copy of the System Stream,
+    /// and which parts of it were (FR-89, FR-92).
+    ///
+    /// Absent on every record written before increment 9. Absent reads as
+    /// **never checked**, never as clean (AD-49) — the same rule the rate work
+    /// settled on, and for the same reason.
+    var echo: EchoAnalysis?
+
     /// The streams whose transcript cannot be relied on (FR-85).
     ///
     /// Only a *failed* check counts. A record with no check is not evidence of a
@@ -307,6 +317,7 @@ struct Meeting: Codable, Sendable, Identifiable {
         self.noteDigest = nil
         self.micRate = nil
         self.systemRate = nil
+        self.echo = nil
     }
 
     /// Hand-written because the synthesised `Codable` was **not** tolerant of an
@@ -344,6 +355,7 @@ struct Meeting: Codable, Sendable, Identifiable {
         noteDigest = try c.decodeIfPresent(String.self, forKey: .noteDigest)
         micRate = try c.decodeIfPresent(RateFidelity.self, forKey: .micRate)
         systemRate = try c.decodeIfPresent(RateFidelity.self, forKey: .systemRate)
+        echo = try c.decodeIfPresent(EchoAnalysis.self, forKey: .echo)
     }
 
     func displayName(for id: SpeakerLabelID) -> String {

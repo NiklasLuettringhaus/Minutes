@@ -1234,15 +1234,18 @@ Minutes determines, per Session, whether and where the Mic Stream contains a del
 - The verdict distinguishes *how much* was affected, not merely whether: 47% of mic-active frames on the worst recording against 6% on the mildest.
 - Detection never inspects transcript text. Text similarity was used to *validate* the signal test (88–89% agreement) and is not the mechanism; a detector that needed a transcript could not run before transcription.
 
-#### FR-90: Exclude the Echo before transcription and before Diarization
-Mic Stream audio identified as Echo does not reach the Transcription Model or the Diarizer.
+#### FR-90: Exclude the Echo, with the test each consumer's tolerance allows
+Echo is kept out of Diarization by excluding audio, and out of the Transcript by dropping Utterances that two independent signals agree are duplicates.
+
+**Amended before implementation, by calibration.** This requirement first said "exclude before transcription and before Diarization", with one audio-level test serving both. Calibration measured that test's ceiling at **86% recall for 13% of the user's own words** (`calibration-echo-threshold-2026-09-03.md`), and the assumption that failed was not the statistic but the idea that both consumers need the same test. They do not, and the transcript has a second signal available that Diarization does not.
 
 **Consequences (testable):**
-- Exclusion happens upstream of both stages, not as a post-hoc pass over Utterances.
-- After exclusion, no Mic Stream Utterance substantially repeats a time-overlapping System Stream Utterance (FR-23 as amended).
-- The In-Room Speaker count is computed from the retained audio only, so the far end cannot become an attendee (FR-21 as amended).
-- Excluded audio is muted, not deleted: the recording on disk is unchanged and the exclusion is recomputable. The user's audio is never edited to fix the app's problem.
-- Measured target, from the validation run: duplication on a severely affected recording falls from 57.6% to 11.6% of mic words.
+- **Recording gate.** Nothing is excluded by any rule unless the whole recording clears the correlation gate. Nine clean recordings measured ≤0.025 and three affected ones ≥0.349 — a factor of fourteen with nothing between the populations. Seven of the nine contain literally zero coincidentally duplicated words, so a headphones recording is untouched.
+- **Diarization** clusters in-room voices from audio with Echo frames excluded, so the far end cannot become an attendee (FR-21, FR-22 as amended). The frame test's false positives reach clustering only and can never delete a word from the Transcript.
+- **The Transcript** drops a Mic Stream Utterance only where the audio test *and* the text agree: it is Echo-flagged **and** substantially repeats a time-overlapping System Stream Utterance. This **loses no unique Mic Stream content by construction** — it can only remove an Utterance duplicating one already held on the other Stream.
+- Audio is never edited on disk. Exclusion applies in the processing path and its inputs are recorded so the decision is recomputable (AD-49).
+- Measured effect on the three affected recordings: 16%, 58% and 59% of Mic Stream words removed as duplicates, of which **98% sit in Utterances longer than two words** — coincidental agreement is short, and verbatim multi-word repetition at the same instant is the loudspeaker.
+- A partial overlap, where Echo and a room voice fall inside one Utterance, is **not** fixed by the text rule and remains in the residual. Stated rather than hidden.
 
 #### FR-91: Never exclude what cannot be Echo
 Mic Stream audio recorded while the System Stream is silent is always retained, and speech concurrent with the far end but uncorrelated with it is retained as Double-talk.
