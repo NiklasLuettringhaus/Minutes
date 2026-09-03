@@ -325,6 +325,21 @@ no surface in the product mentions it.
 6. **14.9** — the digest and the decision banner. The largest single story.
 7. **14.11** — the footer. Last because it is the only one nobody is currently harmed by.
 
+## What changed while building it
+
+Recorded here rather than left as a diff, because three of these are decisions the
+plan got wrong.
+
+| Planned | Built | Why |
+| --- | --- | --- |
+| `Meeting.noteIsUserNamed` decides whether the app may rename | `Meeting.appOwnsNoteName(_:)` takes the name and the caller supplies it | The writer holds a destination resolved from the folder this instant; the record may be a reload behind. A test caught the app renaming the user's file back. |
+| The record's path derived inside `NoteWriter` | injected `recordModifiedAt` closure | The derived path made AD-41's migration branch unreachable under a temp store — a test would have passed while proving nothing. |
+| Nothing about legacy records' written name | `NoteLinkService.backfillWrittenName` | Found live: a record with no written name made the reported state and the writer disagree. Backfilled at the two moments the answer is knowable. |
+| `NoteWriting.write` returns `String` | returns `NoteWriteOutcome` | A refusal is an outcome the caller must handle; `throws` invites the `try?` that discards it. |
+| `MeetingStore.delete` returns nothing | returns the resulting Trash URLs | The only exact way to assert something went to the Trash — macOS renames on collision — and what an Undo would need. |
+| — | `--doctor` reports Note-link state | The one part of this increment observable from a terminal against the real library. It is what found the third review finding. |
+| — | `StateBanner` wraps instead of truncating | A rendered shot showed the note-not-found sentence cut off mid-word at 320pt. A component that has shipped since increment 2. |
+
 ## Verification that is not a unit test
 
 - `./Scripts/uishot.sh` for the four Note Link states and the decision banner at 320 / 460 / 720pt. It cannot draw a `Button`, so it answers *does the layout hold*, not *is it correct*.

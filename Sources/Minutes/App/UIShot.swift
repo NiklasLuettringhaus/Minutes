@@ -69,6 +69,11 @@ enum UIShot {
         // cases that break rather than the cases that happen to exist.
         let app = AppState.shared
         app.setMeetings(Fixtures.all)
+        // The four Note Link states, one per fixture, so every one is renderable
+        // at every width. Increment 7: these are the states whose *copy* is the
+        // whole feature, and copy that overflows is a defect like any other.
+        app.setNoteLinks(Fixtures.noteLinks)
+        app.setUnclaimedNotes(Fixtures.unclaimedNotes)
 
         var written = 0
 
@@ -125,6 +130,36 @@ enum UIShot {
             }
         }
 
+        // The Note Link states (increment 7). A renamed note, a note nobody can
+        // find, and two files claiming one meeting — the last of which is the only
+        // place in the product where the app lists files and refuses to choose.
+        for (label, w) in widths {
+            shoot("detail-note-userNamed-\(label)", w, nil) {
+                MeetingDetail(meeting: Fixtures.userRenamed)
+            }
+            shoot("detail-note-notFound-\(label)", w, nil) {
+                MeetingDetail(meeting: Fixtures.noteLost)
+            }
+            shoot("detail-note-ambiguous-\(label)", w, nil) {
+                MeetingDetail(meeting: Fixtures.noteAmbiguous)
+            }
+            // The decision banner on its own, at every width: two controls and a
+            // sentence, which is exactly the shape that collapsed twice before.
+            shoot("decision-banner-\(label)", w, nil) {
+                DecisionBanner(
+                    text: "“a note I renamed and then edited myself.md” has been changed outside Minutes, so the note was not rewritten. Your edit to this meeting is saved either way.",
+                    safeLabel: "Keep My Version", safeAction: {},
+                    riskyLabel: "Replace With Minutes' Note", riskyAction: {})
+                    .padding(Tok.s4)
+            }
+            shoot("unclaimed-notes-\(label)", w, nil) {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Fixtures.unclaimedNotes) { UnclaimedNoteRow(note: $0) }
+                }
+                .padding(Tok.s4)
+            }
+        }
+
         // Long names are their own case: a renamed speaker is usually a real name,
         // and "Christina Nørgaard-Pedersen" is longer than "In-room 3".
         shoot("detail-longnames-medium", 460, nil) {
@@ -177,7 +212,87 @@ enum UIShot {
     /// is why the hard case shipped.
     enum Fixtures {
 
-        static var all: [Meeting] { [crowded, longNames, simple, failed, interrupted] }
+        static var all: [Meeting] {
+            [crowded, longNames, simple, failed, interrupted,
+             userRenamed, noteLost, noteAmbiguous]
+        }
+
+        // MARK: - Note link states (increment 7)
+
+        /// A note the user renamed in Finder. Deliberately awkward: a long name,
+        /// a space before a hyphen — which `NoteWriter.slug` cannot produce, so it
+        /// could only have come from a human — and no relation to the app's title.
+        static var userRenamed: Meeting = {
+            var m = simpleShaped(id: "20260903-093000-usnm", title: "Actually")
+            m.noteFilename = "2026-09-03 0930 Morning -standup, the one about pricing.md"
+            m.noteFilenameWritten = "2026-09-03 0930 Actually.md"
+            return m
+        }()
+
+        /// A note nobody can find. The state whose copy used to be a false claim.
+        static var noteLost: Meeting = {
+            var m = simpleShaped(id: "20260903-094000-lost", title: "A meeting whose note went missing")
+            m.noteFilename = "2026-09-03 0940 A-meeting-whose-note-went-missing.md"
+            m.noteFilenameWritten = m.noteFilename
+            return m
+        }()
+
+        /// Two files claiming one meeting — the only place in the product where
+        /// the app lists files and refuses to choose between them.
+        static var noteAmbiguous: Meeting = {
+            var m = simpleShaped(id: "20260903-095000-ambg", title: "A meeting with two notes")
+            m.noteFilename = "2026-09-03 0950 A-meeting-with-two-notes.md"
+            m.noteFilenameWritten = m.noteFilename
+            return m
+        }()
+
+        static var noteLinks: [String: NoteLinkState] {
+            let folder = URL(fileURLWithPath: "/Users/you/Documents/Minutes")
+            return [
+                crowded.id: .linked(url: folder.appendingPathComponent("crowded.md"), userNamed: false),
+                longNames.id: .linked(url: folder.appendingPathComponent("long.md"), userNamed: false),
+                simple.id: .linked(url: folder.appendingPathComponent("simple.md"), userNamed: false),
+                userRenamed.id: .linked(url: folder.appendingPathComponent(userRenamed.noteFilename!),
+                                        userNamed: true),
+                noteLost.id: .notFound,
+                noteAmbiguous.id: .ambiguous([
+                    folder.appendingPathComponent("2026-09-03 0950 A-meeting-with-two-notes.md"),
+                    folder.appendingPathComponent("2026-09-03 0950 A-meeting-with-two-notes (2).md"),
+                ]),
+            ]
+        }
+
+        static var unclaimedNotes: [UnclaimedNote] {
+            let folder = URL(fileURLWithPath: "/Users/you/Documents/Minutes")
+            return [
+                UnclaimedNote(url: folder.appendingPathComponent("2026-09-03 0930 Morning -standup.md"),
+                              startedAt: date(9, 30)),
+                UnclaimedNote(url: folder.appendingPathComponent("a note whose meeting I deleted last week.md"),
+                              startedAt: nil),
+            ]
+        }
+
+        /// The minimum shape a detail pane needs, so a Note-link fixture is about
+        /// the note and not about the transcript.
+        private static func simpleShaped(id: String, title: String) -> Meeting {
+            var m = Meeting(id: id, startedAt: date(9, 30))
+            m.duration = 801
+            m.stage = .written
+            m.systemStreamCaptured = true
+            m.diarizationSucceeded = true
+            m.micDevice = "MacBook Pro Microphone"
+            m.utterances = [
+                Utterance(start: 0, end: 6, text: "Right, let's go through the list.",
+                          speaker: .local, origin: .mic),
+                Utterance(start: 6, end: 14, text: "I have three things and the first one is easy.",
+                          speaker: .remote(0), origin: .system),
+            ]
+            m.speakerNames = [SpeakerLabelID.local.raw: "Me",
+                              SpeakerLabelID.remote(0).raw: "Speaker 1"]
+            m.metadata = MeetingMetadata(title: title, tags: [], summary: "",
+                                         decisions: [], actionItems: [], backend: .heuristic)
+            return m
+        }
 
         /// Fourteen speakers, mixed places, one excluded, one enrolment-identified.
         /// Modelled on the user's real 8-person huddle with colleagues beside them.

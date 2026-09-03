@@ -118,6 +118,34 @@ enum Doctor {
             print("    \(m.id)  \(m.stage.rawValue.padded(11)) \(audio.padded(9)) \(note)")
         }
 
+        // FR-78. The one part of increment 7 that can be checked from a terminal
+        // against the real library: whether every Note is actually findable, and
+        // whether any file in the folder is orphaned. Counts and states only —
+        // never a title, never a filename (PRD §9.1, Story 13.5).
+        section("Note links")
+        if let f = folder {
+            let links = await NoteLinkService.reconcile(meetings, in: f)
+            var linked = 0, userNamed = 0, notFound = 0, ambiguous = 0
+            for state in links.values {
+                switch state {
+                case .linked(_, let byUser): linked += 1; if byUser { userNamed += 1 }
+                case .notFound: notFound += 1
+                case .ambiguous: ambiguous += 1
+                case .unknown: break
+                }
+            }
+            print("  linked:             \(linked)")
+            print("  named by you:       \(userNamed)")
+            print("  NOT FOUND:          \(notFound)")
+            print("  AMBIGUOUS:          \(ambiguous)")
+            let orphans = await NoteLinkService.unclaimed(meetings, in: f)
+            print("  unclaimed notes:    \(orphans.count)")
+            let stamped = meetings.filter { $0.noteDigest != nil }.count
+            print("  with a digest:      \(stamped) of \(meetings.count)   (the rest use the mtime signal, AD-41)")
+        } else {
+            print("  no notes folder, so nothing has been looked for")
+        }
+
         print("")
     }
 

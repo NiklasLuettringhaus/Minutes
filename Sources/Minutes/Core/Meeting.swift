@@ -199,7 +199,49 @@ struct Meeting: Codable, Sendable, Identifiable {
     var inferredSpeakers: [String]
     var metadata: MeetingMetadata?
     /// AD-18: computed once by NoteWriter and authoritative thereafter.
+    ///
+    /// **The file this Meeting is linked to** — which, since increment 7, may be a
+    /// name the *user* chose. Compare it with `noteFilenameWritten` to tell whose
+    /// name it is.
     var noteFilename: String?
+    /// The filename `NoteWriter` last wrote (AD-40).
+    ///
+    /// Its whole purpose is the comparison below. There is deliberately no
+    /// `didUserRename` flag: a flag can fall out of sync with the filesystem and a
+    /// comparison cannot.
+    var noteFilenameWritten: String?
+    /// A digest of the exact bytes `NoteWriter` last wrote (AD-41).
+    ///
+    /// Lets the app tell an edit from its own output, which is what makes FR-81
+    /// possible in either direction — not silently destroying a user's paragraph,
+    /// and not asking about every ordinary rewrite.
+    var noteDigest: String?
+
+    /// Whether `name` is a name *this app* chose for this Meeting's Note (AD-40).
+    ///
+    /// Takes the name rather than reading `noteFilename`, because the two callers
+    /// know different things and the more current one must win. `NoteWriter` knows
+    /// the name of the file it is about to write to — which may have been resolved
+    /// from the folder this instant — while the record only knows what the last
+    /// reconciliation stored. Deciding from the record made the writer's behaviour
+    /// depend on whether a reload had happened yet, and a rule that depends on
+    /// call order is not a rule.
+    ///
+    /// A record from before increment 7 has no written name, so every name reads
+    /// as the app's — which is correct, because those files *were* app-named, and
+    /// it is only ever the answer for one reconciliation: `NoteLinkService`
+    /// backfills the written name the moment it can tell what it was.
+    func appOwnsNoteName(_ name: String) -> Bool {
+        guard let written = noteFilenameWritten else { return true }
+        return name == written
+    }
+
+    /// Whether the linked file's name is the user's rather than the app's. The
+    /// display form of the rule above.
+    var noteIsUserNamed: Bool {
+        guard let f = noteFilename else { return false }
+        return !appOwnsNoteName(f)
+    }
 
     init(id: String, startedAt: Date) {
         self.id = id
@@ -222,6 +264,8 @@ struct Meeting: Codable, Sendable, Identifiable {
         self.inferredSpeakers = []
         self.metadata = nil
         self.noteFilename = nil
+        self.noteFilenameWritten = nil
+        self.noteDigest = nil
     }
 
     /// Hand-written because the synthesised `Codable` was **not** tolerant of an
@@ -255,6 +299,8 @@ struct Meeting: Codable, Sendable, Identifiable {
         inferredSpeakers = try c.decodeIfPresent([String].self, forKey: .inferredSpeakers) ?? []
         metadata = try c.decodeIfPresent(MeetingMetadata.self, forKey: .metadata)
         noteFilename = try c.decodeIfPresent(String.self, forKey: .noteFilename)
+        noteFilenameWritten = try c.decodeIfPresent(String.self, forKey: .noteFilenameWritten)
+        noteDigest = try c.decodeIfPresent(String.self, forKey: .noteDigest)
     }
 
     func displayName(for id: SpeakerLabelID) -> String {

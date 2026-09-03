@@ -401,24 +401,56 @@ actor Pipeline {
         guard let folder = await AppStateBridge.notesFolder() else {
             throw MinutesError.notesFolderUnavailable
         }
-        let filename = try noteWriter.write(meeting: meeting, into: folder)
-        _ = try await store.update(id: id) { $0.noteFilename = filename }
+        // First write of a Meeting's Note: there is nothing on disk to locate and
+        // nothing to conflict with, so a refusal here would mean the destination
+        // is occupied by a file with someone else's bytes — which `uniqueFilename`
+        // has already avoided.
+        let outcome = try noteWriter.write(meeting: meeting, into: folder, at: nil)
+        try await Self.persist(outcome, id: id, store: store)
+    }
+
+    /// AD-41: the filename and the digest are persisted in the same update, so a
+    /// record can never hold one without the other.
+    static func persist(_ outcome: NoteWriteOutcome, id: String, store: MeetingStore) async throws {
+        switch outcome {
+        case .wrote(let filename, let written, let digest):
+            _ = try await store.update(id: id) {
+                $0.noteFilename = filename
+                $0.noteFilenameWritten = written
+                $0.noteDigest = digest
+            }
+        case .refusedChangedOnDisk:
+            break
+        }
     }
 
     // MARK: - Note rewrite on edit (FR-35)
 
     /// Re-renders the Note after a title or speaker change, without re-running
     /// transcription or diarization (FR-24).
-    func rewriteNote(meetingID id: String) async {
+    /// Re-renders the Note after a title or speaker change (FR-24, FR-35).
+    ///
+    /// **Finds the file before it writes one.** Deriving the destination from the
+    /// stored filename without checking it is how a Note the user had renamed in
+    /// Finder became a second file, with the user's copy orphaned — reachable by
+    /// clicking the one remedy the app offered for the break.
+    ///
+    /// Returns the outcome so the caller can surface a refusal (FR-81). It is
+    /// discardable because most callers are fire-and-forget edits.
+    @discardableResult
+    func rewriteNote(meetingID id: String) async -> NoteWriteOutcome? {
         let store = MeetingStore.shared
         guard let meeting = try? await store.load(id: id),
               meeting.stage == .written,
-              let folder = await AppStateBridge.notesFolder() else { return }
+              let folder = await AppStateBridge.notesFolder() else { return nil }
+        let resolved = await NoteLinkService.resolvedNoteURL(for: meeting, in: folder)
         do {
-            let filename = try noteWriter.write(meeting: meeting, into: folder)
-            _ = try? await store.update(id: id) { $0.noteFilename = filename }
+            let outcome = try noteWriter.write(meeting: meeting, into: folder, at: resolved)
+            try await Self.persist(outcome, id: id, store: store)
+            return outcome
         } catch {
             Log.pipeline.error("note rewrite failed: \(error.localizedDescription, privacy: .public)")
+            return nil
         }
     }
 }

@@ -1,37 +1,119 @@
 import Foundation
+import CryptoKit
 
 /// AD-9: renders the Note as a *projection* of the Meeting record. Never parses
 /// a Note back into state.
 /// AD-18: the only component that computes a Note filename. It derives one once,
 /// and thereafter the stored filename is authoritative — on a title change it
-/// renames the existing file rather than writing a second one.
+/// renames the existing file rather than writing a second one. **Amended in
+/// increment 7 (AD-40):** that authority holds only while the name on disk is
+/// still the name this type wrote. Once the user has renamed the file, their name
+/// wins and nothing here renames it.
 struct NoteWriter: NoteWriting {
 
-    func write(meeting: Meeting, into folder: URL) throws -> String {
+    /// When the Meeting's record was last written, used only by AD-41's
+    /// pre-digest migration signal.
+    ///
+    /// Injected rather than derived from a hardcoded path, because deriving it
+    /// made the migration branch unreachable under a temp-rooted store — the test
+    /// would have found no record, concluded "no evidence of an edit", and passed
+    /// while proving nothing. The branch that never fires in the happy path is
+    /// the one that ships broken, so it has to be testable.
+    var recordModifiedAt: @Sendable (String) -> Date?
+
+    init(recordModifiedAt: @escaping @Sendable (String) -> Date? = { id in
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let u = support.appendingPathComponent("Minutes/Meetings/\(id)/meeting.json")
+        return (try? FileManager.default.attributesOfItem(atPath: u.path)[.modificationDate]) as? Date
+    }) {
+        self.recordModifiedAt = recordModifiedAt
+    }
+
+    func write(meeting: Meeting, into folder: URL, at located: URL?) throws -> NoteWriteOutcome {
         guard FileManager.default.isWritableFile(atPath: folder.path) else {
             throw MinutesError.notesFolderNotWritable(folder.path)
         }
-        let filename = meeting.noteFilename ?? uniqueFilename(for: meeting, in: folder)
-        let dest = folder.appendingPathComponent(filename)
+        let wanted = baseFilename(for: meeting)
 
-        // A stored filename that no longer matches the title means the title changed:
-        // rename in place so one Meeting never yields two Notes (AD-18).
-        if let existing = meeting.noteFilename {
-            let wanted = baseFilename(for: meeting)
-            if existing != wanted, FileManager.default.fileExists(atPath: folder.appendingPathComponent(existing).path) {
-                let target = uniqueFilename(for: meeting, in: folder, excluding: existing)
-                let from = folder.appendingPathComponent(existing)
-                let to = folder.appendingPathComponent(target)
-                try? FileManager.default.moveItem(at: from, to: to)
-                let data = Data(render(meeting: meeting).utf8)
-                try MeetingStore.atomicWrite(data, to: to)
-                return target
-            }
+        // The destination, in order of authority: the file the Note Link resolved
+        // to; then the recorded name if it is actually there; then a fresh one.
+        //
+        // The middle case is the fix for FR-35's amendment. It used to be first
+        // and unconditional, so a recorded name whose file had been renamed away
+        // became the destination of a *new* file — one Meeting, two Notes, and the
+        // user's renamed copy orphaned by the only button the app offered.
+        let dest: URL
+        if let located {
+            dest = located
+        } else if let existing = meeting.noteFilename,
+                  FileManager.default.fileExists(atPath: folder.appendingPathComponent(existing).path) {
+            dest = folder.appendingPathComponent(existing)
+        } else {
+            dest = folder.appendingPathComponent(meeting.noteFilename ?? uniqueFilename(for: meeting, in: folder))
         }
 
-        let data = Data(render(meeting: meeting).utf8)
-        try MeetingStore.atomicWrite(data, to: dest)
-        return filename
+        // AD-41: refuse to overwrite bytes this app did not write.
+        if let refusal = refusalIfChangedOnDisk(at: dest, meeting: meeting) {
+            return .refusedChangedOnDisk(refusal)
+        }
+
+        // A title change renames the file — unless the user owns the name (AD-40).
+        //
+        // Judged from the name of the destination, not from the record: the
+        // destination may have been resolved from the folder a moment ago, and the
+        // record's copy may be a reload behind. A test caught this exact ordering —
+        // resolve to the user's renamed file, write, and the app renamed it back.
+        var final = dest
+        let onDisk = dest.lastPathComponent
+        if meeting.appOwnsNoteName(onDisk), onDisk != wanted,
+           FileManager.default.fileExists(atPath: dest.path) {
+            let target = uniqueFilename(for: meeting, in: folder, excluding: onDisk)
+            let to = folder.appendingPathComponent(target)
+            try? FileManager.default.moveItem(at: dest, to: to)
+            final = to
+        }
+
+        let bytes = Data(render(meeting: meeting).utf8)
+        try MeetingStore.atomicWrite(bytes, to: final)
+        return .wrote(filename: final.lastPathComponent, written: wanted, digest: Self.digest(bytes))
+    }
+
+    /// AD-41. Nil means writing is safe.
+    ///
+    /// Three cases, and the third is the migration. A record with a digest is
+    /// compared against it. A record without one — every Note written before
+    /// increment 7 — is judged by modification time instead: not later than the
+    /// record's own last write means the app wrote it and the bytes are adopted as
+    /// the baseline; later means something else touched it and the user is asked.
+    /// That is a weaker signal than a digest and cannot see an edit that preserved
+    /// the timestamp, which is recorded in AD-41 rather than hidden here. Measured
+    /// on the fifteen real Notes: none is modified after its record, so all
+    /// fifteen adopt cleanly.
+    func refusalIfChangedOnDisk(at dest: URL, meeting: Meeting) -> URL? {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: dest.path),
+              let data = try? Data(contentsOf: dest) else { return nil }
+
+        if let known = meeting.noteDigest {
+            return Self.digest(data) == known ? nil : dest
+        }
+        return changedAfterItsRecord(dest, meeting: meeting) ? dest : nil
+    }
+
+    /// The pre-digest signal. Kept separate so it is testable on its own, and so
+    /// the day it can be deleted is obvious: when no record lacks a digest.
+    func changedAfterItsRecord(_ note: URL, meeting: Meeting) -> Bool {
+        guard let noteAt = (try? FileManager.default
+                .attributesOfItem(atPath: note.path)[.modificationDate]) as? Date,
+              let recAt = recordModifiedAt(meeting.id)
+        else { return false }   // No evidence of an edit is not evidence of one.
+        return noteAt.timeIntervalSince(recAt) > 1
+    }
+
+    /// SHA-256 of the exact bytes written. In the adapter, not in Core, which
+    /// `CorePurityTests` pins to Foundation alone.
+    static func digest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: - Filename
@@ -182,6 +264,11 @@ struct NoteWriter: NoteWriting {
 
         var lines = ["---"]
         lines.append("title: \(Self.yamlScalar(m.metadata?.title ?? "Meeting"))")
+        // FR-77: the file says which Meeting it is, so a rename cannot sever the
+        // link. Written first among the machine-readable fields because it is the
+        // only one the app reads back (AD-39), and reading it is not reading the
+        // Note's content (AD-9 as amended).
+        lines.append("\(NoteIdentity.Key.meetingID): \(m.id)")
         lines.append("date: \(df.string(from: m.startedAt))")
         lines.append("start: \(tf.string(from: m.startedAt))")
         lines.append("duration: \(Self.yamlScalar(Fmt.duration(m.duration)))")

@@ -48,9 +48,20 @@ detected_from: "Slack"
 
 Three facts follow from that, and together they are the whole story:
 
-1. **The app gave this meeting a one-word auto-title** taken from something
-   somebody said early on, which described nothing. The user renamed the *file* to
-   what the meeting actually was.
+1. **The app gave this meeting a one-word auto-title** that described nothing, so
+   the user renamed the *file* to what the meeting actually was.
+
+   *Corrected 2026-09-03, later the same day.* This investigation recorded that
+   the title came "from something somebody said early on", which was a guess and
+   was wrong. The user's own bug report — sitting in the notes folder, found while
+   testing the locator against real data — establishes the actual cause: the
+   system-audio stream for this recording was written at a third of its true
+   sample rate, so its transcript is fabricated text, and the title was derived
+   from the fabrication. Seven of fifteen recordings are affected. That is a
+   separate and more serious defect, it is recorded in full in the user's report,
+   and **nothing in this increment addresses it.** It is noted here because a
+   document that explains a bad title by guessing is exactly the failure this
+   project keeps trying to remove.
 2. **`NoteWriter` cannot have produced that filename.** `slug()` splits the title
    on spaces and rejoins with `-`, so a space can never survive into the stem.
    `Morning -standup` contains one. The rename happened in Finder, by hand.
@@ -260,3 +271,32 @@ F2, F3, F4 and F6 are established from the code and the disk directly and need n
 reproduction. F2 and F3 are the absence of a condition and the absence of an
 action; F4 is the absence of a surface; F6's evidence is a Meeting directory that
 does not exist and a Trash that is empty.
+
+
+## Found while implementing, and not part of this increment
+
+Two things turned up in the notes folder while testing the locator against real
+data, and both are worth recording where the next reader will see them.
+
+**The folder is not all ours, and that is correct.** It holds two files the user
+wrote by hand — a corrected transcript and a bug report. The first version of the
+real-data test asserted that every `.md` file in the folder parses as a Note,
+which was simply wrong about whose folder it is. AD-43 arrived from reasoning and
+was then confirmed by the folder itself: what matters is not that such files are
+absent but that the app never claims them, and the test now asserts that instead.
+
+**A high-severity defect that this increment does not touch.** The user's bug
+report describes the system-audio stream being written with a 16 kHz header over
+content at 8 kHz or ~5.3 kHz when a Bluetooth device is the input, so the far end
+of the call transcribes as fluent invented dialogue. Seven of fifteen recordings
+are affected; the raw PCM is intact, so they are recoverable.
+
+Worth saying plainly, because it is a judgement on work done in this project:
+**AD-36's capture evidence should have caught this and did not.** Increment 6 built
+a mechanism to stop elapsed time counting as proof of capture, and it checks for
+*signal* — peak above a floor, half a second of non-silence. A stream at three
+times speed is full of signal. The check that would have caught it is the one the
+user's report suggests and this project never wrote: compare each stream's
+duration against the session's wall clock and refuse a stream that disagrees.
+That is one comparison, and it would have surfaced all seven at record time
+instead of producing seven fabricated transcripts.

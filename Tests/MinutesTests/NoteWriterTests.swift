@@ -96,9 +96,14 @@ final class NoteWriterTests: XCTestCase {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let name = try NoteWriter().write(meeting: sampleMeeting(), into: dir)
+        let outcome = try NoteWriter().write(meeting: sampleMeeting(), into: dir, at: nil)
+        guard case .wrote(let name, let written, let digest) = outcome else {
+            return XCTFail("a first write cannot conflict; got \(outcome)")
+        }
         XCTAssertTrue(name.hasSuffix(".md"))
         XCTAssertTrue(name.contains("Pricing-page-redesign"))
+        XCTAssertEqual(name, written, "a name the app chose is not a user rename")
+        XCTAssertEqual(digest.count, 64, "SHA-256, hex")
         let files = try FileManager.default.contentsOfDirectory(atPath: dir.path)
             .filter { $0.hasSuffix(".md") }
         XCTAssertEqual(files.count, 1)
@@ -113,15 +118,25 @@ final class NoteWriterTests: XCTestCase {
 
         let w = NoteWriter()
         var m = sampleMeeting()
-        m.noteFilename = try w.write(meeting: m, into: dir)
+        try apply(w.write(meeting: m, into: dir, at: nil), to: &m)
 
         m.metadata?.title = "Pricing rethink"
-        m.noteFilename = try w.write(meeting: m, into: dir)
+        try apply(w.write(meeting: m, into: dir, at: nil), to: &m)
 
         let mds = try FileManager.default.contentsOfDirectory(atPath: dir.path)
             .filter { $0.hasSuffix(".md") }
         XCTAssertEqual(mds.count, 1, "renaming must not leave two notes; found \(mds)")
         XCTAssertTrue(m.noteFilename?.contains("Pricing-rethink") ?? false)
+    }
+
+    /// What `Pipeline.persist` does, in a form a test can use.
+    private func apply(_ outcome: NoteWriteOutcome, to m: inout Meeting) throws {
+        guard case .wrote(let filename, let written, let digest) = outcome else {
+            throw XCTSkip("unexpected refusal: \(outcome)")
+        }
+        m.noteFilename = filename
+        m.noteFilenameWritten = written
+        m.noteDigest = digest
     }
 
     func testSlugIsFilesystemSafe() {
