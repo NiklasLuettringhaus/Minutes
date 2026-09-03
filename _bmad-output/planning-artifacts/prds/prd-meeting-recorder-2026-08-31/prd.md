@@ -99,7 +99,8 @@ Downstream artifacts must use these terms verbatim. No synonyms anywhere.
 - **Meeting** — one recorded conversation and everything derived from it: audio, Transcript, Metadata, and the Note. Has a start time, a duration, and exactly one Note.
 - **Session** — the live act of recording a Meeting, from Capture start to Capture stop. A Session becomes a Meeting once it has been transcribed.
 - **Capture** — acquisition of audio during a Session. Always two Streams.
-- **Stream** — one of exactly two audio sources in a Capture: the **Mic Stream** (local microphone, attributed to the Local Speaker) or the **System Stream** (all other applications' audio output, containing Remote Speakers).
+- **Stream** — one of exactly two audio sources in a Capture: the **Mic Stream** (local microphone, attributed to the Local Speaker) or the **System Stream** (all other applications' audio output, containing Remote Speakers). **Amended in increment 9.** The two are not independent: when the user is on speakers rather than headphones, the Mic Stream contains a delayed copy of the System Stream. The System Stream is therefore *authoritative* for far-end speech, and the Mic Stream's copy of it is Echo (FR-89).
+- **Echo** — the portion of the Mic Stream that is a delayed copy of the System Stream, arriving acoustically from the speakers. It carries no information the System Stream does not already hold, and is excluded before transcription and Diarization (FR-90). Not to be confused with genuine **Double-talk**, where the user speaks *while* the far end is speaking; that is kept (FR-91).
 - **Local Speaker** — the person at the machine. Certain when the Mic Stream held a single voice, and identified when the Enrolled Voice matches exactly one of several in-room voices (FR-63). Default label `Me`.
 - **In-Room Speaker** — a voice in the Mic Stream when it held more than one, i.e. someone physically with the user. Anonymous (`In-room 1`, `In-room 2`, …) until renamed; the app does not guess which one is the Local Speaker.
 - **Remote Speaker** — a participant on the far end, present only in the System Stream. Anonymous (`Speaker 1`, `Speaker 2`, …) until renamed.
@@ -225,6 +226,7 @@ A Session captures the Mic Stream and the System Stream concurrently, as separat
 - Two audio artifacts exist for a Session, each independently decodable.
 - Both carry timestamps on a shared time base; a sound occurring at a known wall-clock moment appears at the same offset (±100 ms) in both.
 - Audio is captured at a sample rate and format suitable for the Transcription Model without a lossy intermediate step.
+- **Amended in increment 9.** The two Streams are separately addressable but not acoustically independent: on speakers, the Mic Stream contains the System Stream delayed by the speaker-to-microphone path. Measured at cross-correlation 0.771 with a 39 ms lag on one real recording. Nothing downstream may assume that a voice in the Mic Stream was in the room.
 
 #### FR-7: Graceful degradation to Mic-only
 If the System Stream cannot be captured, the Session proceeds with the Mic Stream alone rather than failing. `[ASSUMPTION: degrading rather than refusing to record is inferred; a user who declined a permission still wants their own side of the call captured.]`
@@ -333,15 +335,23 @@ Stopping a Session produces a Transcript, computed entirely on-device.
 - Each Utterance carries a start time, an end time, and text.
 - The app makes no network request during transcription, verifiable by network monitoring.
 - Transcription of a 30-minute Session with the default model completes in under 5 minutes on the target machine.
+- **Amended in increment 9.** Echo exclusion (FR-90) runs before transcription, not after. Transcribing first and de-duplicating afterwards would leave FR-21's speaker count already wrong.
 
 #### FR-17: Select a Transcription Model
 The user can choose among available Transcription Models. Realizes UJ-4.
 
 **Consequences (testable):**
-- The list states, per model, its relative speed, its relative accuracy, and its size on disk.
+- The list states, per model, its relative speed and its size on disk.
 - The currently active model is unambiguous.
 - The available list reflects what the transcription stack actually offers rather than a hardcoded list that can drift.
 - A recommended default is pre-selected so a user can proceed without choosing.
+- **Amended in increment 9: an accuracy claim requires a measurement.** The
+  original wording promised "its relative accuracy" per model, and the product
+  duly showed a five-point accuracy rating for every model — derived from
+  nothing. Speed was always measured (`--benchmark`); accuracy never was. A
+  model's accuracy is now stated only where FR-93's harness has measured it,
+  and is absent, not estimated, everywhere else. An unmeasured rating is worse
+  than no rating: it looks like knowledge.
 
 #### FR-18: Download and cache models with visible progress
 Selecting a model that is not present downloads it, showing progress. Realizes UJ-4.
@@ -387,6 +397,7 @@ All Utterances derived from the Mic Stream are attributed to an in-room voice �
 - No Mic Stream Utterance is ever attributed to a Remote Speaker, and no System Stream Utterance is ever attributed to an in-room voice. This is structural and cannot be wrong.
 - When the Mic Stream contains exactly one voice, it is the Local Speaker. This attribution cannot be wrong either.
 - When the Mic Stream contains more than one voice, each becomes a distinct In-Room Speaker and **none is claimed to be the Local Speaker** — unless an Enrolled Voice identifies one of them (FR-63).
+- **Amended in increment 9.** In-room voices are counted only from Mic Stream audio that is not Echo. Counting them from the raw Mic Stream put the far end in the room: one real recording produced **six** In-Room Speakers and never identified the user at all, because their own voice was one polluted cluster among six. The number of people in the room is not evidence of anything if the microphone was also hearing the call.
 - **Amended (increment 4):** with an Enrolled Voice present and matching exactly one in-room voice, that voice is the Local Speaker. This is an identification, not an assumption, and it is recorded as such on the Meeting. With no Enrolled Voice, or no unambiguous match, the original rule stands untouched.
 - Mic Stream speech the Diarizer cannot place at all, when several voices share the microphone, is labelled as unidentified in-room speech — never as the user. *(Added in increment 4 after the defect: such speech fell through to the Local Speaker default and printed 14 utterances of a neighbouring conversation as the user's own words.)*
 - The Meeting records that the room held several people, and the Note discloses it.
@@ -402,6 +413,7 @@ Utterances are assigned speaker labels by on-device Diarization, run separately 
 - A Stream with a single speaker yields one label, not several.
 - The number of Remote Speakers is determined from the audio; the user is not required to state it in advance.
 - Diarization failure degrades to a single `Speaker` label for the whole System Stream rather than failing the Meeting.
+- **Amended in increment 9.** The Mic Stream is diarized *after* Echo exclusion (FR-90). This is the requirement the defect actually broke: duplicated text is an annoyance, but a phantom attendee is a false statement about who was present.
 
 #### FR-23: Merge Streams into one ordered Transcript
 The Transcript interleaves Mic and System Stream Utterances in chronological order.
@@ -410,6 +422,7 @@ The Transcript interleaves Mic and System Stream Utterances in chronological ord
 - Utterances appear in ascending start-time order regardless of source Stream.
 - Overlapping speech from both Streams is represented as separate Utterances, not merged or dropped — people talk over each other and the record should show it.
 - Every Utterance in the Transcript carries exactly one Speaker Label.
+- **Amended in increment 9.** The clause above is about *genuine* overlap — two people speaking at once. It is not licence for the same speech to appear twice from two Streams. On affected recordings **33.6% and 32.2% of all Transcript words were one utterance recorded on both Streams**, and the merge dutifully preserved both copies. After FR-90 the invariant is testable: no Mic Stream Utterance may substantially repeat a time-overlapping System Stream Utterance.
 
 #### FR-24: Rename a Speaker Label
 The user can rename any Speaker Label on a Meeting. Realizes UJ-3.
@@ -1179,6 +1192,112 @@ A recording already on disk can be assessed and, where the samples are intact, r
 - Repair changes only what is wrong. The samples are not resampled, re-encoded or discarded, and the original declared rate is recorded so the change is reversible.
 - Nothing is repaired without the user asking. `[ASSUMPTION: the seven affected recordings on the author's machine were repaired by hand on 2026-09-03, before this requirement existed. The requirement is what makes that repeatable for a colleague.]`
 
+### 4.14 Transcription the App Can Measure
+
+**Description:** Everything before this section treats transcription quality as
+whatever the chosen model happens to produce. This section makes it something
+the app *measures*, and fixes the largest defect that measurement found.
+
+**Why it exists:** measured, not hypothesised, and the measurement came first.
+A harness (FR-93) was built before any change was made, against the AMI Meeting
+Corpus — three real four-person meetings, 67 minutes, ~7,900 reference words,
+in two microphone conditions that match the two Streams Minutes records. It
+immediately found two things.
+
+The first was in the user's own library, not the corpus. **Of twelve recordings
+holding both Streams, three had the microphone recording the far end** through
+the speakers (cross-correlation 0.771, 0.574, 0.349 against ≤0.025 for the other
+nine). On the worst, **57.6% of freshly transcribed Mic Stream words duplicated
+a System Stream Utterance**, the Diarizer reported **six people in the room**,
+and the user was **never identified at all**. Muting the echo-dominated frames
+and re-transcribing removed **91% of the duplication**.
+
+The second was that the app's own accuracy claims had nothing behind them. The
+model list showed a five-point accuracy rating for fourteen models; not one had
+ever been measured. When they were, the ranking **swung by up to 8 points
+depending on which meeting was used**, and the model most likely to be adopted
+on reputation (Canary-1B-v2) came 8.5 points *behind* the current default at 22×
+the cost. Reputation and estimates both failed; only the harness didn't.
+
+**What this section deliberately does not do:** cancel the echo (measured
+impossible — see the addendum), change the default model (the per-session swing
+is larger than the difference between models), or normalise far-field audio
+(a real 2-point gain with no reliable gate).
+
+#### FR-89: Detect that the microphone recorded the System Stream
+Minutes determines, per Session, whether and where the Mic Stream contains a delayed copy of the System Stream.
+
+**Consequences (testable):**
+- A verdict is produced for every Session holding both Streams, and recorded on the Meeting.
+- Detection is by correlation between the Mic Stream and the delay-aligned System Stream. The delay is estimated, not assumed, and a delay estimate that is not physically plausible is reported as a failure to detect rather than used.
+- A recording made on headphones is not flagged. Measured: nine of twelve real recordings sit at or below 0.025 cross-correlation and must all come back clean.
+- The verdict distinguishes *how much* was affected, not merely whether: 47% of mic-active frames on the worst recording against 6% on the mildest.
+- Detection never inspects transcript text. Text similarity was used to *validate* the signal test (88–89% agreement) and is not the mechanism; a detector that needed a transcript could not run before transcription.
+
+#### FR-90: Exclude the Echo before transcription and before Diarization
+Mic Stream audio identified as Echo does not reach the Transcription Model or the Diarizer.
+
+**Consequences (testable):**
+- Exclusion happens upstream of both stages, not as a post-hoc pass over Utterances.
+- After exclusion, no Mic Stream Utterance substantially repeats a time-overlapping System Stream Utterance (FR-23 as amended).
+- The In-Room Speaker count is computed from the retained audio only, so the far end cannot become an attendee (FR-21 as amended).
+- Excluded audio is muted, not deleted: the recording on disk is unchanged and the exclusion is recomputable. The user's audio is never edited to fix the app's problem.
+- Measured target, from the validation run: duplication on a severely affected recording falls from 57.6% to 11.6% of mic words.
+
+#### FR-91: Never exclude what cannot be Echo
+Mic Stream audio recorded while the System Stream is silent is always retained, and speech concurrent with the far end but uncorrelated with it is retained as Double-talk.
+
+**Consequences (testable):**
+- With no System Stream, or a silent one, nothing is ever excluded — 40% of mic activity on the worst recording falls in this category and is not at risk under any threshold.
+- Concurrent-but-uncorrelated speech is retained. The user talking over the far end is the case this requirement exists to protect.
+- The cost of exclusion is measured and stated rather than assumed: the current test loses **10.7% of unique Mic Stream words** on the worst recording. That figure is a release criterion, not a footnote — a change that worsens it is a regression even if it removes more Echo.
+
+#### FR-92: The Meeting says the recording was affected, and by how much
+A Meeting whose Mic Stream contained Echo records that fact, and the user can see it.
+
+**Consequences (testable):**
+- The Meeting record carries the verdict, the estimated delay, and the proportion of Mic Stream audio excluded.
+- The user is told in plain language what it means for the Note — that the far end was also picked up by the microphone and has been counted once, not twice.
+- A recording processed before this existed is not silently presented as clean; an unknown verdict reads as unknown.
+- The advice is actionable: headphones prevent it, which is why the nine clean recordings are clean.
+
+#### FR-93: Transcription accuracy is measurable, repeatably, from a terminal
+Minutes ships a way to measure transcription accuracy against a reference corpus, and its results are what accuracy claims cite.
+
+**Consequences (testable):**
+- One command transcribes a given audio file through the shipping code path and emits machine-readable Utterances, so the harness measures the product rather than a copy of it.
+- Word error rate is reported alongside a **content-word** error rate and **proper-noun recall**. Raw WER alone is the wrong target: the most-deleted words at the baseline were `yeah`, `ok` and `right` — a quarter of all errors, and words FR-31 already strips deliberately.
+- A repetition measure is reported, as a model-independent signature of the fabrication failure of §4.13.
+- Results are aggregated by pooling errors over pooled reference words across sessions, never by averaging per-session percentages.
+- Neither corpus audio nor results are written into the repository (§9.1).
+- The harness must be able to contradict the project: it has already retracted one conclusion drawn from a single session and rejected a model that was going to be adopted on reputation.
+
+#### FR-94: Verify the input rate against the audio clock, not the wall clock
+The rate check of FR-84 uses the timestamps the audio device supplies rather than elapsed wall-clock time.
+
+**Consequences (testable):**
+- The frame count is compared against the device's own sample-time counter, taken at the same instant, so the comparison needs no tolerance for scheduling jitter.
+- A discontinuity in the device's sample time — samples the app never received — is detected as such, which the current wall-clock check cannot see at all.
+- The 12% tolerance and 3-second settling window of FR-84 shrink or disappear, and the value that replaces them is derived rather than tuned.
+- The check still refuses to act on a rate that is not one a real device uses (FR-85 unchanged).
+
+#### FR-95: An Utterance carries the engine's confidence
+Where the Transcription Model reports a confidence, it is carried through to the Meeting record.
+
+**Consequences (testable):**
+- Confidence survives the port boundary rather than being discarded at the adapter.
+- A Meeting whose Transcript is largely low-confidence is distinguishable from one that is not, without re-running transcription.
+- Metadata derivation can consult it (§4.13's gate becomes evidence-based rather than binary).
+- A model that reports no confidence yields absent, not zero. Absent means unknown.
+
+#### FR-96: An interval the engine could not transcribe is a recorded gap
+Audio the Transcription Model returned nothing usable for is recorded as a gap rather than silently omitted.
+
+**Consequences (testable):**
+- The Transcript can state that a span of audio produced no usable text, with its start and end.
+- A gap is distinguishable from silence: one is speech the app failed on, the other is nothing to transcribe.
+- A Note derived from a Transcript with substantial gaps says so, so a summary is not read as complete when it is not.
+
 ## 5. Non-Goals (Explicit)
 
 These exist to stop the "let me also add the nearby thing" failure mode at epic, story and code level.
@@ -1452,6 +1571,26 @@ Raised by increment 7:
 24. **What should happen to an Unclaimed Note when the user says "dismiss"?** Currently: forgotten from the listing, file untouched, and it returns if the app forgets that it forgot. The alternative — a marker in the file — means writing to a file whose Meeting no longer exists, which is worse. Informs FR-82.
 
 21. **Does §9.1's "the audio is destroyed" survive the implementation of re-recording?** Re-recording replaces a fingerprint, and the obvious lazy implementation keeps the previous sample around "just in case". It must not. This is a code-review item as much as an open question, and it is listed because the failure would be invisible.
+
+
+**Q19 (increment 9): does the English-only model deserve to be the default?**
+Pooled over three AMI sessions it is 2.3 points better on close mics and tied
+far-field, but the per-session swing is ±8 points — larger than the effect.
+*Revisit when* the harness has nine or more sessions spanning native and
+non-native English. Owner: whoever next touches `ModelCatalog`.
+
+**Q20 (increment 9): what distinguishes a far-field recording from a close one?**
+Normalisation is worth ~2 points far-field and costs ~2 close, so the gate is
+the whole question, and integrated loudness does not answer it (the corpus and
+the user's library both overlap heavily). *Revisit when* a reverberation or
+direct-to-reverberant measure has been trialled. Until then FR-93's harness
+measures the two conditions separately rather than pretending one setting fits.
+
+**Q21 (increment 9): why does session variance dominate model choice?**
+The hardest session for every engine measured (27–35% WER against 15–19% on the
+easiest) is AMI's non-native-speaker set. If accent is the driver it bears
+directly on this product, whose meetings are not held in first-language English.
+*Revisit when* a non-native-heavy session set can be scored separately.
 
 ## 14. Assumptions Index
 

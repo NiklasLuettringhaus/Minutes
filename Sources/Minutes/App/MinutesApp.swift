@@ -22,6 +22,10 @@ enum Entry {
             // person who hits this next may have to do the same before there is
             // any UI to click.
             RateCheck.run(repair: CommandLine.arguments.contains("--repair"))
+        } else if CommandLine.arguments.contains("--asr") {
+            // Transcribes one file and prints the segments, so accuracy can be
+            // scored against a reference corpus instead of assumed.
+            AsrEval.run()
         } else if CommandLine.arguments.contains("--uishot") {
             // Renders the panes to PNG with fixture data, so a layout defect is
             // findable from a terminal. Needs no screen-recording permission —

@@ -1,6 +1,12 @@
 ---
 stepsCompleted: [1, 2, 3, 4]
 revisions:
+  - 2026-09-03 increment 9 — added Epic 16 (11 stories, FR-89 to FR-96 plus the FR-17,
+    FR-21, FR-22 and FR-23 amendments) after a measurement harness was built first and
+    found that three of twelve dual-stream recordings had the microphone recording the
+    far end. Epics 1-15 untouched and not renumbered. The first epic whose opening story
+    is the instrument rather than a fix, and the first to retract one of its own
+    conclusions mid-investigation.
   - 2026-09-03 increment 8 — added Epic 15 (7 stories, FR-84 to FR-88 plus the FR-67
     amendment) after seven of sixteen recordings were found to have transcribed into
     invented dialogue for three days. Epics 1-14 untouched and not renumbered. The
@@ -33,6 +39,7 @@ inputDocuments:
   - _bmad-output/planning-artifacts/spikes/spike-mic-isolation-2026-09-01.md
   - _bmad-output/planning-artifacts/spikes/calibration-speaker-threshold-2026-09-01.md
   - _bmad-output/planning-artifacts/spikes/investigation-note-linkage-2026-09-03.md
+  - _bmad-output/planning-artifacts/spikes/investigation-transcription-quality-2026-09-03.md
   - _bmad-output/planning-artifacts/RELEASE-PLAN.md
 ---
 
@@ -40,7 +47,7 @@ inputDocuments:
 
 ## Overview
 
-This document decomposes the 83 functional requirements, 8 cross-cutting NFRs, the 43 architecture decisions and the two UX spines into 97 implementable stories across 15 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build; Epic 9 is increment 3; Epic 10 is increment 4; Epics 11-13 are increment 5, the first aimed at a machine other than the author's; Epic 14 is increment 7, the first written from something the product had already destroyed; Epic 15 is increment 8, written from a defect the user found and documented before the product did. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
+This document decomposes the 96 functional requirements, 8 cross-cutting NFRs, the 52 architecture decisions and the two UX spines into 108 implementable stories across 16 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build; Epic 9 is increment 3; Epic 10 is increment 4; Epics 11-13 are increment 5, the first aimed at a machine other than the author's; Epic 14 is increment 7, the first written from something the product had already destroyed; Epic 15 is increment 8, written from a defect the user found and documented before the product did; Epic 16 is increment 9, the first written from a defect nobody had noticed, because the affected notes merely read as verbose until accuracy became measurable. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
 
 Every FR is covered by exactly one story — verified programmatically, see the FR Coverage Map for increment 1 and each later epic's own coverage table.
 
@@ -3320,3 +3327,387 @@ a device change does not silently corrupt the rest of the recording.
 | FR-87 | 15.5 |
 | FR-88 | 15.6 |
 | FR-67 (amended) | 15.3 |
+
+## Epic 16: The Microphone Was Also Listening to the Call
+
+**Why this epic exists.** Asked to improve transcription, the first thing built
+was not a transcription change. It was a way to tell whether any change helped —
+because the product had been asserting a five-point accuracy rating for fourteen
+models on the basis of no measurement at all, and there was no way to know
+whether a change made things better or worse.
+
+The harness found something bigger than a model choice. **Three of twelve
+recordings holding both streams had the microphone recording the far end**
+through the loudspeakers: cross-correlation 0.771 at a 39 ms lag on the worst,
+against 0.025 or below on the nine clean ones. The consequences compound:
+
+- **57.6% of freshly transcribed microphone words duplicated a system-stream
+  utterance.** The merge preserved both copies, exactly as FR-23 told it to.
+- **The diariser reported six people in the room** (`room-0` … `room-5`), and
+  **never identified the user at all** — their own voice was one polluted
+  cluster among six. This is the "Me" mislabel class of failure, with a cause
+  nobody had located.
+- The note, and the summary derived from it, were built on all of that.
+
+**What makes this epic different from Epic 15.** That one was written from a
+defect the user found. This one was written from a defect *nobody had noticed* —
+the affected notes read as merely verbose. It surfaced only because accuracy
+became measurable, which is the argument for Story 16.1 existing at all.
+
+**Cancellation is out of scope, and the reason is measured, not aesthetic.**
+Subtracting the reference signal is the textbook fix. On these recordings the
+upper bound on ERLE for *any* linear filter — from magnitude-squared coherence,
+so independent of filter length — is **8.7 dB at 128 ms, 9.9 dB at 512 ms,
+10.6 dB at 2048 ms**, against the 20–40 dB a useful canceller needs. Two
+independent device clocks, a nonlinear speaker path and a reverberation tail
+outlasting any window tried. Detection needs only that the relationship exists;
+cancellation needs it to be invertible, and it is not (AD-48).
+
+**What this epic explicitly does not build.** It does not change the default
+model: pooled over three sessions the English-only Parakeet leads the shipped
+default by 2.3 points on close mics, but the per-session swing is ±8 points —
+larger than the effect, so three sessions cannot move a default every user gets
+(§13 Q19). It does not adopt Canary-1B-v2, which measured 8.5 points worse at
+22× the cost. It does not normalise far-field audio, worth a real ~2 points but
+needing a gate that integrated loudness demonstrably cannot provide (§13 Q20).
+And it does not de-duplicate utterances after transcription, which would tidy
+the text and leave the speaker count just as wrong.
+
+**Ordering.** The instrument first, because every story after it is validated
+with it. Then the safety floor *before* the exclusion it constrains — the same
+discipline as Epic 14, where what has already been lost outranks dependency
+order. Exclusion, then what the record says, then what the user sees. The
+honesty fix to the model list comes next because it is cheap and the claim is
+live in the UI today. The clock and the port contract close it out.
+
+### Story 16.1: Transcription accuracy can be measured from a terminal
+
+*(tier T1 · FR-93 · AD-50)*
+
+As someone changing how transcription works, I want to measure accuracy against
+a reference corpus, so that I can tell an improvement from a regression instead
+of guessing.
+
+**Acceptance Criteria:**
+
+**Given** an audio file and a reference transcript
+**When** the measurement command is run
+**Then** it reports a word error rate, a content-word error rate and proper-noun recall
+**And** the figures come from the same `Transcribing` port the app uses
+
+**And** each of the following holds:
+
+- One command transcribes a file through the shipping code path and emits
+  machine-readable utterances. The harness measures the product, not a copy of
+  it, so the two cannot drift (AD-50).
+- Raw WER is reported **and is not the only figure**. At the baseline the
+  most-deleted words were `yeah` (38), `ok` (17) and `right` (13) — a quarter of
+  all errors, and words FR-31 strips on purpose. A content-word rate excluding a
+  closed-class list is reported beside it, with proper-noun recall, because a
+  wrong name is the error a reader notices.
+- A repetition measure is reported, as a model-independent signature of the
+  §4.13 fabrication failure.
+- Results aggregate by pooling errors over pooled reference words. Averaging
+  per-session percentages is not permitted and a test asserts the two differ.
+- Neither corpus audio nor results are written into the repository, and
+  `check-no-user-data.sh` still passes (§9.1).
+- The normaliser is symmetric: hesitations, digits-versus-words and apostrophes
+  are treated identically on both sides, and a test proves a reference scored
+  against itself yields exactly 0%.
+
+### Story 16.2: The app can tell that the microphone was hearing the call
+
+*(tier T1 · FR-89 · AD-47, AD-48)*
+
+As someone who took a call on speakers, I want the app to notice that my
+microphone also picked up the other side, so that it does not treat the call as
+if it happened twice.
+
+**Acceptance Criteria:**
+
+**Given** a Session with both streams
+**When** the streams are compared
+**Then** a verdict says whether the mic stream contains a delayed copy of the system stream, and how much of it does
+**And** a headphones recording is not flagged
+
+**And** each of the following holds:
+
+- The delay is **estimated, not assumed**, and a delay that is not physically
+  plausible is reported as *failure to detect* rather than used. This is not
+  hypothetical: one real recording's estimator returned 920 ms, which no
+  speaker-to-microphone path explains, and a wrong delay would silently disable
+  the whole test.
+- Detection is by correlation against the delay-aligned system stream and
+  **never inspects transcript text**. Text similarity was how the signal test
+  was *validated* (88–89% agreement on two recordings, 2% false-positive rate on
+  a third) and is not the mechanism — a detector needing a transcript could not
+  run before transcription.
+- The verdict carries a proportion, not just a flag: 47% of mic-active frames on
+  the worst real recording against 6% on the mildest.
+- Fixtures reproduce both sides. A synthesised mic stream built from a known
+  system stream plus delay and gain is detected; two unrelated speech signals
+  are not.
+- The nine clean real recordings must all come back clean. Their measured
+  cross-correlation is at or below 0.025 and the threshold sits far above it.
+
+### Story 16.3: What cannot be echo is never excluded
+
+*(tier T1 · FR-91 · AD-47)*
+
+As someone who talks over people, I want my own words kept even when the far end
+is speaking, so that removing an echo does not remove me.
+
+**Acceptance Criteria:**
+
+**Given** mic audio recorded while the system stream is silent
+**When** echo exclusion runs
+**Then** none of it is ever excluded, at any threshold
+
+**And** each of the following holds:
+
+- With no system stream, or a silent one, nothing is excluded. On the worst real
+  recording this covers 2,376 of 5,917 mic-active frames — **40% of mic
+  activity, unambiguously the room**.
+- Speech concurrent with the far end but uncorrelated with it is retained as
+  double-talk: 787 frames, 13% of mic activity, on the same recording.
+- The test is **energy dominance, not correlation alone**. Correlation alone
+  costs 10.7% of unique mic words on the worst recording; a frame is excluded
+  only where the aligned system stream explains the frame's energy, so a frame
+  carrying the user's voice *and* an echo is retained.
+- That cost is a **release criterion with a number**: unique mic words retained
+  is measured before and after, and a change that lowers it is a regression even
+  if it removes more echo.
+- This story is ordered before the one that excludes, deliberately. The floor
+  has to exist before the thing it constrains.
+
+### Story 16.4: The echo never reaches the model or the diariser
+
+*(tier T1 · FR-90 · AD-47, AD-49)*
+
+As someone reading a note, I want each thing said counted once, so that the
+transcript is a record of the meeting rather than of the room's acoustics.
+
+**Acceptance Criteria:**
+
+**Given** a recording whose mic stream contains echo
+**When** the Meeting is processed
+**Then** the echo reaches neither the Transcription Model nor the Diarizer
+**And** the recording on disk is unchanged
+
+**And** each of the following holds:
+
+- Exclusion is a stage **upstream of both**, never a pass over their output.
+  Post-hoc de-duplication is explicitly rejected: it tidies the text and leaves
+  the speaker count wrong (AD-47).
+- Excluded audio is **muted in the processing path, not deleted**. The app never
+  edits the user's recording to fix its own problem, and a threshold change must
+  remain re-evaluable against the original audio (AD-49).
+- Measured targets, from the validation run that muted echo frames and
+  re-transcribed through the shipping engine: duplication on the severely
+  affected recording falls from **57.6% to 11.6%** of mic words — 91% of the
+  duplication gone — and on the moderate one from 15.5% to 10.1% with its unique
+  content *increasing* by 20 words.
+- Muting uses ramps rather than hard cuts, so no click is introduced into audio
+  the model then has to interpret.
+- A recording with no echo is byte-identical through the stage, proven rather
+  than assumed.
+
+### Story 16.5: The people in the room are counted from the room
+
+*(tier T1 · amends FR-21, FR-22 · AD-11, AD-47)*
+
+As someone recording in a meeting room, I want the app to count the people
+actually with me, so that it does not introduce the far end as colleagues.
+
+**Acceptance Criteria:**
+
+**Given** a mic stream that contained echo
+**When** diarization runs
+**Then** in-room voices are clustered from the retained audio only
+
+**And** each of the following holds:
+
+- The In-Room Speaker count comes from post-exclusion audio. On the worst real
+  recording the pre-exclusion count was **six** (`room-0` … `room-5`) and the
+  user was **never** identified as `local`.
+- `local` identification is re-evaluated against the retained audio, so the
+  enrolled-voice match of FR-63 competes against the room rather than against
+  the room plus the far end.
+- AD-11's structural claim is amended, not abandoned: place remains structural
+  for the *retained* mic stream. A retained mic voice is still never relabelled
+  as remote.
+- A test drives a synthesised two-in-the-room recording with echo from three
+  far-end voices and asserts the count is two, not five.
+
+### Story 16.6: The record says the recording was affected, and by how much
+
+*(tier T2 · FR-92 · AD-49)*
+
+As someone deciding how much of a note to trust, I want to know that my
+microphone was also hearing the call, so that I can judge the result and change
+what I do next time.
+
+**Acceptance Criteria:**
+
+**Given** a Meeting whose mic stream contained echo
+**When** its record is read
+**Then** the verdict, the estimated delay and the excluded proportion are all there
+
+**And** each of the following holds:
+
+- A recording processed before this existed carries an **unknown** verdict, and
+  unknown reads as unknown — never as clean (AD-49). This is the same rule the
+  rate work settled on and for the same reason.
+- The stored values are enough to re-derive the decision after a threshold
+  change, without re-running detection from audio.
+- A `Decodable` record written by an older build still loads, and a test covers
+  the older shape rather than only the current one.
+
+### Story 16.7: The same sentence never appears twice
+
+*(tier T2 · amends FR-23 · AD-47)*
+
+As someone reading a transcript, I want overlapping speech to mean two people
+talking, not one person recorded twice, so that the record is not padded with
+its own echo.
+
+**Acceptance Criteria:**
+
+**Given** a merged Transcript
+**When** it is checked
+**Then** no mic-stream Utterance substantially repeats a time-overlapping system-stream Utterance
+
+**And** each of the following holds:
+
+- FR-23's overlap clause is narrowed in wording as well as behaviour: it
+  licenses *genuine* overlap and never the same speech from two streams.
+- The invariant is a test over the merged output, not a property assumed from
+  the upstream stage — the stage can regress and this must catch it.
+- The check reports the proportion, so the 33.6% and 32.2% measured on real
+  recordings become a number that must stay near zero.
+- A word-rate sanity signal is available: the two affected recordings read
+  **226 and 270 words per minute** against a library median of 148, and natural
+  speech is 110–160.
+
+### Story 16.8: The app stops rating accuracy it has not measured
+
+*(tier T6 · amends FR-17 · AD-50)*
+
+As someone choosing a model, I want the app to tell me only what it knows, so
+that I am not steered by a number somebody invented.
+
+**Acceptance Criteria:**
+
+**Given** the model list
+**When** it is shown
+**Then** an accuracy figure appears only where it has been measured, and is absent elsewhere
+
+**And** each of the following holds:
+
+- The five-point accuracy rating is **removed** where nothing measured backs it,
+  not re-estimated. Fourteen models carried one; zero had been measured.
+- Speed claims stay, because `--benchmark` has always measured them. The
+  asymmetry is the point: the product may keep the claim it can support.
+- The note on the English-only Parakeet — *"English only, and a little sharper
+  for it"* — is now **supported** on close mics (20.3% against 22.6% pooled) and
+  is kept, with the measurement named. This story exists partly because the
+  opposite conclusion was drawn from a single session and had to be retracted.
+- `whisper-large-v3-turbo` loses the `.accurate` role and its 5/5 rating: it
+  measured a tie with Parakeet v3 on close mics (22.8% against 22.6%) and
+  **11.4 points worse** far-field (40.8% against 29.4%), at 8× the cost.
+- The default model does **not** change in this story, and §13 Q19 records why
+  with its revisit condition.
+
+### Story 16.9: The rate is checked against the audio clock
+
+*(tier T6 · FR-94 · AD-51, amends AD-3, AD-44)*
+
+As someone recording on a device that lies about its rate, I want the check to
+use the device's own clock, so that it is exact rather than tolerant.
+
+**Acceptance Criteria:**
+
+**Given** an IOProc callback carrying the device's sample time and host time
+**When** the rate is verified
+**Then** frames are compared against the device's sample time taken at the same instant
+
+**And** each of the following holds:
+
+- `mSampleTime` and `mHostTime` are passed through to whatever judges the rate.
+  Both are available in every callback today and both are discarded — the
+  callback signature binds them to `_`.
+- A gap between successive callbacks' sample times exceeding the frames
+  delivered is recorded as a **discontinuity** — samples the app never received
+  — which the wall-clock check cannot see at all.
+- The 12% tolerance and 3-second settling window shrink or disappear, and
+  whatever replaces them is **derived** from the clock's properties rather than
+  tuned against recordings.
+- AD-4's single session clock is untouched and remains the time base for
+  Utterances. This story changes only how *rate* is verified.
+- AD-45's refusal to snap to a rate no real device uses still holds, and its
+  test still passes.
+
+### Story 16.10: An Utterance carries how sure the engine was
+
+*(tier T6 · FR-95 · AD-52)*
+
+As someone whose recording came out badly, I want the app to keep the engine's
+own uncertainty, so that a doubtful transcript can be treated as doubtful.
+
+**Acceptance Criteria:**
+
+**Given** an engine that reports per-segment confidence
+**When** a Meeting is transcribed
+**Then** the confidence reaches the Meeting record
+
+**And** each of the following holds:
+
+- Confidence crosses the port boundary. Today `TranscribedSegment` carries
+  `start`, `end` and `text` and nothing else, so the adapter discards the only
+  signal that would have caught §4.13's fabrication by its symptom.
+- An engine reporting no confidence yields **absent**, never zero. Absent means
+  unknown and a test asserts it does not read as low confidence.
+- AD-46's metadata gate may consult it, turning a binary trust decision into an
+  evidenced one, and may never treat absent as failing.
+- A Meeting largely composed of low-confidence text is distinguishable from one
+  that is not, without re-running transcription.
+
+### Story 16.11: Audio the engine could not read is a recorded gap
+
+*(tier T6 · FR-96 · AD-52)*
+
+As someone reading a summary, I want to know that a stretch of the meeting
+produced no usable text, so that I do not read an incomplete record as a
+complete one.
+
+**Acceptance Criteria:**
+
+**Given** an interval the engine returned nothing usable for
+**When** the Transcript is written
+**Then** the interval is recorded as a gap with a start and an end
+
+**And** each of the following holds:
+
+- A gap is distinguishable from silence. One is speech the app failed on, the
+  other is nothing to transcribe, and conflating them is how the failure hides.
+- A Note derived from a Transcript with substantial gaps says so, in the same
+  voice as every other degradation (AD-17, FR-7).
+- Echo-excluded audio is **not** a gap. It is speech the app has, once, on the
+  other stream — a test asserts exclusion produces no gaps.
+
+### Epic 16 FR Coverage
+
+| FR | Story | What it covers |
+|---|---|---|
+| FR-89 | 16.2 | detect that the mic recorded the system stream |
+| FR-90 | 16.4 | exclude before transcription and diarization |
+| FR-91 | 16.3 | never exclude what cannot be echo |
+| FR-92 | 16.6 | the record says it was affected, and by how much |
+| FR-93 | 16.1 | accuracy is measurable from a terminal |
+| FR-94 | 16.9 | verify rate against the audio clock |
+| FR-95 | 16.10 | an Utterance carries confidence |
+| FR-96 | 16.11 | an unreadable interval is a recorded gap |
+| FR-17 (amended) | 16.8 | no accuracy claim without a measurement |
+| FR-21, FR-22 (amended) | 16.5 | in-room voices counted from retained audio |
+| FR-23 (amended) | 16.7 | the same sentence never appears twice |
+

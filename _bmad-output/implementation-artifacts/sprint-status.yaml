@@ -176,3 +176,17 @@ development_status:
   15-6-an-existing-recording-can-be-re-checked-and-repaired: done
   15-7-the-rate-the-tap-reports-is-read-again-when-it-can-change: done
   epic-15-retrospective: optional
+
+  epic-16: backlog
+  16-1-transcription-accuracy-can-be-measured-from-a-terminal: backlog
+  16-2-the-app-can-tell-that-the-microphone-was-hearing-the-call: backlog
+  16-3-what-cannot-be-echo-is-never-excluded: backlog
+  16-4-the-echo-never-reaches-the-model-or-the-diariser: backlog
+  16-5-the-people-in-the-room-are-counted-from-the-room: backlog
+  16-6-the-record-says-the-recording-was-affected-and-by-how-much: backlog
+  16-7-the-same-sentence-never-appears-twice: backlog
+  16-8-the-app-stops-rating-accuracy-it-has-not-measured: backlog
+  16-9-the-rate-is-checked-against-the-audio-clock: backlog
+  16-10-an-utterance-carries-how-sure-the-engine-was: backlog
+  16-11-audio-the-engine-could-not-read-is-a-recorded-gap: backlog
+  epic-16-retrospective: optional

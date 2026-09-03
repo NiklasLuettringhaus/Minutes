@@ -85,6 +85,8 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 
 The rule therefore gains a second half: a declared rate is a starting hypothesis, and it must be **checked against the session clock while recording** (AD-44). "Never assume it" now means never assume it *stays true* either.
 
+*Amended 2026-09-03 (increment 9): "the session clock" was the wrong clock.* AD-44 measured frames against `Date()`, which is why it needed a 12% tolerance and a three-second settling window — both of them absorbing scheduling jitter rather than measuring audio. The device supplies its own sample-time and host-time counters in every IOProc callback and Minutes discarded them. The check now uses the **audio clock** (AD-51), and the tolerances that existed to hide wall-clock noise go with it.
+
 ### AD-4 — One session clock; all times are offsets from it
 
 - **Binds:** FR-6, FR-23, FR-29, FR-33
@@ -144,6 +146,8 @@ The rule therefore gains a second half: a declared rate is a starting hypothesis
   - One voice on the Mic Stream **is** the Local Speaker. Structural, and cannot be wrong.
   - Several voices on the Mic Stream, with an Enrolled Voice matching one of them within AD-31's threshold and unambiguously: **that** voice is the Local Speaker. This is a measurement, not a structural fact, and AD-30 governs how it is made and how it is recorded.
   - Several voices on the Mic Stream with no Enrolled Voice, or no unambiguous match: each becomes an anonymous in-room label and **no voice may be claimed as the Local Speaker.** Unchanged.
+
+  *Amended again 2026-09-03 (increment 9).* "A Mic Stream Utterance is always an in-room voice" was the load-bearing half of this rule, and it was **false whenever the user was on speakers**. The far end arrives acoustically through the microphone, so the Mic Stream contains remote voices, and this rule then promoted them to attendees: one real recording produced **six in-room labels** and never identified the user, because their own voice was one polluted cluster among six. The structural claim survives, but only over audio that has passed AD-47: **place is structural for the retained Mic Stream, not for the raw one.**
   - Mic Stream speech no diarized span covers, when several voices share the microphone, is unidentified in-room speech. Never the Local Speaker by default. *(This was a real defect: the default fell through to the Local Speaker and printed 14 utterances of a neighbouring conversation as the user's own words.)*
 
   Every Utterance carries its origin stream so the distinction survives into the data and the UI (`components.speaker-chip` in DESIGN.md renders the three places distinctly). Enrolment changes **which** in-room voice is the Local Speaker; it never changes the structural rules, and the attribution function's other behaviour is byte-for-byte the same with and without a fingerprint present.
@@ -325,6 +329,8 @@ The distinction that keeps "duration never contributes" intact, because it is tw
 
 So capture evidence has two independent parts, and a stream must satisfy both to be trusted: it produced signal (this AD), and its sample count agrees with the clock (AD-45).
 
+*Amended 2026-09-03 (increment 9): a third part.* Signal and rate were both satisfied by a Mic Stream that was mostly the loudspeaker — full of signal, at exactly the right rate, and carrying almost nothing the System Stream did not already hold. Evidence that audio was captured is not evidence that it was captured **from a distinct source**. AD-47 adds that question, and it is asked of the Mic Stream only, because the System Stream is the thing being echoed and cannot echo itself.
+
 ### AD-37 — The user-data directory is the whole footprint
 
 - **Binds:** FR-74, FR-75, FR-76, PRD §9.1
@@ -395,6 +401,42 @@ So capture evidence has two independent parts, and a stream must satisfy both to
 - **Binds:** FR-26, FR-27, FR-30, AD-12, AD-45
 - **Prevents:** the reason this defect looked fine for three days. The title, the tags and the summary were generated from fabricated text, so a broken recording arrived with a confident name and a plausible shape — and the provenance field said `heuristic`, which was true and told the reader nothing. Metadata derived from untrustworthy audio is worse than absent metadata, because it disguises the failure.
 - **Rule:** A Meeting whose stream failed AD-45 does not have Metadata derived from that stream's text. The Note states which stream is untrustworthy and why, in the same voice as every other degradation (AD-17, FR-7): the transcript that exists is still written, because the samples are the user's and discarding them would be worse, but nothing is inferred *from* it and no title, tag or summary is produced from it. Where only one of the two streams is untrustworthy, the trustworthy stream's text may still produce Metadata, and the Note says that is what happened.
+
+### AD-47 — The System Stream is authoritative for far-end speech; the Mic Stream's copy of it is excluded before any consumer
+
+- **Binds:** FR-6, FR-16, FR-21, FR-22, FR-23, FR-89, FR-90, FR-91, AD-4, AD-11, AD-36
+- **Prevents:** the two failures measured on 2026-09-03 — the same speech entering the Transcript twice (57.6% of freshly transcribed mic words on the worst of twelve real recordings), and the far end being clustered as people in the room (six phantom attendees, the user never identified). It also prevents the tempting cheap fix: de-duplicating Utterances after transcription, which tidies the text and leaves the speaker count just as wrong.
+- **Rule:** When both Streams exist, the Mic Stream is compared against the delay-aligned System Stream and the correlated portion is **Echo**. Echo does not reach the Transcription Model or the Diarizer. Exclusion is a stage **before** both, never a pass over their output, because the phantom-attendee failure is a clustering failure and clustering has already happened by then. Two floors are absolute: Mic Stream audio recorded while the System Stream is **silent** is never Echo (40% of mic activity on the worst recording, and no threshold may touch it), and audio concurrent with the far end but **uncorrelated** with it is Double-talk and is retained. The cost of the policy is a published number, not a hope: the current test loses 10.7% of unique Mic Stream words on the worst recording, and a change that worsens that figure is a regression even if it removes more Echo.
+
+### AD-48 — Echo is detected, never cancelled
+
+- **Binds:** FR-89, FR-90, AD-47
+- **Prevents:** a future contributor spending weeks on an adaptive canceller, because subtracting the reference signal is the textbook answer and the textbook does not know about these recordings. It also prevents the subtler version — a "light" spectral subtraction that damages the user's own voice to remove an echo that exclusion would have handled.
+- **Rule:** No component may attempt to *remove* echo from the Mic Stream signal. Measured on the affected recording, the upper bound on ERLE for **any** linear filter — from magnitude-squared coherence, so independent of filter length — is **8.7 dB at a 128 ms window, 9.9 dB at 512 ms, 10.6 dB at 2048 ms**, against the 20–40 dB a useful canceller needs; a least-squares FIR confirmed it at 7.5 dB median with 512 taps. The Mic Stream is not a linear function of the System Stream here: independent device clocks that drift, a nonlinear speaker path, and a reverberation tail outlasting any window tried. Detection needs only that the relationship *exists*, which is why it works where cancellation cannot. Revisiting this requires a new coherence measurement, not a new library.
+
+### AD-49 — Exclusion is non-destructive and recomputable
+
+- **Binds:** FR-90, FR-92, PRD §9.1, AD-8, AD-47
+- **Prevents:** the app editing the user's recording to fix the app's own problem — and, with it, the situation where a threshold change cannot be re-evaluated because the audio it would run on is gone.
+- **Rule:** Echo exclusion never modifies audio on disk. It applies in the processing path and its inputs — verdict, estimated delay, excluded proportion — are recorded on the Meeting so the decision can be re-derived, re-run after a threshold change, and shown to the user. A recording processed before exclusion existed carries an **unknown** verdict, which reads as unknown and never as clean.
+
+### AD-50 — An accuracy claim requires a measurement, taken through the shipping path
+
+- **Binds:** FR-17, FR-93, AD-12
+- **Prevents:** what the product had been doing since the model list existed: asserting a five-point accuracy rating for fourteen models on the basis of nothing. It also prevents the near-miss version — a harness that measures a *copy* of the transcription code and slowly diverges from what users get.
+- **Rule:** Accuracy is stated only where it has been measured, and is **absent** rather than estimated everywhere else. The measurement runs the shipping `Transcribing` port through a command-line entry point, so the harness cannot drift from the product. It reports word error rate **and** a content-word rate **and** proper-noun recall, because the baseline's most-deleted words were `yeah`, `ok` and `right` — a quarter of all errors, and words FR-31 strips deliberately. Results pool errors over pooled reference words; averaging per-session percentages is not permitted. Corpus and results live outside the repository (§9.1). A single session is not a measurement: the observed per-session swing is ±8 points, larger than any difference between the models compared.
+
+### AD-51 — The audio clock is the time base for rate verification; the wall clock is never a rate's denominator
+
+- **Binds:** FR-84, FR-94, AD-3, AD-4, AD-44, AD-45
+- **Prevents:** the tolerance-tuning that AD-44 needed — a 12% window and a three-second settling period, both absorbing scheduling jitter rather than measuring audio — and the whole class of defect it still cannot see: samples the device produced and the app never received.
+- **Rule:** Every IOProc callback carries the device's own `mSampleTime` and `mHostTime`. They are passed through to whatever judges the rate, and the frame count is compared against the device's sample time taken **at the same instant**. A gap between successive callbacks' sample times that exceeds the frames delivered is a **discontinuity** — a hole in the audio — and is recorded as one rather than averaged away. AD-4's single session clock is unchanged and remains the time base for Utterances; this AD governs only the *verification* of rate, where the audio clock is the only authority. AD-45's refusal to guess a non-standard rate stands.
+
+### AD-52 — Confidence and gaps are part of the transcription contract; absent means unknown
+
+- **Binds:** FR-95, FR-96, AD-12, AD-46
+- **Prevents:** the adapter throwing away the only signal that would have caught the fabrication of §4.13 by its symptom rather than its cause. Both engines report per-segment confidence and the port discarded it at the boundary, so nothing downstream could weigh a transcript's reliability.
+- **Rule:** The `Transcribing` port carries confidence and gaps alongside text. An engine that reports no confidence yields **absent**, never zero — absent means unknown and must not be readable as "no confidence". An interval the engine returned nothing usable for is a recorded **gap** with a start and an end, distinguishable from silence: one is speech the app failed on, the other is nothing to transcribe. AD-46's gate may consult confidence, which turns a binary trust decision into an evidenced one, but may never treat absent as failing.
 
 ## Consistency Conventions
 
