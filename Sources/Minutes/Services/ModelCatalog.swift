@@ -66,7 +66,10 @@ final class ModelCatalog: ObservableObject {
         /// 1 (slowest) … 5 (fastest). Relative, and labelled as an estimate
         /// until a real measurement exists for this Mac.
         var speed: Int
-        var accuracy: Int
+        /// Word error rate on meeting speech, where it has been **measured**
+        /// (FR-17 as amended, AD-50). `nil` means nobody has measured this model
+        /// and the app therefore says nothing about its accuracy.
+        var wordErrorRate: Double?
         var isDownloaded: Bool
         /// Seconds of processing per second of audio, measured on this machine.
         var measured: Double?
@@ -85,7 +88,7 @@ final class ModelCatalog: ObservableObject {
     // table beats regex-guessing, and it is the only way to give each variant a
     // name that actually distinguishes it.
     private struct Spec {
-        let name: String; let role: Role; let mb: Int; let speed: Int; let acc: Int
+        let name: String; let role: Role; let mb: Int; let speed: Int
         var provider: Provider = .openAI
         var engine: Engine = .whisper
         var note: String? = nil
@@ -96,43 +99,46 @@ final class ModelCatalog: ObservableObject {
         // faster than Whisper on Apple Silicon, which is the whole reason to
         // offer a second engine.
         ParakeetModel.v3:
-            Spec(name: "Blazing fast", role: .recommended, mb: 461, speed: 5, acc: 4,
+            Spec(name: "Blazing fast", role: .recommended, mb: 461, speed: 5,
                  provider: .nvidia, engine: .parakeet,
                  note: "25 European languages. Much faster than Whisper."),
         ParakeetModel.v2:
-            Spec(name: "Blazing fast, English", role: .english, mb: 461, speed: 5, acc: 4,
+            Spec(name: "Blazing fast, English", role: .english, mb: 461, speed: 5,
                  provider: .nvidia, engine: .parakeet,
-                 note: "English only, and a little sharper for it."),
+                 note: "English only, and measured a little sharper for it on "
+                     + "meeting speech."),
         // --- OpenAI Whisper, via WhisperKit ---
         "openai_whisper-large-v3-v20240930_turbo_632MB":
-            Spec(name: "Balanced", role: .accurate, mb: 632, speed: 4, acc: 5),
+            Spec(name: "Balanced", role: .other, mb: 632, speed: 4,
+                 note: "Measured on a par with the faster Parakeet models on a "
+                     + "video call, and well behind them in a meeting room."),
         "openai_whisper-base":
-            Spec(name: "Quick", role: .fastest, mb: 147, speed: 5, acc: 2),
+            Spec(name: "Quick", role: .fastest, mb: 147, speed: 5),
         "openai_whisper-large-v3_947MB":
-            Spec(name: "Highest quality", role: .other, mb: 947, speed: 2, acc: 5),
+            Spec(name: "Highest quality", role: .other, mb: 947, speed: 2),
         "openai_whisper-small.en":
-            Spec(name: "English, balanced", role: .english, mb: 483, speed: 4, acc: 4),
+            Spec(name: "English, balanced", role: .english, mb: 483, speed: 4),
         "openai_whisper-base.en":
-            Spec(name: "English, quick", role: .english, mb: 147, speed: 5, acc: 3),
+            Spec(name: "English, quick", role: .english, mb: 147, speed: 5),
         "openai_whisper-tiny":
-            Spec(name: "Tiny", role: .compact, mb: 78, speed: 5, acc: 1),
+            Spec(name: "Tiny", role: .compact, mb: 78, speed: 5),
         // Sensible alternates, kept out of the curated list but named properly.
         "distil-whisper_distil-large-v3_turbo_600MB":
-            Spec(name: "Distilled turbo", role: .other, mb: 600, speed: 4, acc: 4, provider: .distil),
+            Spec(name: "Distilled turbo", role: .other, mb: 600, speed: 4, provider: .distil),
         "distil-whisper_distil-large-v3_594MB":
-            Spec(name: "Distilled", role: .other, mb: 594, speed: 4, acc: 4, provider: .distil),
+            Spec(name: "Distilled", role: .other, mb: 594, speed: 4, provider: .distil),
         "openai_whisper-large-v3_turbo_954MB":
-            Spec(name: "Turbo, full precision", role: .other, mb: 954, speed: 3, acc: 5),
+            Spec(name: "Turbo, full precision", role: .other, mb: 954, speed: 3),
         "openai_whisper-large-v3-v20240930_626MB":
-            Spec(name: "Large v3, compact", role: .other, mb: 626, speed: 2, acc: 5),
+            Spec(name: "Large v3, compact", role: .other, mb: 626, speed: 2),
         "openai_whisper-large-v2_949MB":
-            Spec(name: "Large v2", role: .other, mb: 949, speed: 2, acc: 4),
+            Spec(name: "Large v2", role: .other, mb: 949, speed: 2),
         "openai_whisper-large-v2_turbo_955MB":
-            Spec(name: "Large v2 turbo", role: .other, mb: 955, speed: 3, acc: 4),
+            Spec(name: "Large v2 turbo", role: .other, mb: 955, speed: 3),
         "openai_whisper-small":
-            Spec(name: "Small", role: .other, mb: 483, speed: 4, acc: 3),
+            Spec(name: "Small", role: .other, mb: 483, speed: 4),
         "openai_whisper-tiny.en":
-            Spec(name: "Tiny, English", role: .other, mb: 78, speed: 5, acc: 2),
+            Spec(name: "Tiny, English", role: .other, mb: 78, speed: 5),
     ]
 
     /// The curated picker, in this order.
@@ -186,7 +192,7 @@ final class ModelCatalog: ObservableObject {
                 engine: s?.engine ?? .whisper,
                 bytes: s.map { Int64($0.mb) * 1_000_000 } ?? Self.sizeFromSuffix(id),
                 speed: s?.speed ?? Self.guessSpeed(id),
-                accuracy: s?.acc ?? Self.guessAccuracy(id),
+                wordErrorRate: Self.measuredWordErrorRate[id],
                 isDownloaded: Self.isDownloaded(id),
                 measured: measurements[id])
         }
@@ -268,13 +274,32 @@ final class ModelCatalog: ObservableObject {
         return 2
     }
 
-    static func guessAccuracy(_ id: String) -> Int {
-        if id.contains("tiny") { return 1 }
-        if id.contains("base") { return 2 }
-        if id.contains("small") { return 3 }
-        if id.contains("large-v2") || id.contains("distil") { return 4 }
-        return 5
-    }
+    /// Word error rate on meeting speech, for the models actually measured.
+    ///
+    /// **This replaced a five-point accuracy rating that fourteen models carried
+    /// and none had earned.** `guessAccuracy` derived it from substrings of the
+    /// model's name — "tiny" scored 1, "large" scored 5 — which reads as
+    /// knowledge and was arithmetic on a filename.
+    ///
+    /// When the harness of FR-93 finally measured them, two of the three claims
+    /// the product made turned out to be unsupported. `whisper-large-v3-turbo`
+    /// was rated 5/5 and held the `.accurate` role against Parakeet v3 at 4/5;
+    /// measured, it ties on close mics (22.8% against 22.6%) and is **11.4
+    /// points worse** far-field, at eight times the cost.
+    ///
+    /// Figures are pooled over three AMI Meeting Corpus sessions (67 minutes,
+    /// 7,374 reference words per condition), close-microphone condition, errors
+    /// pooled over pooled words. A model absent from this table has not been
+    /// measured, and the UI says nothing rather than guessing.
+    ///
+    /// A single session is **not** a measurement: the observed per-session swing
+    /// is ±8 points, larger than any difference between the models here, which
+    /// is why `whisper-base` — measured on one session only — is absent.
+    static let measuredWordErrorRate: [String: Double] = [
+        ParakeetModel.v2: 0.203,
+        ParakeetModel.v3: 0.226,
+        "openai_whisper-large-v3-v20240930_turbo_632MB": 0.228,
+    ]
 
     /// Kept for the older call sites that only need a short label.
     static func friendlyName(_ id: String) -> String {

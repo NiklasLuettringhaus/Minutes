@@ -189,4 +189,5 @@ development_status:
   16-9-the-rate-is-checked-against-the-audio-clock: backlog
   16-10-an-utterance-carries-how-sure-the-engine-was: backlog
   16-11-audio-the-engine-could-not-read-is-a-recorded-gap: backlog
+  16-12-the-transcript-is-ordered-by-when-things-were-said: backlog
   epic-16-retrospective: optional

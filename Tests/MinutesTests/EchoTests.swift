@@ -268,6 +268,54 @@ final class EchoTests: XCTestCase {
         XCTAssertEqual(analysis.delaySeconds ?? -1, 0.920, accuracy: 0.025)
     }
 
+    // MARK: - What the user is told (FR-92)
+
+    private func meetingWithEcho(_ analysis: EchoAnalysis?) -> Meeting {
+        var m = Meeting(id: "20260903-120000-echo",
+                        startedAt: ISO8601DateFormatter().date(from: "2026-09-03T12:00:00Z")!)
+        m.duration = 600
+        m.stage = .written
+        m.systemStreamCaptured = true
+        m.utterances = [
+            Utterance(start: 0, end: 4, text: "Shall we start?", speaker: .local, origin: .mic),
+            Utterance(start: 4, end: 8, text: "Yes, go ahead.", speaker: .remote(0), origin: .system),
+        ]
+        m.echo = analysis
+        return m
+    }
+
+    private func affected(proportion: Double) -> EchoAnalysis {
+        let count = 20
+        let frames = (0..<count).map { i in
+            EchoAnalysis.Frame(micActive: true, systemActive: true,
+                               correlation: Double(i) < Double(count) * proportion ? 0.9 : 0.0)
+        }
+        return EchoAnalysis.make(frames: frames, delaySeconds: 0.05, peakCorrelation: 0.9)
+    }
+
+    func testTheNoteSaysTheMicrophoneHeardTheCall() {
+        let note = NoteWriter().render(meeting: meetingWithEcho(affected(proportion: 0.45)))
+        XCTAssertTrue(note.contains("microphone also picked up"),
+                      "a reader months later has only this file")
+        XCTAssertTrue(note.lowercased().contains("headphones"))
+    }
+
+    func testACleanMeetingSaysNothingAboutEcho() {
+        let clean = EchoAnalysis(verdict: .clean, delaySeconds: 0.05, peakCorrelation: 0.02,
+                                 excludedIntervals: [], micActiveSeconds: 100, excludedSeconds: 0)
+        let note = NoteWriter().render(meeting: meetingWithEcho(clean))
+        XCTAssertFalse(note.lowercased().contains("picked up the other side"))
+        XCTAssertFalse(note.lowercased().contains("headphones"),
+                       "a clean recording must not carry advice it does not need")
+    }
+
+    func testAMeetingFromBeforeThisExistedSaysNothingEither() {
+        // Absent is unknown, and an unknown verdict is not a claim in either
+        // direction — so the Note stays silent rather than reassuring.
+        let note = NoteWriter().render(meeting: meetingWithEcho(nil))
+        XCTAssertFalse(note.lowercased().contains("headphones"))
+    }
+
     // MARK: - The record
 
     func testAnalysisSurvivesACodableRoundTrip() throws {

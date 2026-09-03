@@ -95,9 +95,13 @@ at the same instant is not coincidence, it is the loudspeaker.
 
 ## The rules, as calibrated
 
-1. **Recording gate — peak cross-correlation ≥ 0.10.** The nine clean
-   recordings measured ≤ 0.025 and the three affected ones ≥ 0.349: a factor of
-   fourteen with nothing between the populations. Below the gate, nothing is
+1. **Recording gate — 10% of concurrent frames over the frame threshold**, at
+   the best offset found by the search in Part two. Measured: **0–1% on every
+   clean recording and 24%, 61%, 63% on the three affected ones.** An earlier
+   version of this rule used a global waveform cross-correlation instead (≤0.025
+   clean against ≥0.349 affected) and was replaced when the offset search made
+   the frame share available, because the two could disagree and the frame share
+   is the quantity the exclusion actually consumes. Below the gate, nothing is
    excluded by any rule.
 2. **Transcript — both signals must agree.** On a gated recording, a mic
    Utterance is dropped only where it substantially repeats a time-overlapping
@@ -109,6 +113,88 @@ at the same instant is not coincidence, it is the loudspeaker.
    the transcript, so it cannot delete a word the user said.
 4. **The floors of FR-91 are unchanged and apply to both.** System Stream
    silent, or concurrent-but-uncorrelated, is never excluded.
+
+## Part two: how the offset is found, after two methods failed
+
+The threshold above decides *which frames* are echo. Finding the offset to
+compare them at turned out to be the harder half, and two implementations were
+built and discarded on measurement before the third worked.
+
+### Attempt 1 — correlate the energy envelopes
+
+| recording | envelope peak | truth |
+|---|---|---|
+| 19.1 min | 0.063 | clean |
+| 33.9 min | **0.071** | **affected** (12% duplicated) |
+| 28.7 min | 0.096 | clean |
+| 57.3 min | 0.140 | clean |
+| 50.3 min | **0.684** | affected |
+| 16.3 min | **0.549** | affected |
+
+Separates the two severe recordings cleanly and is **blind to the mild one**.
+
+### Attempt 2 — judge that curve by peak prominence
+
+Worse than useless. A genuinely clean recording scored **6.82** and an affected
+one **1.18**; the statistic is anti-correlated with the truth on this set. It
+also rejected two recordings whose maximum sat exactly at the search boundary,
+which is how the boundary itself got noticed.
+
+### The boundary that should never have existed
+
+Both attempts were bounded by a "plausible acoustic delay". A
+speaker-to-microphone path is tens of milliseconds, so 920 ms was dismissed as
+impossible — twice.
+
+It was not impossible. The offset between the two files is the acoustic delay
+**plus the instant each capture started**:
+
+| recording | `mic.wav` − `system.wav` length |
+|---|---|
+| 12.6 min | −78 ms |
+| 26.1 min | −364 ms |
+| 50.3 min | −69 ms |
+| **16.3 min** | **+868 ms** |
+| 33.9 min | +2,372 ms |
+| 57.3 min | +3,278 ms |
+
+The recording whose 920 ms lag was "impossible" has an **868 ms** length
+difference. A physical bound would have permanently excluded one of the three
+recordings it was written to protect — **the check would have hidden the defect
+it was checking for.** (That the two streams are misaligned at all is a second
+defect, recorded as FR-97.)
+
+### Attempt 3 — search on the statistic that discriminates
+
+Maximise the **share of concurrent frames that correlate**, which is the
+quantity the exclusion depends on anyway:
+
+| recording | best offset | frame share | truth |
+|---|---|---|---|
+| 18.6 min | — | **0%** | clean |
+| 31.6 min | — | **0%** | clean |
+| 28.7 min | −960 ms | **1%** | clean |
+| 12.6 min | — | **0%** | clean |
+| 57.3 min | — | **0%** | clean |
+| 19.1 min | — | **0%** | clean |
+| **33.9 min** | 140 ms | **24%** | affected |
+| **50.3 min** | 50 ms | **61%** | affected |
+| **16.3 min** | 920 ms | **63%** | affected |
+
+**Eight of eight correct**, with the gate at 10% sitting in a gap from 1% to
+24%. None of the recovered offsets equals the file-length difference, so that
+shortcut does not work either. The whole library analyses in **3.3 seconds**.
+
+Applied to the stored transcripts, the Transcript rule would drop 51% and 55% of
+mic words on the two severe recordings, 5% on the mild one, and **nothing at all
+on any clean recording**.
+
+### The lesson, which is not about echo
+
+Two of the three failed attempts failed on *plausibility reasoning* — a bound
+that sounded physical, and a curve statistic that sounded principled. Both were
+overturned by a number. The method that worked is the one whose statistic is the
+same thing the decision consumes.
 
 ## What this cost, and what it bought
 
@@ -124,8 +210,16 @@ it refuted the story that asked for it.
   one machine, one room and one pair of loudspeakers.
 - `ρ ≥ 0.30` is the cheapest ≥80%-recall point on **one** recording; the second
   reaches 18% recall at that threshold and the third could not be scored.
-  The frame test is therefore known to be weak on mild echo, and mild echo is
-  where the transcript rule carries the work.
+  The frame test is therefore known to be weak on mild echo, and it shows in the
+  end-to-end result: the mild recording gets 5% of its mic audio excluded and
+  the Transcript rule catches 284 of roughly 900 duplicated words. Severe echo
+  is handled well; mild echo is handled partially, and that is the honest
+  summary.
+- Eight recordings classify correctly, but the seven from the increment-8 rate
+  defect **cannot be compared at all** — their repaired `system.wav` headers
+  read 8000 or 5333 Hz against the microphone's 16000 Hz, so the detector
+  refuses rather than comparing mismatched indices. That refusal is correct, and
+  it means the calibration set is eight recordings, not fifteen.
 - The text rule's precision cannot be measured in this framework: its label *is*
   the ground truth. The evidence that it is sound is indirect — the zero
   coincidence rate on ungated recordings, and the 98% multi-word share.

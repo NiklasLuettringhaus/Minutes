@@ -419,6 +419,12 @@ struct MeetingDetail: View {
                     StateBanner(kind: .degraded,
                                 text: "Only your microphone was captured, so remote participants are not in this transcript.")
                 }
+                // FR-92. After the unreliable-recording notice, because this one
+                // describes something Minutes *handled* rather than something it
+                // could not vouch for.
+                if let why = meeting.echo?.explanation {
+                    StateBanner(kind: .degraded, text: why)
+                }
                 speakerBlock
                 if let md = meeting.metadata { metadataBlock(md) }
                 transcriptBlock

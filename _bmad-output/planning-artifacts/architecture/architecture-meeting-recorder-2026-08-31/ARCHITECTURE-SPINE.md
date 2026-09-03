@@ -93,6 +93,8 @@ The rule therefore gains a second half: a declared rate is a starting hypothesis
 - **Prevents:** the two Streams being timestamped from different clocks, which makes the merged Transcript subtly and unfixably out of order
 - **Rule:** A Session captures one monotonic start reference at Capture start. Every Utterance, segment and diarization boundary is a `TimeInterval` offset in seconds from that reference. No wall-clock timestamps below the Meeting level, and no per-Stream clocks.
 
+  *Amended 2026-09-03 (increment 9): the rule was followed and the guarantee did not hold.* One session reference is not the same thing as two files that start together. Measured across the real library, `mic.wav` and `system.wav` differ in length by **−364 ms to +3,278 ms**: the microphone and the system tap begin capturing at different instants, and each file's offsets are relative to its own first sample. So the merged Transcript is ordered by file position, not by time, and can be wrong by seconds — the exact failure this AD's Prevents clause names. Until capture aligns them, the offset is **measured and applied** (FR-97), and an Utterance's position reflects when it was said.
+
 ### AD-5 — Detection matches Watched Apps by bundle-ID prefix, and polls
 
 - **Binds:** FR-11, FR-12, FR-15, FR-43

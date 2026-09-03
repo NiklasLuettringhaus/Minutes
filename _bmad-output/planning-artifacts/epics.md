@@ -1,7 +1,7 @@
 ---
 stepsCompleted: [1, 2, 3, 4]
 revisions:
-  - 2026-09-03 increment 9 — added Epic 16 (11 stories, FR-89 to FR-96 plus the FR-17,
+  - 2026-09-03 increment 9 — added Epic 16 (12 stories, FR-89 to FR-97 plus the FR-17,
     FR-21, FR-22 and FR-23 amendments) after a measurement harness was built first and
     found that three of twelve dual-stream recordings had the microphone recording the
     far end. Epics 1-15 untouched and not renumbered. The first epic whose opening story
@@ -47,7 +47,7 @@ inputDocuments:
 
 ## Overview
 
-This document decomposes the 96 functional requirements, 8 cross-cutting NFRs, the 52 architecture decisions and the two UX spines into 108 implementable stories across 16 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build; Epic 9 is increment 3; Epic 10 is increment 4; Epics 11-13 are increment 5, the first aimed at a machine other than the author's; Epic 14 is increment 7, the first written from something the product had already destroyed; Epic 15 is increment 8, written from a defect the user found and documented before the product did; Epic 16 is increment 9, the first written from a defect nobody had noticed, because the affected notes merely read as verbose until accuracy became measurable. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
+This document decomposes the 97 functional requirements, 8 cross-cutting NFRs, the 52 architecture decisions and the two UX spines into 109 implementable stories across 16 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build; Epic 9 is increment 3; Epic 10 is increment 4; Epics 11-13 are increment 5, the first aimed at a machine other than the author's; Epic 14 is increment 7, the first written from something the product had already destroyed; Epic 15 is increment 8, written from a defect the user found and documented before the product did; Epic 16 is increment 9, the first written from a defect nobody had noticed, because the affected notes merely read as verbose until accuracy became measurable. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
 
 Every FR is covered by exactly one story — verified programmatically, see the FR Coverage Map for increment 1 and each later epic's own coverage table.
 
@@ -3721,6 +3721,33 @@ complete one.
 - Echo-excluded audio is **not** a gap. It is speech the app has, once, on the
   other stream — a test asserts exclusion produces no gaps.
 
+### Story 16.12: The transcript is ordered by when things were said
+
+*(tier T2 · FR-97 · AD-4 amended, AD-47)*
+
+As someone reading a transcript, I want the two sides of the call interleaved by
+when they happened, so that a reply does not appear before the thing it answers.
+
+**Acceptance Criteria:**
+
+**Given** a Session whose two streams did not start at the same instant
+**When** the Transcript is merged
+**Then** Utterances are ordered by when they were said, not by position in their own file
+
+**And** each of the following holds:
+
+- The offset is **measured**, recorded on the Meeting, and applied by the merge.
+- FR-6's claim that a sound "appears at the same offset (±100 ms) in both"
+  becomes a test rather than an assertion. Measured on the real library it fails
+  by up to **3,278 ms**, with differences ranging from −364 ms to +3,278 ms.
+- A Meeting recorded before this existed keeps an unknown offset and is **not**
+  silently re-ordered by a guess.
+- This was found while building echo detection, where a 920 ms "impossible
+  acoustic delay" turned out to be almost entirely the two files starting at
+  different times. It is listed last because it is a different defect from the
+  echo, not a part of it — and because fixing it at capture rather than at the
+  merge is the better answer and belongs to whichever increment owns capture.
+
 ### Epic 16 FR Coverage
 
 | FR | Story | What it covers |
@@ -3736,4 +3763,5 @@ complete one.
 | FR-17 (amended) | 16.8 | no accuracy claim without a measurement |
 | FR-21, FR-22 (amended) | 16.5 | in-room voices counted from retained audio |
 | FR-23 (amended) | 16.7 | the same sentence never appears twice |
+| FR-97 | 16.12 | the transcript is ordered by when things were said |
 

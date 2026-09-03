@@ -1264,6 +1264,18 @@ A Meeting whose Mic Stream contained Echo records that fact, and the user can se
 - A recording processed before this existed is not silently presented as clean; an unknown verdict reads as unknown.
 - The advice is actionable: headphones prevent it, which is why the nine clean recordings are clean.
 
+#### FR-97: The two Streams' start offset is measured and applied
+The Transcript is ordered by when things were said, not by each Stream's own file position.
+
+**Found while building FR-89, and it is a separate defect.** FR-6 says both Streams "carry timestamps on a shared time base; a sound occurring at a known wall-clock moment appears at the same offset (±100 ms) in both." Measured across the real library, `mic.wav` and `system.wav` differ in length by **−364 ms to +3,278 ms** — the two captures do not begin at the same instant, and nothing records by how much. AD-4's Prevents clause names this outcome exactly: "the two Streams being timestamped from different clocks, which makes the merged Transcript subtly and unfixably out of order."
+
+**Consequences (testable):**
+- The offset between the two Streams is measured for every Session holding both, and recorded on the Meeting.
+- FR-23's merge applies it, so an Utterance's position in the Transcript reflects when it was said rather than where it sits in its own file.
+- The ±100 ms tolerance FR-6 claims becomes a **test**, not an assertion. It currently fails by up to 3.3 seconds.
+- A Meeting recorded before this existed keeps an unknown offset and is not silently re-ordered by a guess.
+- Capture is the better place to fix this than the merge, and this requirement does not decide which: measuring the offset makes the error visible, and closing it at the source is `[NOTE FOR PM]` for the increment that owns capture.
+
 #### FR-93: Transcription accuracy is measurable, repeatably, from a terminal
 Minutes ships a way to measure transcription accuracy against a reference corpus, and its results are what accuracy claims cite.
 

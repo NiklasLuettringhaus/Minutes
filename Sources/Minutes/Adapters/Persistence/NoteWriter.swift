@@ -189,6 +189,12 @@ struct NoteWriter: NoteWriting {
         if !m.systemStreamCaptured {
             out += "> Only the microphone was captured for this meeting, so remote participants do not appear in the transcript.\n\n"
         }
+        // FR-92. The Note carries what the app knows, because a reader months
+        // later has only this file — and a transcript with the far end counted
+        // once reads differently from one where it was counted twice.
+        if let why = m.echo?.explanation {
+            out += "> \(why)\n\n"
+        }
         if m.multipleInRoom {
             if m.localIdentifiedByEnrolment {
                 // Says which voice was identified and how, so the Note carries the

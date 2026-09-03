@@ -135,7 +135,17 @@ struct TranscriptionPane: View {
 
                 HStack(spacing: Tok.s5) {
                     Meter(label: "Speed", value: e.speed, tint: Tok.brand)
-                    Meter(label: "Accuracy", value: e.accuracy, tint: Tok.textSecondary)
+                    // Accuracy is shown only where it has been measured, and as
+                    // the measurement rather than as a five-dot meter (FR-17 as
+                    // amended, AD-50). The meter that used to sit here was
+                    // derived from substrings of the model's filename.
+                    if let wer = e.wordErrorRate {
+                        Text("\(Int((wer * 100).rounded()))% word error")
+                            .font(.caption2).monospacedDigit()
+                            .foregroundStyle(Tok.textSecondary)
+                            .help("Measured over three real four-person meetings, "
+                                  + "close microphones. Lower is better.")
+                    }
                     if let b = e.bytes {
                         Text(Fmt.bytes(b)).font(.caption2).monospacedDigit()
                             .foregroundStyle(Tok.textSecondary)
