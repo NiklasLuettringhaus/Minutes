@@ -30,6 +30,13 @@ actor MeetingStore {
         root.appendingPathComponent(id, isDirectory: true)
     }
 
+    /// When the record was last written, for the one caller that needs its
+    /// modification time rather than its contents (AD-41's pre-digest signal).
+    func recordModified(id: String) -> Date? {
+        let u = directory(for: id).appendingPathComponent("meeting.json")
+        return (try? fm.attributesOfItem(atPath: u.path)[.modificationDate]) as? Date
+    }
+
     /// Creates the Meeting directory and its initial record.
     func create(id: String, startedAt: Date) throws -> Meeting {
         let dir = directory(for: id)
@@ -81,17 +88,65 @@ actor MeetingStore {
         return m
     }
 
-    func delete(id: String, alsoDeleteNote noteURL: URL?) throws {
-        if let noteURL { try? fm.removeItem(at: noteURL) }
-        try fm.removeItem(at: directory(for: id))
-        Log.store.info("deleted meeting \(id, privacy: .public)")
+    /// AD-42: to the Trash, never unlinked.
+    ///
+    /// `removeItem` here destroyed a real recording — a Meeting whose Note the
+    /// user had renamed in Finder, deleted on a confirmation that named a file it
+    /// could not find, with an empty Trash afterwards and no route back. A
+    /// confirmation dialog is not a substitute for that route.
+    ///
+    /// A Trash failure throws. There is deliberately **no** fallback to
+    /// unlinking: a volume without a Trash means the delete does not happen,
+    /// because an undoable delete is the whole point.
+    /// Returns where the items landed in the Trash. Not decoration: it is the
+    /// only exact way to assert this went to the Trash rather than into the void —
+    /// macOS renames on collision, so looking for the name afterwards is a guess —
+    /// and it is what an Undo would need.
+    @discardableResult
+    func delete(id: String, alsoDeleteNote noteURL: URL?) throws -> [URL] {
+        var landed: [URL] = []
+        if let noteURL, fm.fileExists(atPath: noteURL.path) {
+            if let u = try Self.trash(noteURL, describedAs: noteURL.lastPathComponent) {
+                landed.append(u)
+            }
+        }
+        if let u = try Self.trash(directory(for: id), describedAs: "The meeting") {
+            landed.append(u)
+        }
+        Log.store.info("trashed meeting \(id, privacy: .public)")
+        return landed
     }
 
     /// Deletes only the audio, leaving the record and Transcript (FR-44).
-    func deleteAudio(id: String) throws {
+    ///
+    /// Also to the Trash: audio is the one input that cannot be regenerated, so
+    /// it is the last thing that should be unlinked.
+    @discardableResult
+    func deleteAudio(id: String) throws -> [URL] {
         let dir = directory(for: id)
+        var landed: [URL] = []
         for kind in StreamKind.allCases {
-            try? fm.removeItem(at: dir.appendingPathComponent("\(kind.rawValue).wav"))
+            let u = dir.appendingPathComponent("\(kind.rawValue).wav")
+            guard fm.fileExists(atPath: u.path) else { continue }
+            if let t = try Self.trash(u, describedAs: "The \(kind.rawValue) recording") {
+                landed.append(t)
+            }
+        }
+        return landed
+    }
+
+    /// The single place anything the user can lose is removed (AD-42).
+    ///
+    /// `nonisolated static` so `MeetingStore` is not the only caller — the Note
+    /// the user asked to delete alongside a Meeting travels the same path.
+    @discardableResult
+    nonisolated static func trash(_ url: URL, describedAs what: String) throws -> URL? {
+        do {
+            var landed: NSURL?
+            try FileManager.default.trashItem(at: url, resultingItemURL: &landed)
+            return landed as URL?
+        } catch {
+            throw MinutesError.deleteFailed(item: what, reason: error.localizedDescription)
         }
     }
 

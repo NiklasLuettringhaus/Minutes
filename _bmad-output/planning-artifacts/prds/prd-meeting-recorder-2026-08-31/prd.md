@@ -2,7 +2,7 @@
 title: Minutes — local-first meeting recorder for macOS
 status: final
 created: 2026-08-31
-updated: 2026-09-02
+updated: 2026-09-03
 owner: Niklas
 mode: headless (-A); increment 2 applied headless (-H update)
 revisions:
@@ -30,6 +30,11 @@ revisions:
 inputs:
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/brief.md
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/addendum.md
+  - 2026-09-03 increment 7 — the Note is the user's file. Adds §4.12 (FR-77 through
+    FR-83) and amends FR-35, FR-40, FR-53, FR-54 and §4.8. Driven by a single user
+    report — a Note renamed in Finder, reported missing, and the Meeting then deleted
+    permanently — and by a measured reconstruction of what the app did with it.
+    Answers §13 Q12.
 ---
 
 # PRD: Minutes — local-first meeting recorder for macOS
@@ -111,7 +116,9 @@ Downstream artifacts must use these terms verbatim. No synonyms anywhere.
   - **Remote Backend** — a language model reached over the network with a user-supplied key. Off by default; the only Backend that transmits anything (FR-59).
 - **Summarisation Backend** — a Metadata Backend capable of producing a summary, decisions and action items: the Apple, Local Model and Remote Backends. The Heuristic Backend is a Metadata Backend but not a Summarisation Backend, and that distinction is what FR-55 gates on.
 - **Prerequisite** — a condition the app can detect but cannot satisfy on the user's behalf: Apple Intelligence being switched on, the Metal toolchain being installed, a key being present. Reported with the reason and the remedy, never as a bare unavailability (FR-58).
-- **Note** — the single Markdown file written for a Meeting: YAML frontmatter, then Metadata, then Transcript.
+- **Note** — the single Markdown file written for a Meeting: YAML frontmatter, then Metadata, then Transcript. It is the user's file, in the user's folder: they may rename it, move it within the folder, or edit it, and none of those makes it stop being this Meeting's Note. Its frontmatter therefore carries the Meeting's identity (FR-77).
+- **Note Link** — the association between a Meeting and its Note file. Held on the Meeting record and repaired by matching identity, never assumed from a filename (FR-78). A Note Link is *broken* when the recorded file is absent, and *unresolved* when reconciliation has looked and found nothing.
+- **Unclaimed Note** — a file in the Notes Folder that Minutes wrote and no Meeting now links to, because its Meeting was deleted. Shown rather than hidden (FR-82); never re-imported, because a Note cannot be parsed back into a Meeting.
 - **Notes Folder** — the user-chosen directory where Notes are written.
 - **Detection** — passive observation of which applications hold the audio input device, used to recognise that a meeting is underway.
 - **Watched App** — an application whose audio-input activity triggers a Detection Prompt. Slack and Microsoft Teams in v1.
@@ -627,6 +634,8 @@ Editing a Meeting's title or Speaker Labels updates its Note. Realizes UJ-3.
 **Consequences (testable):**
 - The Note is rewritten to reflect the change without creating a second file.
 - A title change that would change the filename either renames the file or leaves it stable — the behaviour is defined, not incidental, and never leaves two Notes for one Meeting.
+- **Amended (increment 7):** the app renames the file only while the name on disk is still the name the app last wrote. Once the user has renamed it, their name is authoritative and a title change no longer touches the filename — the Note's title changes inside the file and the file keeps the name the user gave it. Renaming a user-named file back to a derived one destroys a decision the user made deliberately, which is worse than a filename that no longer matches its title.
+- **Amended (increment 7):** a rewrite whose target file is absent does not write a new file until reconciliation (FR-78) has looked for the existing one. Writing first is how a renamed Note becomes a permanently orphaned duplicate.
 
 #### FR-53: A Meeting's Note is verified to exist, and a missing one can be rewritten
 Recording that a Note was written is not the same as the file being there. Minutes checks, and offers to fix.
@@ -638,6 +647,9 @@ Recording that a Note was written is not the same as the file being there. Minut
 - The check never parses the Note. A missing Note is reported and rewritten *from* the record, never inferred back *into* it (AD-9).
 - Moving the Notes Folder does not mark every past Meeting broken: the check is against the folder currently in effect, and its result is a display state, not a mutation of history.
 
+- **Amended (increment 7):** "missing" now means *not found after reconciliation* (FR-78), not *absent from the recorded path*. Until this amendment the app reported a renamed Note as missing, which is a false claim about the user's folder — the file was there, and the user was looking at it.
+- **Amended (increment 7):** rewriting is offered alongside locating (FR-79), and the copy distinguishes them: rewriting produces a fresh file from the record, locating adopts a file that already exists. Offering only the first makes the app's remedy for a broken link the action that makes the break permanent.
+
 **Notes:**
 - Observed, not hypothesised. Seven Meetings held `stage: written` and a filename while two files existed on disk; the write had been discarded by a sandbox during development and nothing ever noticed. The requirement is that the app can tell the difference.
 
@@ -645,7 +657,7 @@ Recording that a Note was written is not the same as the file being there. Minut
 
 ### 4.8 Library
 
-**Description:** A pane in the main window (§4.9) listing past Meetings so the user can find one, read it, fix a Speaker Label, retry a failed transcription, or reveal the Note in Finder. `[ASSUMPTION: a browsing surface was not requested; it is inferred as necessary because renaming (FR-24) and retry (FR-39) need somewhere to live, and the request did ask for a small clean UI.]` It is a utility view over the Notes, not a second home for the data. Realizes UJ-3.
+**Description:** A pane in the main window (§4.9) listing past Meetings so the user can find one, read it, fix a Speaker Label, retry a failed transcription, reveal the Note in Finder, or repair the link to a Note the user has renamed or moved (§4.12). `[ASSUMPTION: a browsing surface was not requested; it is inferred as necessary because renaming (FR-24) and retry (FR-39) need somewhere to live, and the request did ask for a small clean UI.]` It is a utility view over the Notes, not a second home for the data. Realizes UJ-3.
 
 **Functional Requirements:**
 
@@ -687,6 +699,8 @@ The user can delete a Meeting, including its audio.
 - Whether the Note file is also deleted is explicit in the confirmation, never a surprise.
 - **Amended (increment 2):** deletion is reachable without discovering a context menu — a visible control in the Library, and the standard Delete key on a selected Meeting. A destructive action still requires the confirmation above; discoverability is not permission.
 - **Amended (increment 2):** more than one Meeting can be selected and deleted in one confirmed action, which is what "manage" means once a handful of test recordings exist.
+- **Amended (increment 7):** deletion is **recoverable**. The Meeting directory, and the Note when the user chose to delete it, go to the Trash rather than being unlinked. A confirmation is not a substitute for a route back, and this is the only gesture in the product that destroys audio — the one input that cannot be regenerated.
+- **Amended (increment 7):** the confirmation names the file it will actually delete. The Note Link is resolved (FR-78) before the dialog is composed; if no file can be found, the dialog says so rather than naming the file the record remembers. Naming a file that will not be touched is a false statement in a destructive dialog, and the same code path could delete a *different* file if a name were reused.
 
 #### FR-54: Refresh the Library from disk
 The Library can be resynchronised with what is actually on disk.
@@ -697,6 +711,7 @@ The Library can be resynchronised with what is actually on disk.
 - A Note deleted outside the app is reflected after a refresh.
 - Refresh is idempotent and destroys nothing: it changes what is displayed, never what is stored.
 - A Meeting record whose payload cannot be read is surfaced as unreadable, not omitted from the list. Silently skipping an unreadable record is how the list can be wrong without appearing wrong.
+- **Amended (increment 7):** refresh also reconciles Note Links (FR-78) and recounts Unclaimed Notes (FR-82). Refresh is the user's answer to "the app and my folder disagree", so it has to look in both directions — records against files, and files against records. It reads the folder; it still never parses a Note's content.
 
 **Notes:**
 - The last consequence is the lesson of a real defect: an unreadable record was skipped by a permissive load, so five Meetings vanished from the list while intact on disk. A list that quietly drops what it cannot parse is worse than one that shows a broken row.
@@ -1000,6 +1015,92 @@ A user who removes Minutes is left with nothing of it.
 
 ---
 
+### 4.12 The Note Is the User's File
+
+**Description:** Everything in §4.7 assumes Minutes owns the Note. It does not.
+The Note lives in a folder the user chose, next to their other documents, and the
+user will rename it, move it and edit it — because that is what one does with a
+Markdown file in one's own folder. This section makes the app survive that.
+Realizes UJ-3, and closes the gap §4.7 left open.
+
+**Why it exists:** observation, not inference. The user renamed a Note in Finder
+to a name that described the meeting, and the app reported the Note as missing,
+offered one remedy that would have orphaned the renamed file permanently, showed
+the renamed file nowhere, and then deleted the Meeting on a confirmation that
+named a file it did not touch. The recording is not recoverable. Measured account:
+`planning-artifacts/spikes/investigation-note-linkage-2026-09-03.md`.
+
+**Functional Requirements:**
+
+#### FR-77: A Note says which Meeting it belongs to
+A Note carries the Meeting's identity in its own frontmatter, so the file is
+self-describing and the link does not depend on the filename.
+
+**Consequences (testable):**
+- Frontmatter carries the Meeting's ID. A Note moved to another folder, renamed, or read a year later still says what it is.
+- Notes written before this requirement existed are still identifiable: `started_at` is already in every one of them, and it is sufficient. Measured on the fifteen Notes on the author's machine — all fifteen carry it, to the second, with no two Meetings within a second of each other.
+- No existing Note is rewritten to add the stamp. Files the user already has are left exactly as they are; the stamp appears when the Note is next written for its own reasons.
+- The identity is a value the app wrote. A Markdown file Minutes did not write carries no such stamp and is never claimed as a Note.
+
+#### FR-78: A renamed or moved Note is found again, not declared missing
+When the recorded file is not where the record says, Minutes looks for it before
+saying anything.
+
+**Consequences (testable):**
+- Reconciliation reads only frontmatter identity — Meeting ID, falling back to `started_at`. It never reads a Note's body, and nothing from a Note's content becomes app state.
+- A single unambiguous match relinks silently and the Note is not reported as missing. The user renamed a file; being asked to confirm their own action is noise, and being told the file is gone is false.
+- Two files claiming one Meeting is reported, never guessed. The app says which files, and the user picks.
+- Reconciliation runs only when an existence check has failed. A library with no broken link reads nothing.
+- A positive identification is written to the record. Absence never is: a Note that cannot be found leaves the record untouched, because a transient filesystem condition must not become a permanent claim.
+- Reconciliation never creates, moves, renames or deletes a file. It only changes which existing file the record points at.
+
+#### FR-79: The user can point a Meeting at a Note file
+An explicit action to attach a Meeting to a file, for when the app's own search
+cannot answer it.
+
+**Consequences (testable):**
+- Available wherever a Note Link is unresolved, and also on a Meeting whose Note is present — a user may want to point at a different file.
+- The user chooses a Markdown file. Choosing it makes it this Meeting's Note; the file's contents are not modified by the act of choosing.
+- If the chosen file's frontmatter identifies a *different* Meeting, the app says which one and asks for confirmation. It does not refuse — the user may be repairing something the app cannot see — and it does not stay silent, because linking one file to two Meetings means the next rewrite destroys one of them.
+- Choosing a file the app did not write is allowed and the file is not stamped, moved or reformatted on linking. The next rewrite of that Meeting would replace its contents, so the app says so before the link is made.
+
+#### FR-80: Once the user names the file, their name wins
+The app stops correcting a filename the user chose.
+
+**Consequences (testable):**
+- The record remembers the name Minutes last wrote. When the name on disk differs, the file is user-named.
+- A user-named file is never renamed by the app, including on a title change (FR-35 as amended).
+- The user-chosen name is shown where the app shows the Note, so the app displays the user's name for the file rather than one only the app knows.
+- Adopting the file's name as the Meeting's *title* is **not** part of this. It would mean reading content back into state, and a filename carries a date prefix and a slug rather than a title. The user renames a Meeting in the app, which already works. Recorded as a deferral with its reason, not an oversight.
+
+#### FR-81: A Note changed outside Minutes is not silently overwritten
+The app can tell that a Note has been edited elsewhere, and asks rather than
+discarding the edit.
+
+**Consequences (testable):**
+- The app records a fingerprint of what it last wrote. Before overwriting, it compares; equal means the app's own output and it proceeds without a word.
+- Different means the file has been changed outside Minutes. The app does not write. It says what it found and offers exactly two outcomes: keep the file as it is, or replace it with a freshly rendered Note.
+- The choice is per Note and is not remembered as a preference. A user who kept one hand-edited Note has not decided anything about the next one.
+- Merging is out of scope and stays out. The Note is a projection; there is no mechanism that could reconcile a paragraph a human wrote with a transcript the app renders, and pretending otherwise would produce a file neither party recognises.
+- This closes a consequence the architecture has always carried and never surfaced: "a user editing a Note by hand will have those edits overwritten, and this must be stated in the UI." It was stated nowhere.
+
+#### FR-82: A Note whose Meeting is gone is shown, not hidden
+Files Minutes wrote and no longer links to are visible in the app.
+
+**Consequences (testable):**
+- The Library reports how many files in the Notes Folder Minutes wrote and no Meeting claims, and lists them on request with the date and title from their own frontmatter.
+- Each can be revealed in Finder, opened, or dismissed from the list. Dismissing changes the listing only; it never touches the file.
+- They are not re-imported as Meetings. A Note cannot be parsed back into a Meeting, and a half-Meeting with a transcript and no audio would be a second kind of record for the rest of the product to special-case.
+- Files Minutes did not write are not listed at all. The user's folder is theirs; an app that enumerates a user's unrelated documents has overstepped.
+
+#### FR-83: Managing Notes never costs the user a Note
+The safety property that binds this section together.
+
+**Consequences (testable):**
+- No action in this section deletes or overwrites a file the user has changed without the user having said so in a dialog that names the file.
+- A rewrite whose link is broken finds the existing file first, and creates a new one only when no file claims the Meeting.
+- Every destructive path in the Library goes to the Trash, so every mistake in this section is recoverable by dragging one item back.
+
 ## 5. Non-Goals (Explicit)
 
 These exist to stop the "let me also add the nearby thing" failure mode at epic, story and code level.
@@ -1028,7 +1129,7 @@ These exist to stop the "let me also add the nearby thing" failure mode at epic,
 - Structural Local Speaker attribution, on-device Diarization of both Streams, merged Transcript, renaming, Speaker Profiles, and Voice Enrolment of the user's own voice (§4.5)
 - On-device Metadata via LLM Backend with Heuristic Backend fallback; decisions and action items; provenance recorded (§4.6)
 - One Markdown Note per Meeting with YAML frontmatter, user-chosen Notes Folder, in-place rewrite on edit (§4.7)
-- Library: list, read, edit, retry, delete (§4.8)
+- Library: list, read, edit, retry, delete (§4.8), and repair the link to a Note the user renamed, moved or edited (§4.12)
 - Settings and first-run: permissions, folder, model, detection, retention, launch at login (§4.9)
 
 ### 6.2 Out of Scope for MVP
@@ -1128,6 +1229,7 @@ Stakes are personal-utility, so these are deliberately few and mostly binary. Th
 - Speaker Profiles are biometric-adjacent data. They stay local, are never transmitted, and must be deletable.
 - **The Enrolled Voice (FR-62) is the most biometric-adjacent thing the product holds**, because it is a fingerprint of a named person deliberately recorded for identification. Four rules bind it, and none is negotiable: nothing is stored until the user records a sample; the sample audio is destroyed as soon as the fingerprint is derived, so what persists is a vector and not a recording of anyone's voice; the fingerprint never leaves the machine under any configuration, including a configured Remote Backend; and one control deletes it. `[NOTE FOR PM]` "Biometric-adjacent" is the honest word rather than "biometric": a 256-number embedding is not a recording and cannot be played back, but it identifies a person, and treating it as ordinary preference data would be wrong.
 - Enrolment records only the Mic Stream. It cannot capture the far end of a call, so it cannot become a way to sample a colleague's voice without them being in the room.
+- **Meeting content must not reach the repository through prose either.** *Added increment 7.* The structural guarantee (`Scripts/check-no-user-data.sh`) keeps audio, records and embeddings out by path and by shape, and it works. It cannot see a real meeting title quoted in a design document or borrowed for a UI fixture, and by the time this was noticed the repository was public and two committed files carried real titles — one review sentence and the `--uishot` fixtures. A meeting title is meeting content. Planning documents substitute titles and filenames, keeping only the property the evidence rests on; fixtures use invented words; and the guard grows a local-only check that can see this class, because the check needs the user's library to know what a real title looks like and CI does not have it.
 
 ### 9.2 Cost
 
@@ -1248,7 +1350,7 @@ Raised by increment 2:
 9. **How much menu bar width is acceptable for the FR-49 timer?** A running clock next to the icon competes with every other menu bar item on a laptop display. Informs FR-49; may need a shorter format, or an option to show it only past a threshold.
 10. ~~**Does the FR-50 pulse survive NFR-3 over a two-hour Session?**~~ **Retired 2026-09-01, unanswered and moot.** FR-50 is withdrawn, so there is no repeating animation to measure. Worth noting what it cost to leave open: the question was raised in increment 2 and never measured, and the feature it guarded was removed for a reason that had nothing to do with cost.
 11. **Should FR-52's Backend choice be per-Meeting rather than global?** A global toggle is simpler and matches the ask; retrying one Meeting with the other Backend is the plausible next want. Deferred, not decided.
-12. **Is FR-53's check cheap enough to run on every Library appearance**, or does it need to be tied to FR-54's explicit refresh? Depends on Meeting count and folder size; measure before choosing.
+12. ~~**Is FR-53's check cheap enough to run on every Library appearance**, or does it need to be tied to FR-54's explicit refresh?~~ **Answered 2026-09-03 by mechanism rather than by measurement.** The existence check is one `stat` per complete Meeting and stays on every reload. The expensive part — reading the head of every file in the Notes Folder — is what FR-78 introduces, and it runs *only when a check has already failed*. A library with no broken links never reads a single file, so the cost is zero in the case that is true almost always, and proportional to the folder only in the case where the user is waiting for an answer anyway.
 
 Raised by increment 3:
 
@@ -1263,6 +1365,12 @@ Raised by increment 4:
 18. **Does a fingerprint from a deliberate 20–30 second sample behave like one derived from a whole Meeting?** Every figure in the calibration comes from Meeting-derived centroids. An enrolment sample is shorter but cleaner — one speaker, no crosstalk, a known device — which should help, and the two shortest samples in the data (11 words and 1 word) were visibly unreliable, which is why 20–30 seconds and not 5. **Half of this is now answered.** The *cost* is measured (§11: 0.30 s for an 8.4-second recording in a fresh process), and the embedder's voice count agrees exactly with the Diarizer's on a five-voice room, which is what FR-62's multi-voice refusal depends on. The *quality* half — whether a 25-second sample's centroid lands as close to the same person's Meeting centroids as two Meeting centroids land to each other — still needs one real enrolment followed by one real meeting. Informs FR-62's duration and FR-65's threshold.
 19. **Does an Enrolled Voice recorded on one input device match a Meeting recorded on another?** The calibration's four Meetings all used the same device. AirPods and the built-in microphone colour a voice differently, and the spike already found the app had been recording through AirPods without recording *that* it had. FR-63 may need the device recorded alongside the fingerprint, or a second sample per device. Informs FR-62.
 20. **How often does the ambiguity rule fire in practice, and is refusing the right call when it does?** FR-63 claims nothing when two in-room voices are both close to the Enrolled Voice. The measurement says that should be rare (in-room voices sat ≥ 0.596 apart), but a Diarization split of the user's own voice would produce exactly that shape, and then the honest refusal costs the user the feature. Worth counting before changing.
+Raised by increment 7:
+
+22. **Is `started_at` a sufficient identity key for Notes written before FR-77?** It is sufficient on this machine — fifteen Notes, all stamped to the second, no two Meetings within a second. It stops being sufficient for anyone who records two Meetings starting in the same second, which a scripted or automated start could do. The fallback is only ever consulted for a Note with no Meeting ID, so the population shrinks to zero over time; the question is whether that is fast enough to leave alone. Informs FR-78.
+23. **Should the Notes Folder be watched, so a Finder rename is noticed without a refresh?** Reconciliation on reload plus the explicit refresh (FR-54) makes the state correct but briefly stale — a renamed Note reads as missing until something reloads. A folder watcher fixes the staleness and adds a live subsystem, a permission-adjacent API and a class of event storm to reason about. Deliberately ranked last: the correctness is in FR-78, and only the latency is in the watcher.
+24. **What should happen to an Unclaimed Note when the user says "dismiss"?** Currently: forgotten from the listing, file untouched, and it returns if the app forgets that it forgot. The alternative — a marker in the file — means writing to a file whose Meeting no longer exists, which is worse. Informs FR-82.
+
 21. **Does §9.1's "the audio is destroyed" survive the implementation of re-recording?** Re-recording replaces a fingerprint, and the obvious lazy implementation keeps the previous sample around "just in case". It must not. This is a code-review item as much as an open question, and it is listed because the failure would be invisible.
 
 ## 14. Assumptions Index

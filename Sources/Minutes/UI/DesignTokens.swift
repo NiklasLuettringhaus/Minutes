@@ -30,6 +30,14 @@ enum Tok {
     /// Readable amber for text on a light ground (the raw amber is too pale).
     static let amberInk     = Color(red: 0.604, green: 0.384, blue: 0.012)
 
+    // MARK: - Type
+
+    /// `{typography.mono-inline}` — a filename, a model identifier or a shell
+    /// command shown inline. Declared here in increment 7 because FR-80 shows the
+    /// user their own filename, and a filename set in body text is indisputably
+    /// worse than one set in mono.
+    static let monoInline = Font.caption.monospaced()
+
     // MARK: - Radii
 
     static let rSm: CGFloat = 4
@@ -275,10 +283,16 @@ struct StateBanner: View {
     let text: String
 
     var body: some View {
-        HStack(spacing: Tok.s3) {
+        HStack(alignment: .firstTextBaseline, spacing: Tok.s3) {
             Image(systemName: glyph).font(.caption)
+            // Wraps rather than truncating. A banner exists to say a sentence, and
+            // a truncated sentence conveys less than no banner — increment 7's
+            // note-not-found copy rendered as "Minutes looked in your notes folder
+            // and cou…" at 320pt, which is the state it was written to explain.
+            // Found by looking at a rendered shot, which is what the tool is for.
             Text(text).font(.caption)
-            Spacer()
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
         }
         .foregroundStyle(tint)
         .padding(.horizontal, Tok.s4)
@@ -300,6 +314,54 @@ struct StateBanner: View {
         case .degraded: return "exclamationmark.triangle"
         case .info: return "info.circle"
         }
+    }
+}
+
+// MARK: - Decision banner
+
+/// `{components.decision-banner}` — a state banner that carries the choice.
+///
+/// `StateBanner` **announces**, and a state it announces is one the app has
+/// already resolved. This one exists for the case where the app has found
+/// something it will deliberately not decide, because both outcomes are
+/// legitimate and it cannot rank them. It was written because FR-81's
+/// note-conflict state was about to be built as a degraded `StateBanner`, and a
+/// degraded banner has nowhere to put "you decide".
+///
+/// Two rules make it what it is. It states what was **found**, never what the
+/// user should do. And the prominent control is the one that changes nothing on
+/// disk — the app is the party proposing the destructive option, so it must not
+/// also be the party recommending it.
+struct DecisionBanner: View {
+    let text: String
+    /// The outcome that changes nothing. Prominent, and first.
+    let safeLabel: String
+    let safeAction: () -> Void
+    let riskyLabel: String
+    let riskyAction: () -> Void
+
+    var body: some View {
+        // Sentence on its own line, controls beneath. A row holding a sentence
+        // and two controls does not truncate — it collapses every child to its
+        // minimum and hyphenates words down the middle.
+        VStack(alignment: .leading, spacing: Tok.s3) {
+            HStack(spacing: Tok.s3) {
+                Image(systemName: "exclamationmark.triangle").font(.caption)
+                Text(text).font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: Tok.s3) {
+                Button(safeLabel, action: safeAction)
+                    .buttonStyle(.borderedProminent).controlSize(.small)
+                Button(riskyLabel, action: riskyAction)
+                    .buttonStyle(.bordered).controlSize(.small)
+            }
+        }
+        .foregroundStyle(Tok.transcribing)
+        .padding(.horizontal, Tok.s4)
+        .padding(.vertical, Tok.s3)
+        .background(Tok.transcribing.opacity(0.12), in: RoundedRectangle(cornerRadius: Tok.rMd))
     }
 }
 

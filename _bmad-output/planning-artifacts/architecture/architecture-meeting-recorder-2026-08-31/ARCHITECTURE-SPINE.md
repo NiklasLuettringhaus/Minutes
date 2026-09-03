@@ -7,8 +7,8 @@ paradigm: 'layered ports-and-adapters with a staged, resumable pipeline'
 scope: 'The whole Minutes application: menu bar control, dual-stream capture, detection, transcription, diarization, metadata, Markdown output, library, settings.'
 status: final
 created: '2026-08-31'
-updated: 2026-09-02
-binds: [FR-1..FR-76, NFR-1..NFR-8]
+updated: 2026-09-03
+binds: [FR-1..FR-83, NFR-1..NFR-8]
 sources:
   - ../../prds/prd-meeting-recorder-2026-08-31/prd.md
   - ../../prds/prd-meeting-recorder-2026-08-31/addendum.md
@@ -18,6 +18,7 @@ sources:
   - ../../spikes/spike-local-llm-2026-08-31.md
   - ../../spikes/spike-mic-isolation-2026-09-01.md
   - ../../spikes/calibration-speaker-threshold-2026-09-01.md
+  - ../../spikes/investigation-note-linkage-2026-09-03.md
   - ../../RELEASE-PLAN.md
 companions: []
 ---
@@ -112,7 +113,12 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 
 - **Binds:** FR-24, FR-31, FR-35, FR-36, FR-40, NFR-8
 - **Prevents:** two owners of Meeting data — the classic failure where editing the Markdown and editing in-app diverge
-- **Rule:** Each Meeting owns one directory under Application Support, named by a sortable ID. It holds the audio, a `meeting.json` record, and stage outputs. The Note in the Notes Folder is **generated from** that record and may be regenerated at any time. The app never parses a Note back into state. Consequence: a user editing a Note by hand will have those edits overwritten if the Meeting is edited in-app, and this must be stated in the UI.
+- **Rule:** Each Meeting owns one directory under Application Support, named by a sortable ID. It holds the audio, a `meeting.json` record, and stage outputs. The Note in the Notes Folder is **generated from** that record and may be regenerated at any time. The app never parses a Note back into state.
+
+*Amended 2026-09-03, after a renamed Note cost a Meeting.* Two clarifications, neither of which relaxes the rule:
+
+1. **Identity is not content.** Reading a Note's frontmatter to learn *which Meeting it is* is permitted and is the mechanism AD-39 depends on. Reading anything else out of a Note — a title, a summary, a transcript line, a speaker name — remains forbidden. The dividing line is mechanical: the identity reader returns a Meeting ID and a start time, and its return type makes a body field unrepresentable.
+2. **"Those edits will be overwritten" is no longer the whole consequence.** It was the consequence while the app could not tell its own output from a human's. AD-41 gives it that ability, so the rule becomes: a projection is regenerated freely over the app's own bytes, and never over bytes the app did not write without the user saying so. The original clause's obligation — *and this must be stated in the UI* — stood unmet for six increments; it is now FR-81's job and not a comment's.
 
 ### AD-10 — Atomic writes for anything the user can lose
 
@@ -181,6 +187,8 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 - **Binds:** FR-31, FR-35, AD-9
 - **Prevents:** two components each deriving a filename from the title and producing two Notes for one Meeting — the concrete failure AD-9 leaves open, because AD-9 fixes ownership of *state* but not of the *filename*
 - **Rule:** `NoteWriter` is the only component that computes a Note filename. It derives it once at first write and persists it on the Meeting record. On a title change the stored filename is authoritative: `NoteWriter` renames the existing file and updates the record in the same operation. No other component may infer a Note path from a title.
+
+*Amended 2026-09-03.* The authority above holds only while the name on disk is still the name the app wrote. The moment they differ the file is **user-named**, and AD-40 inverts the authority: the app follows the file and no component renames it. The derived name never disappears — it stays on the record as the thing the divergence is measured against.
 
 ### AD-19 — Utterances reference a stable Speaker Label ID, never a display name
 
@@ -312,6 +320,38 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 - **Prevents:** a Voice Fingerprint leaving on the coat-tails of something the user asked for. Export is the first capability in the product's life that can move data off the Mac at all, and a fingerprint bundled into "export my meetings" would be a §9.1 breach performed by a feature nobody thought of as a transmission.
 - **Rule:** A Voice Fingerprint is excluded from any export by default. Including one requires a choice distinct from the choice to export, off by default, accompanied by a plain statement of what the data is and why it is treated unlike everything else. No export or import touches the network. This rule is about the *default* and the *separateness*; whether the override should exist at all is a product decision that remains open, and the code must not settle it by defaulting.
 
+
+### AD-39 — A Note carries its Meeting's identity, and the link is resolved rather than assumed
+
+- **Binds:** FR-77, FR-78, FR-53, FR-54, AD-9, AD-18, AD-21
+- **Prevents:** a filename serving as an identity. A filename is the one property of a file a user is most likely to change, and while it was the only link, a rename in Finder orphaned a Note permanently and the app's own remedy for the break — rewrite — made it unrecoverable. Two independently built components would otherwise each choose their own way to "find the Note", one by path and one by scanning, and disagree about which file a Meeting owns.
+- **Rule:** `NoteWriter` stamps the Meeting ID into the Note's frontmatter at every write. Resolving a Note Link goes through one port, `NoteLocating`, which takes a Meeting and a folder and returns a located file or nothing. It reads frontmatter identity only — Meeting ID, falling back to `started_at` for Notes written before the stamp existed — and its return type cannot carry a body field. It is invoked **only when the recorded path does not exist**: a library with no broken link performs no folder read. A single unambiguous match is persisted through `MeetingStore` (AD-21) because "this file is this Meeting's Note" is a durable fact; more than one match is returned as an ambiguity for the user to settle and persists nothing; no match persists nothing, because absence is a display state and must never become a claim in the record. Resolution never creates, renames, moves or deletes a file.
+
+### AD-40 — A user-named Note file outranks the name the app would derive
+
+- **Binds:** FR-80, FR-35, AD-18, AD-39
+- **Prevents:** the app overwriting a naming decision the user made deliberately. Without a stored record of what the app itself last wrote, no component can tell a user's rename from a stale filename, so every one of them has to guess — and AD-18's rule makes the confident guess the destructive one.
+- **Rule:** The Meeting record carries two names: the file the link points at, and the filename `NoteWriter` last wrote. Equal means the app owns the name and AD-18 applies unchanged. Different means the user owns it: no component renames the file, a title change alters only the Note's contents, and the name shown in the UI is the user's. The comparison is the only test; there is no separate "user renamed this" flag to fall out of sync with the filesystem.
+
+### AD-41 — The app records what it wrote, so it can tell an edit from its own output
+
+- **Binds:** FR-81, FR-83, AD-9, AD-10
+- **Prevents:** both halves of a symmetric failure — silently destroying a user's edit, and prompting about every ordinary rewrite because the app cannot recognise its own bytes. A component that only compares timestamps produces the second; one that compares nothing produces the first.
+- **Rule:** Every Note write persists a digest of the exact bytes written, on the Meeting record, in the same update that persists the filename. Before overwriting, the file's bytes are digested and compared: equal means the app's own output and the write proceeds silently; different means the write does not happen and a conflict value is returned for the UI to resolve (FR-81). Rendering is never the comparison — the renderer has changed in four increments, so re-rendering an old Note legitimately differs from the file on disk and would report every Note as edited.
+- **Migration, and its limit:** a Note written before this rule has no digest. The app adopts the current bytes as the baseline when the file's modification time is not later than the record's last write, and treats it as a possible edit when it is later. That is evidence rather than an assumption, and it is a weaker signal than a digest: it cannot see an edit that preserved the timestamp. Measured on the fifteen Notes on the author's machine — none is modified after its record, so all fifteen adopt cleanly.
+
+### AD-42 — Anything the user can lose goes to the Trash, and a failure to do so is reported
+
+- **Binds:** FR-40, FR-83, AD-10
+- **Prevents:** an unrecoverable delete. This is not hypothetical: `removeItem` on a Meeting directory has already destroyed a real recording, with `~/.Trash` empty afterwards and no route back. It also prevents the quieter failure of a Trash call that fails on a volume without one and falls back to unlinking, which turns a safety mechanism into an inconsistent one.
+- **Rule:** Deleting a Meeting directory, or a Note on the user's behalf, uses `trashItem`. `removeItem` remains correct for temporary files, staged writes and app-internal scratch, and is used for nothing the user has ever seen. A `trashItem` failure surfaces as an error with its reason; there is no fallback to unlinking, because a delete the user cannot undo is precisely the outcome this decision exists to prevent.
+
+### AD-43 — The app enumerates only the files it wrote
+
+- **Binds:** FR-82, FR-79, PRD §9.1
+- **Prevents:** the app treating a user's folder as its own index. The Notes Folder holds the user's documents; listing, claiming or acting on a Markdown file Minutes did not write is an overstep, and a component that lists "every `.md`" will do exactly that.
+- **Rule:** Any enumeration of the Notes Folder considers a file only if its frontmatter carries a Minutes identity marker — a Meeting ID, or `generated_by: Minutes` together with `started_at` for files written before the stamp. Files without one are not listed, not linked automatically, and never modified. The one exception is FR-79, where the user names a specific file: an explicit choice may point at a file the app did not write, and the app then states what the next rewrite will do to it rather than refusing or staying silent.
+
 ## Consistency Conventions
 
 
@@ -328,6 +368,11 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 | Config / preferences | A readable settings document in the user-data directory, migrated once from `UserDefaults` (AD-37); the Notes Folder as a security-scoped bookmark, not a path string. Until that migration ships, `UserDefaults` for scalars. |
 | Security-scoped access | `Preferences` resolves the Notes Folder bookmark and owns the single balanced `startAccessingSecurityScopedResource` / `stop…` pair. No other component starts or stops access. |
 | Meeting record writes | Field-level updates through `MeetingStore` only (AD-21). Adapters return values. |
+| Note identity | Every Note carries its Meeting ID in frontmatter; the link is resolved through `NoteLocating`, never inferred from a path (AD-39). No component reads a Note's body — the identity reader's return type makes it unrepresentable. |
+| Note filenames | Two names on the record: the linked file, and the last name the app wrote. Divergence means the user owns the name (AD-40). No `didUserRename` flag. |
+| Overwriting a user's file | Compare a stored digest of the app's last write against the bytes on disk (AD-41). Never compare against a fresh render; the renderer changes between increments. |
+| Deleting | `trashItem` for anything the user has seen; `removeItem` only for temporary and staged files (AD-42). A Trash failure is an error, never a silent unlink. |
+| Reading the Notes Folder | Only files carrying a Minutes identity marker are enumerated (AD-43). |
 | State mutation | Only `SessionCoordinator` writes `AppState` (AD-7). |
 | Concurrency | `@MainActor`: UI, `AppState`, `SessionCoordinator`, `VoiceEnrolment` (it drives a capture and publishes phase to a view, exactly as `TestPlayground` does). `actor`: capture engine, `SpeakerDirectory`. Serial executor: ML (AD-14) — and embedding a voice sample runs on it, so an enrolment during an active transcription queues rather than contending. IOProc: C callback, real-time-safe — no allocation, no locks, no logging inside it. |
 | Persistence format | `meeting.json` via `Codable` with explicit `CodingKeys`; unknown-key tolerant on read so an older record still loads. |
@@ -463,6 +508,7 @@ Minutes/
 | Library management (FR-49…54) | `UI/MeetingsPane`, `UI/GeneralPane`, `Services/AppState` | AD-9, AD-8, AD-21 |
 | Summarisation intelligence (FR-55…61) | `Adapters/Metadata/*`, `Services/SummarizerCatalog`, `Adapters/System/KeyStore`, `UI/SummariesPane` | AD-12, AD-22, AD-23, AD-24, AD-25, AD-26, AD-27 |
 | Voice enrolment (FR-62…65) | `Core/VoiceMatch`, `Services/VoiceEnrolment`, `Services/SpeakerDirectory`, `Adapters/Diarize/SpeakerKitVoiceEmbedder`, `UI/GettingStartedPane` + `UI/GeneralPane` | AD-11 (amended), AD-28, AD-29, AD-30, AD-31, AD-32 |
+| Note file management (FR-77…83) | `Core/NoteIdentity`, `Services/Ports` (`NoteLocating`), `Adapters/Persistence/NoteLocator` + `NoteWriter`, `Adapters/Persistence/MeetingStore`, `UI/MeetingsPane` | AD-9 (amended), AD-18 (amended), AD-39, AD-40, AD-41, AD-42, AD-43 |
 
 ## Build and Delivery Envelope, Increment 5
 
@@ -490,7 +536,10 @@ Stated because the reviewer checklist treats a silent dimension as a finding, an
 - **Crash-recovery UI.** AD-8 makes an interrupted Meeting resumable and AD-10 keeps its data intact, so recovery is a UI affordance, not an architectural gap. Deferred per PRD §6.2.
 - ~~**Speaker Profile matching algorithm.**~~ **Decided 2026-09-01.** The embedding is SpeakerKit's 256-dimensional centroid behind AD-28's port; the comparison is cosine distance in Core; the threshold is measured (AD-31). PRD §13 Q4 is answered for in-room voices and narrowed for Remote Speakers, where AD-31 records the limit rather than hiding it. What the deferral got right is worth keeping: the port stays, and if the embedding proves unreliable the implementation degrades to manual rename without touching anything above it.
 - **Aggregate device rebuild on output-device change.** FR-8 requires surviving the change; whether that means rebuilding the aggregate or the HAL handling it is unresolved (PRD §13 Q7). AD-2 fixes the ordering either way, so this is a story-level experiment.
-- **Notes Folder conflict policy for hand-edited Notes.** AD-9 makes the Note a projection and requires the UI to say so; a merge or conflict-detection strategy is out of scope for v1.
+- ~~**Notes Folder conflict policy for hand-edited Notes.**~~ **Split 2026-09-03.** *Detection* is now in scope and decided: AD-41 stores a digest of what the app wrote, so an edit is a fact rather than a guess, and FR-81 makes the user the one who chooses. *Merging* stays out of scope and should stay out permanently — there is no mechanism that could reconcile a paragraph a human wrote with a transcript the app renders, and any attempt produces a file neither party recognises. What the original deferral got wrong is worth recording: it was reasonable while the app was the only thing that ever touched a Note, and it stopped being reasonable the moment the user started filing them, which nothing in the architecture was watching for.
+- **Watching the Notes Folder.** A rename is noticed on the next reload rather than as it happens, so a renamed Note reads as missing until something reloads (PRD §13 Q23). AD-39 owns the correctness; a watcher would own only the latency, at the cost of a live subsystem and a class of event storms. Ranked last deliberately.
+- **Adopting a user's filename as the Meeting's title.** Tempting, and refused: it would read content back into state against AD-9, and a filename is a date prefix plus a slug rather than a title. Renaming a Meeting in the app already works and stays the answer.
+- **Re-importing an Unclaimed Note as a Meeting.** AD-43 lists them and AD-9 forbids parsing them, so the two together make this structurally impossible rather than merely unbuilt. A half-Meeting with a transcript and no audio would be a second kind of record for every consumer of `Meeting` to special-case.
 - **Distribution, notarization, auto-update.** Excluded by PRD §5. AD-16 stops at a locally installed ad-hoc signed bundle.
 - **Model eviction policy.** FR-44 exposes disk use and removal; an automatic policy is deferred — the user decides.
 - **Global hotkey.** EXPERIENCE.md defers it to v2; it would add a permission surface and a conflict UI.

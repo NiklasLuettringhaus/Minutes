@@ -73,6 +73,45 @@ while IFS= read -r f; do
   fi
 done <<< "$FILES"
 
+# --- Meeting content in prose (Story 13.5) ----------------------------------
+#
+# The rules above keep audio, records and embeddings out by path and by shape,
+# and they work. They cannot see a real meeting *title* quoted in a design
+# document or borrowed for a UI fixture — and by the time that was noticed the
+# repository was public and two committed files carried real titles. A meeting
+# title is meeting content (PRD §9.1).
+#
+# Local-only by construction: knowing what a real title looks like needs the
+# user's library, and CI does not have one. Where there is no library this says
+# so rather than passing silently, because a check that cannot run and does not
+# admit it is worse than no check at all.
+LIB="$HOME/Library/Application Support/Minutes/Meetings"
+if [ ! -d "$LIB" ]; then
+  echo "note: the meeting-title check needs a local library; skipped (none at $LIB)"
+else
+  TITLES=$("$(dirname "$0")/local-meeting-titles.py" "$LIB" 2>/dev/null || true)
+  if [ -z "$TITLES" ]; then
+    echo "note: the local library holds no title specific enough to check"
+  else
+    while IFS= read -r title; do
+      [ -n "$title" ] || continue
+      while IFS= read -r f; do
+        [ -f "$f" ] || continue
+        case "$f" in
+          *.md|*.swift|*.sh|*.yaml|*.yml|*.html|*.json|*.txt) ;;
+          *) continue ;;
+        esac
+        # The title list itself is never in the repository, so this file cannot
+        # be matching its own contents.
+        n=$(grep -inF -m1 -- "$title" "$f" 2>/dev/null | cut -d: -f1 || true)
+        if [ -n "$n" ]; then
+          reject "$f" "line $n quotes a real meeting title — substitute it, titles are meeting content"
+        fi
+      done <<< "$FILES"
+    done <<< "$TITLES"
+  fi
+fi
+
 if [ "$FAIL" -ne 0 ]; then
   cat >&2 <<'MSG'
 

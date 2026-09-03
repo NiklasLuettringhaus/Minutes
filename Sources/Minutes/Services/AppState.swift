@@ -25,12 +25,41 @@ final class AppState: ObservableObject {
     @Published var lastError: MinutesError?
     /// A meeting the user has been offered but not yet answered (FR-12).
     @Published var pendingPrompt: DetectedMeeting?
-    /// Meetings whose Note is recorded but absent from the Notes Folder (FR-53).
+    /// Where each complete Meeting's Note actually is (FR-78).
     ///
     /// A display state derived on read, never written into the record: the folder
     /// can change, and a transient filesystem condition must not become a
-    /// permanent claim in `meeting.json`.
-    @Published private(set) var missingNotes: Set<String> = []
+    /// permanent claim in `meeting.json`. A *positive* identification is persisted
+    /// — see `NoteLinkService` — because that one is durable.
+    ///
+    /// Replaced `missingNotes: Set<String>` in increment 7. A set of "missing" ids
+    /// could only express one of the four answers, and it expressed the wrong one
+    /// for a renamed file: the app had not looked.
+    @Published private(set) var noteLinks: [String: NoteLinkState] = [:]
+    /// Files in the Notes Folder that Minutes wrote and no Meeting claims (FR-82).
+    @Published private(set) var unclaimedNotes: [UnclaimedNote] = []
+    /// A Note the app declined to overwrite because it is not the bytes the app
+    /// wrote (FR-81). One at a time: the choice is per Note and is made now.
+    @Published var noteConflict: NoteConflict?
+
+    /// A Note changed outside Minutes, and the edit that discovered it.
+    struct NoteConflict: Equatable, Identifiable {
+        let meetingID: String
+        let url: URL
+        var id: String { meetingID }
+        var filename: String { url.lastPathComponent }
+    }
+
+    /// FR-53's badge, in terms of the new state. Not simply "no file": a Meeting
+    /// whose folder is unset has not been looked for, and saying its Note is gone
+    /// would be a claim about the user's folder that the app cannot support.
+    func noteIsMissing(_ id: String) -> Bool {
+        switch noteLinks[id] {
+        case .notFound, .ambiguous: return true
+        default: return false
+        }
+    }
+    func noteLink(_ id: String) -> NoteLinkState { noteLinks[id] ?? .unknown }
     /// Meeting records that could not be decoded, surfaced rather than skipped
     /// (FR-54). A listing that silently drops what it cannot parse is wrong
     /// without appearing wrong.
@@ -59,7 +88,8 @@ final class AppState: ObservableObject {
     func setMicAuthorized(_ b: Bool) { micAuthorized = b }
     func setMicMuted(_ b: Bool) { micMuted = b }
     func setInFlight(_ ids: Set<String>) { inFlight = ids }
-    func setMissingNotes(_ ids: Set<String>) { missingNotes = ids }
+    func setNoteLinks(_ l: [String: NoteLinkState]) { noteLinks = l }
+    func setUnclaimedNotes(_ n: [UnclaimedNote]) { unclaimedNotes = n }
     func setUnreadable(_ ids: [String]) { unreadableMeetings = ids }
     func setAudioBytes(_ n: Int64) { audioBytes = n }
 
@@ -113,29 +143,19 @@ enum AppStateBridge {
     static func reloadMeetings() async {
         let (meetings, bad) = await MeetingStore.shared.loadAllReportingFailures()
         let bytes = await MeetingStore.shared.audioBytes()
-        let missing = await missingNoteIDs(in: meetings)
+        let folder = await notesFolder()
+        // FR-78 / FR-54: both directions — records against files, and files
+        // against records. Resolved against the folder *currently* in effect, so
+        // moving the Notes Folder still does not mark every past Meeting broken.
+        let links = await NoteLinkService.reconcile(meetings, in: folder)
+        let orphans = await NoteLinkService.unclaimed(meetings, in: folder)
         await MainActor.run {
             AppState.shared.setMeetings(meetings)
             AppState.shared.setAudioBytes(bytes)
-            AppState.shared.setMissingNotes(missing)
+            AppState.shared.setNoteLinks(links)
+            AppState.shared.setUnclaimedNotes(orphans)
             AppState.shared.setUnreadable(bad.map(\.id))
         }
-    }
-
-    /// FR-53. Resolved against the folder *currently* in effect, so moving the
-    /// Notes Folder does not mark every past Meeting broken. Only Meetings that
-    /// claim a written Note are candidates — an unfinished one is not "missing" it.
-    static func missingNoteIDs(in meetings: [Meeting]) async -> Set<String> {
-        guard let folder = await notesFolder() else { return [] }
-        let fm = FileManager.default
-        var out: Set<String> = []
-        for m in meetings {
-            guard m.isComplete, let f = m.noteFilename else { continue }
-            if !fm.fileExists(atPath: folder.appendingPathComponent(f).path) {
-                out.insert(m.id)
-            }
-        }
-        return out
     }
 
     static func finished(meetingID id: String) async {

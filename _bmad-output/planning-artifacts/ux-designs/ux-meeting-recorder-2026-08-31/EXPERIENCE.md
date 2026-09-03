@@ -100,6 +100,9 @@ Plain, specific, and never cheerful. The user is a professional using a utility;
 - **Absence is stated, not padded.** A meeting with no decisions omits the section. The UI never writes "No decisions found!" in a card.
 - **Numbers over adjectives.** "About 6 minutes for a 30-minute meeting on this Mac" beats "Fast".
 - **Never state the same fact twice on one pane.** If a card has already said that Apple Intelligence is off, the control below it says what *your choice* means now — "your choice cannot be honoured right now, so keyphrase extraction runs instead" — not the same state again in different words. Two statements of one fact on one pane invite the reader to hunt for the difference. *Added increment 4, from the Summaries pane, where the two sat forty lines apart.*
+- **Never say a thing is missing before looking for it.** "This meeting's note is not in your notes folder" was true of the recorded path and false of the folder — the file was there under a name the user had given it, and the user was looking at it while the app denied it existed. The copy may report a file as not found only after reconciliation has run and found nothing, and then it says so in those terms: *"Minutes looked in your notes folder and could not find this meeting's note."* *Added increment 7.*
+- **Never name a file an action will not touch.** A destructive dialog names the file that will actually be deleted, resolved at the moment the dialog is composed. If no file can be found it says that instead of naming the one the record remembers. A dialog that names a file it does not touch is a false statement made at the exact moment the user is deciding whether to trust it.
+- **A remedy is never the action that makes the problem permanent.** Where two remedies exist they are distinguished by what they do to the file on disk, not by which is easier to say: *Locate note…* adopts a file that already exists, *Rewrite note* creates a new one from the record. Offering only the second for a renamed note is how a recoverable state became an unrecoverable one. *Added increment 7.*
 - **Say what is stored, in the place it is stored.** Voice enrolment is the most sensitive thing the product keeps, so the copy names it without either softening it or dramatising it: "Minutes keeps a fingerprint of your voice on this Mac. The recording itself is deleted." Not "we take your privacy seriously", and not a warning triangle either — it is a thing the user chose, described accurately (PRD §9.1).
 
 **Terminology is fixed by the PRD Glossary and used verbatim in the UI.** The user sees *Meeting*, *Transcript*, *Speaker*, *Note*, *Notes Folder*, *Transcription Model*. The UI never says "recording" for a Meeting or "session" to the user — *Session* is an internal term and must not leak into copy.
@@ -241,7 +244,54 @@ built app rather than from the spine.
 - ~~**A speaker row is two lines, not one:**~~ *(superseded by the grouping above; kept because the reason it existed still binds — controls on a line, prose on its own line beneath.)* the chip, `Rename`, `Exclude` and the line count across the top, and one line of provenance underneath — what the app's claim about this voice rests on, and what it was heard through. *Written down in increment 4 after the one-line version broke:* it had grown to eight children including two unconstrained sentences, and SwiftUI took the width back out of all of them, rendering one character per line. The rule that prevents a recurrence is the same one `{components.voice-row}` and `{components.checklist-row}` already state — controls on a line, prose on its own line beneath — and it now covers every row in the product rather than two of three.
 - Speaker rename is inline on the chip in the detail header — click the chip, type, commit. It is not buried in a sheet or a settings pane, because PRD FR-24 is a frequent action.
 - Rename commits on Return or focus loss; Escape cancels. It rewrites the Note in place and, if the label was a Remote Speaker, updates the Speaker Profile (PRD FR-25).
-- Row actions: `Reveal in Finder`, `Open in Editor`, `Retry` (failed only), `Delete…`.
+- **Row actions depend on what is actually there, not on what the record remembers.** `Reveal in Finder` and `Open in Editor` appear only when a file has been located; a Note whose link is unresolved offers `Locate note…` and `Rewrite note` instead. *Corrected increment 7:* the row menu had offered Reveal and Open whenever a filename was recorded, so `Open in Editor` on a renamed Note handed the user macOS's own "the file does not exist" alert — which is the error the user reported. The detail pane had already split these two cases, and had a comment explaining why; the row menu never got the fix. **One rule, every surface that applies it.**
+- Full action set: `Reveal in Finder` · `Open in Editor` (located only) · `Locate note…` · `Rewrite note` (unresolved, or on request) · `Retry` / `Finish transcription` (failed or interrupted only) · `Reveal recording in Finder` · `Delete…`.
+
+### Note Link (Meetings list and detail, PRD §4.12)
+
+The Note is the user's file, in the user's folder. They will rename it, move it and
+edit it, and none of that makes it stop being this Meeting's Note. Everything in
+this pattern follows from that one sentence, which the product did not believe for
+its first six increments.
+
+**Four states, and what each surface says.**
+
+| State | The row | The detail pane |
+| --- | --- | --- |
+| **Linked, app-named** | nothing — this is the normal case and it is silent | `Reveal note`, and the filename is not shown, because the app chose it and it carries no information |
+| **Linked, user-named** | nothing — a renamed Note is not a problem | the filename in `{typography.mono-inline}`, because the user gave it a meaning, plus `Reveal note` |
+| **Unresolved** | `Note not found` with `doc.badge.ellipsis` | `{components.state-banner}` degraded: what was looked for, where, and the two remedies — `Locate note…` and `Rewrite note` — each saying which file it acts on |
+| **Ambiguous** | `Note not found` | the files that both claim this Meeting, listed by name, with `Use this one` per file. The app never picks |
+
+**Reconciliation is silent when it succeeds.** A renamed file that is found again
+produces no banner, no badge and no confirmation. The user renamed a file; being
+told the app coped is noise, and being asked to confirm their own action is worse.
+The only visible trace is that the detail pane now shows the name they chose.
+
+**The two remedies are never interchangeable.** `Locate note…` opens a file
+chooser and adopts an existing file. `Rewrite note` renders a fresh file from the
+record. The copy distinguishes them by what happens to the file on disk, and
+`Rewrite note` on an unresolved link reconciles first — so it can only ever create
+a file when nothing claims the Meeting.
+
+**Pointing at a file the app did not write is allowed, and stated.** FR-79 lets
+the user choose any Markdown file. If its frontmatter names a different Meeting,
+the app says which one and asks. If it carries no Minutes frontmatter at all, the
+app says plainly that the next rewrite of this Meeting would replace the file's
+contents — before the link is made, not after.
+
+**A Note changed outside Minutes is a `{components.decision-banner}`**, not a
+degraded one, and not an alert. Two outcomes, both legitimate: keep the file as it
+is, or replace it with a freshly rendered Note. The prominent control is the one
+that changes nothing on disk. The choice is per Note and is never remembered — a
+user who kept one hand-edited Note has decided nothing about the next one.
+
+**Unclaimed Notes are a footer, not a section.** One line at the foot of the
+Meetings list — *"1 note in your folder has no meeting"* — expanding to a list in
+`{components.voice-row}`'s anatomy. It is a footer because it is almost always
+absent and never urgent; it exists because a file the app wrote and then lost
+track of must not be invisible, which is the state the user reported and the state
+in which a real meeting was lost. Files Minutes did not write are never listed.
 
 ### Detection Prompt (notification, PRD FR-12)
 
@@ -306,6 +356,37 @@ Two rules over the table:
 - **A claim states its basis.** The second row looks identical to the first in the transcript, and it must not be identical in the detail pane: one is a structural fact and the other is a measurement that could be wrong. The detail says which, and shows the measured distance as a fact.
 - **A refusal is not an error.** Rows three and four render in the ordinary in-room treatment with no warning glyph. The app declining to guess is the product working, and dressing it as a failure would push a user toward wanting the guess back.
 
+### Note Link state machine (PRD FR-78, FR-81)
+
+```mermaid
+stateDiagram-v2
+    [*] --> Linked: Note written
+    Linked --> Broken: recorded path absent
+    Broken --> Linked: reconciliation finds exactly one file
+    Broken --> Ambiguous: more than one file claims this Meeting
+    Broken --> Unresolved: reconciliation finds nothing
+    Ambiguous --> Linked: user picks a file
+    Unresolved --> Linked: Locate note… , or Rewrite note creates one
+    Linked --> Conflicted: bytes on disk differ from what the app wrote
+    Conflicted --> Linked: user keeps the file, or replaces it
+```
+
+**`Broken` is never a state the user sees.** It exists for one turn — the moment
+an existence check fails and before reconciliation has answered — and every user-
+visible state is downstream of an answer. This is the whole correction: the app
+used to render `Broken` as "your note is missing", which is a claim it had not yet
+earned.
+
+**`Unresolved` and `Ambiguous` persist nothing.** They are display states, exactly
+as the missing-note check has always been. Only a positive identification is
+written to the record, because *this file is this Meeting's Note* is durable and
+*this file is not there right now* is not.
+
+**`Conflicted` blocks the write that discovered it.** A rewrite that finds
+unrecognised bytes does not proceed and does not partially write. The rename or
+retitle that triggered it is still applied to the record — the record is not the
+file, and holding an edit hostage to a file conflict would be a second defect.
+
 ### Capability readiness (PRD FR-58)
 
 A fourth state family, added in increment 3. The product already distinguishes *working*, *degraded* and *failed*; this adds **blocked**, which is none of those: nothing has gone wrong, and the machine simply cannot do the thing yet.
@@ -329,7 +410,7 @@ Rules that apply to all four:
 - **Meetings, empty:** one line of text and nothing else — "No meetings yet. Click the menu bar icon to record one." No illustration, no mascot.
 - **Loading:** panes render their structure immediately with content filling in. No full-pane spinners; the window must never appear to hang.
 - **Errors:** stated in place, in the pane that owns the thing that failed, with the next action as a button. Never a modal alert for anything the user did not just initiate.
-- **A destructive action confirms and enumerates.** Deleting a Meeting names exactly what is removed — Note file, audio, or both — before removing it (PRD FR-40).
+- **A destructive action confirms, enumerates, and is recoverable.** Deleting a Meeting names exactly what is removed — Note file, audio, or both — before removing it, and what it removes goes to the Trash (PRD FR-40 as amended). *Amended increment 7, retrospectively:* the confirmation named a file it could not find and therefore did not delete, and the recording it did delete was unlinked rather than trashed, so a real meeting is gone. A confirmation dialog is not a substitute for a route back. The enumeration is resolved when the dialog is composed, so it describes the filesystem rather than the record.
 
 ## Interaction Primitives
 
@@ -339,6 +420,7 @@ Rules that apply to all four:
 - **No drag and drop** anywhere. No custom gestures. No hover-only affordances — anything actionable is visible without hovering. A borderless button in a row full of text is a hover-only affordance in practice, whatever the code says.
 - **A per-row affordance is keyed by the row, never by what the row is about.** A speaker owns one transcript block per turn, so keying a rename popover by speaker presented one popover per block — nine for a single click in a real meeting, and the one SwiftUI drew was not the one clicked. The key is the block's own identity. The general form: if two rows can share the value you keyed on, the key is wrong.
 - **A modifier that can only present once is attached once.** Putting a `.popover` on all 708 transcript rows cost a layout pass per row per click, which is what "slow to pop up" was. Attach it to the row that is actually presenting.
+- **An action offered as a remedy must not be the action that makes the failure permanent.** Where the app presents a fix for a broken state, that fix is checked against the state it does *not* handle: `Rewrite note` on a renamed Note would have created a duplicate and orphaned the user's file forever, and it was the only thing on offer. The general form: before shipping a remedy, ask what it does in the case the app has misdiagnosed. *Added increment 7.*
 - **A row of controls adapts rather than assuming a width.** `ViewThatFits`: one line where it fits, stacked where it does not. A row that overflows its container is the same defect as a row that compresses its children, and the second one shipped twice.
 - **Global hotkey:** none in v1. It is a real convenience but it is a new permission surface and a conflict-resolution UI, and PRD §5 keeps the surface small. Logged as a v2 candidate.
 - **Window behaviour:** closing the window does not quit the app (it is menu-bar-resident). Reopening restores the last sidebar selection. Only one window ever exists (PRD FR-5).
@@ -469,6 +551,31 @@ The flow this increment exists for. Niklas has just read the note from an eight-
 7. Weeks later he opens **General** out of curiosity and sees his own voice at the top of Remembered voices with a `You` badge and *24 s of audio · recorded 12 September*. There is a delete next to it. He does not press it, and the fact that he could is the point.
 
 **The climax is step 4 and it is deliberately dull** — 25 seconds, two facts, a row going quiet. Everything interesting happens in step 5, in a meeting he is not thinking about the app during. **Edge case:** if a colleague talks over him during step 3, the card refuses the sample and says *more than one voice was in the recording* — because a fingerprint of two people would put a colleague's name on his words for months, and one wasted attempt is cheaper than finding that out in October.
+
+### KF-9. Niklas renames a note in Finder, and Minutes agrees with him *(PRD FR-78 … FR-83)*
+
+The flow this increment exists for, and the only one in this document written from
+a failure that had already happened. Niklas records a 13-minute team standup.
+The heuristic backend titles it `Actually`, from a word somebody said early on. The
+note lands in `~/Documents/Minutes` as `2026-09-03 0930 Actually.md`.
+
+1. **Entry:** he is in Finder, in his own notes folder, filing the morning's work. `Actually` tells him nothing, so he renames the file `2026-09-03 0930 Morning -standup.md` — in Finder, because that is where he already is.
+2. He switches to Minutes. **Nothing has changed.** The row does not say the note is missing, because before saying anything the app looked: the recorded path was absent, so it read the frontmatter of the files in the folder, found exactly one carrying this Meeting's ID, and relinked. No banner, no dialog, no confirmation of a decision he already made.
+3. **Climax:** the detail pane shows `2026-09-03 0930 Morning -standup.md` beside `Reveal note`. The app is calling the file what Finder calls it. It is a two-line change on screen and it is the entire point: the app has stopped having a private opinion about the name of the user's file.
+4. He renames a speaker in the transcript. The note is rewritten — under **his** filename, not back to `Actually.md`, because the app knows the name on disk is not the name it wrote and has stopped correcting it. The title inside the file still says `Actually`; he double-clicks the title in the app and fixes that too, which is where titles are edited and always was.
+5. **Resolution:** a week later he deletes a test meeting and ticks *also delete notes*. The dialog names the file it is about to remove — resolved from the folder, not remembered from the record — and says it goes to the Trash. It does.
+
+**Edge case, the one that cost a meeting:** if the file had been renamed *and* its
+Meeting deleted, the note would be an Unclaimed Note and the Meetings list would
+say so in a footer, with `Reveal` next to it. It is not offered as an import,
+because a Note cannot be turned back into a Meeting — but it is never invisible
+again. On the day this flow was written that exact file existed on the author's
+disk, its meeting permanently deleted, and no surface in the product mentioned it.
+
+**Edge case, hand edits:** if he had added a paragraph of his own to the note, the
+rewrite in step 4 would not have happened. The app compares what it last wrote
+with what is on disk, finds them different, writes nothing, and offers him the two
+outcomes — keep his file, or replace it. It does not recommend one.
 
 ### KF-5. A transcription fails and nothing is lost *(PRD FR-19, FR-39)*
 

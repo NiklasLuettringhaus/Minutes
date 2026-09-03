@@ -26,6 +26,7 @@ final class Preferences: ObservableObject {
         static let customWatchedApps = "customWatchedApps"
         static let showInDock = "showInDock"
         static let metadataBackend = "metadataBackend"
+        static let dismissedUnclaimed = "dismissedUnclaimedNotes"
     }
 
     /// Verified present in the live catalogue. Deliberately not the library's
@@ -84,6 +85,16 @@ final class Preferences: ObservableObject {
     @Published var didCompleteFirstRun: Bool {
         didSet { d.set(didCompleteFirstRun, forKey: K.didCompleteFirstRun) }
     }
+    /// Filenames of Unclaimed Notes the user has dismissed from the Library
+    /// footer (FR-82).
+    ///
+    /// A list of names here rather than a marker in the file, because the file's
+    /// Meeting no longer exists and writing to an orphan to record that the app
+    /// should stop mentioning it is worse than remembering it locally. Dismissing
+    /// changes the listing and never touches the file.
+    @Published var dismissedUnclaimedNotes: [String] {
+        didSet { d.set(dismissedUnclaimedNotes, forKey: K.dismissedUnclaimed) }
+    }
     /// The only evidence we can have about system-audio permission: whether the
     /// last capture actually produced audio. macOS exposes no query API (FR-42).
     @Published var lastSystemCaptureOK: Bool? {
@@ -116,6 +127,7 @@ final class Preferences: ObservableObject {
         fillerWords = d.stringArray(forKey: K.fillerWords) ?? FillerWords.defaults
         customWatchedApps = d.stringArray(forKey: K.customWatchedApps) ?? []
         didCompleteFirstRun = d.bool(forKey: K.didCompleteFirstRun)
+        dismissedUnclaimedNotes = d.stringArray(forKey: K.dismissedUnclaimed) ?? []
         lastSystemCaptureOK = d.object(forKey: K.lastSystemCaptureOK) as? Bool
         lastThroughputRatio = d.object(forKey: K.lastThroughput) as? Double
     }

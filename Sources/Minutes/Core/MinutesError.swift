@@ -33,6 +33,10 @@ enum MinutesError: LocalizedError, Equatable {
     case notesFolderUnavailable
     case notesFolderNotWritable(String)
     case persistenceFailed(String)
+    /// A delete that could not reach the Trash. Deliberately **not** followed by
+    /// an unlink: AD-42 exists because `removeItem` on a Meeting directory
+    /// destroyed a real recording, and a fallback would restore exactly that.
+    case deleteFailed(item: String, reason: String)
 
     // Pipeline
     case stageFailed(stage: String, reason: String)
@@ -84,6 +88,8 @@ enum MinutesError: LocalizedError, Equatable {
             return "The notes folder is not writable: \(p)"
         case .persistenceFailed(let d):
             return "Could not save. \(Self.sentence(d))"
+        case .deleteFailed(let item, let reason):
+            return "\(item) was not deleted. \(Self.sentence(reason))"
         case .stageFailed(let stage, let reason):
             return "\(stage) failed. \(Self.sentence(reason))"
         }
@@ -145,6 +151,11 @@ enum MinutesError: LocalizedError, Equatable {
             return "Check that an input device is connected and selected in System Settings > Sound."
         case .audioFileWriteFailed, .persistenceFailed:
             return "Check there is free disk space, then try again."
+        case .deleteFailed:
+            // Nothing was removed, which is the point worth stating: the delete
+            // goes to the Trash so that it can be undone, and a volume with no
+            // Trash means it does not happen rather than happening irreversibly.
+            return "Nothing was removed. Minutes deletes to the Trash so it can be undone, and this item could not be moved there."
         case .systemAudioTapFailed:
             return "macOS revokes system-audio permission when Minutes is rebuilt. Run the reset command shown in Settings, then try again."
         case .systemAudioProducedSilence:

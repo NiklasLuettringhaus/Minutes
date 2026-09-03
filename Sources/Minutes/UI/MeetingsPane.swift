@@ -13,6 +13,21 @@ struct MeetingsPane: View {
     @State private var confirmingDelete = false
     @State private var deleteNoteToo = false
     @State private var refreshing = false
+    /// The files the confirmed delete will actually remove, resolved when the
+    /// dialog is raised (FR-40 as amended).
+    ///
+    /// Held in state rather than computed in `deleteMessage`, because resolving a
+    /// Note Link reads the folder and a SwiftUI body must not.
+    @State private var deleteTargets: DeleteTargets = .init()
+    @State private var showingUnclaimed = false
+
+    struct DeleteTargets: Equatable {
+        var meetings = 0
+        /// Files that exist and will be trashed. Not names off the record.
+        var noteFiles: [String] = []
+        /// Meetings whose Note could not be found at all.
+        var notesNotFound = 0
+    }
 
     /// The one selected Meeting, or nil when the selection is empty or plural.
     private var single: Meeting? {
@@ -74,20 +89,61 @@ struct MeetingsPane: View {
 
     /// Names the count and the Note consequence explicitly. Discoverability does
     /// not weaken confirmation — a destructive action still says what it destroys.
+    ///
+    /// **It names the file that will actually be deleted** (FR-40 as amended).
+    /// This used to read the filename off the record, so on a Note the user had
+    /// renamed in Finder it named a file that was not there and would not be
+    /// touched — a false statement at the exact moment the user was deciding
+    /// whether to trust it. The same path would have deleted a *different* file if
+    /// a name had been reused.
     private var deleteMessage: String {
-        let ms = selectedMeetings
-        let notes = ms.compactMap(\.noteFilename)
-        if ms.count == 1 {
-            guard deleteNoteToo else {
-                return "The recording and transcript will be permanently deleted. The Markdown note will be left in your notes folder."
-            }
-            let name = notes.first.map { "the Markdown note “\($0)”" } ?? "its Markdown note"
-            return "The recording, the transcript and \(name) will be permanently deleted."
+        let t = deleteTargets
+        let recordings = t.meetings == 1
+            ? "The recording and transcript"
+            : "\(t.meetings) recordings and their transcripts"
+        let trash = " \(t.meetings == 1 ? "goes" : "go") to the Trash, so this can be undone."
+
+        guard deleteNoteToo else {
+            return recordings + trash + " The Markdown \(t.meetings == 1 ? "note" : "notes") will be left in your notes folder."
         }
-        let base = "\(ms.count) recordings and their transcripts will be permanently deleted."
-        return deleteNoteToo
-            ? base + " \(notes.count) Markdown \(notes.count == 1 ? "note" : "notes") will be deleted with them."
-            : base + " Their Markdown notes will be left in your notes folder."
+        if t.noteFiles.isEmpty {
+            // Says so rather than naming what the record remembers.
+            return recordings + trash + " Minutes could not find "
+                + (t.meetings == 1 ? "this meeting's note" : "any of their notes")
+                + " in your notes folder, so nothing there will be touched."
+        }
+        var out = recordings
+        if t.noteFiles.count == 1 {
+            out += " and “\(t.noteFiles[0])”" + trash
+        } else {
+            out += " and \(t.noteFiles.count) notes — "
+                + t.noteFiles.map { "“\($0)”" }.joined(separator: ", ") + " —" + trash
+        }
+        if t.notesNotFound > 0 {
+            out += " \(t.notesNotFound) other \(t.notesNotFound == 1 ? "note was" : "notes were") not found, so nothing there will be touched."
+        }
+        return out
+    }
+
+    /// Resolves the links before the dialog is raised, so its sentence describes
+    /// the filesystem rather than the record.
+    private func askToDelete() {
+        let ms = selectedMeetings
+        deleteTargets = DeleteTargets(meetings: ms.count)
+        confirmingDelete = true
+        guard let folder = prefs.notesFolder() else { return }
+        Task {
+            var files: [String] = []
+            var missing = 0
+            for m in ms {
+                if let u = await NoteLinkService.resolvedNoteURL(for: m, in: folder) {
+                    files.append(u.lastPathComponent)
+                } else {
+                    missing += 1
+                }
+            }
+            deleteTargets = DeleteTargets(meetings: ms.count, noteFiles: files, notesNotFound: missing)
+        }
     }
 
     private var list: some View {
@@ -100,7 +156,7 @@ struct MeetingsPane: View {
             .listStyle(.inset)
             // FR-40 amended: the standard key for the standard action. Still
             // routed through the confirmation.
-            .onDeleteCommand(perform: selected.isEmpty ? nil : { confirmingDelete = true })
+            .onDeleteCommand(perform: selected.isEmpty ? nil : { askToDelete() })
 
             // FR-54: an unreadable record is surfaced, never silently omitted.
             if !app.unreadableMeetings.isEmpty {
@@ -110,9 +166,52 @@ struct MeetingsPane: View {
                     .padding(.bottom, Tok.s3)
             }
 
+            unclaimedFooter
+
             libraryToolbar
         }
         .background(Tok.surfaceWindow)
+    }
+
+    /// FR-82. Files Minutes wrote that no Meeting claims.
+    ///
+    /// A footer rather than a section because it is almost always absent and never
+    /// urgent — and it exists at all because a file the app wrote and then lost
+    /// track of must not be invisible. That was the state the user reported, and
+    /// the state in which a real meeting was lost: its note survived a rename, its
+    /// record was deleted, and no surface in the product mentioned the file.
+    ///
+    /// They are not offered as an import. A Note cannot be parsed back into a
+    /// Meeting (AD-9), and a half-Meeting with a transcript and no audio would be
+    /// a second kind of record for every consumer of `Meeting` to special-case.
+    @ViewBuilder
+    private var unclaimedFooter: some View {
+        if !app.unclaimedNotes.isEmpty {
+            VStack(alignment: .leading, spacing: Tok.s3) {
+                Button {
+                    showingUnclaimed.toggle()
+                } label: {
+                    HStack(spacing: Tok.s2) {
+                        Image(systemName: showingUnclaimed ? "chevron.down" : "chevron.right")
+                            .font(.caption2)
+                        Text(app.unclaimedNotes.count == 1
+                             ? "1 note in your folder has no meeting"
+                             : "\(app.unclaimedNotes.count) notes in your folder have no meeting")
+                            .font(.caption)
+                    }
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Tok.textSecondary)
+
+                if showingUnclaimed {
+                    ForEach(app.unclaimedNotes) { n in
+                        UnclaimedNoteRow(note: n)
+                    }
+                }
+            }
+            .padding(.horizontal, Tok.s4)
+            .padding(.bottom, Tok.s3)
+        }
     }
 
     /// The visible home for management actions. Previously delete, retry and
@@ -121,7 +220,7 @@ struct MeetingsPane: View {
     private var libraryToolbar: some View {
         HStack(spacing: Tok.s3) {
             Button {
-                confirmingDelete = true
+                askToDelete()
             } label: {
                 Image(systemName: "trash")
             }
@@ -175,28 +274,77 @@ struct MeetingsPane: View {
     func rowContent(_ m: Meeting, isSelected: Bool) -> some View {
         MeetingRow(meeting: m, isSelected: isSelected,
                    isInFlight: app.inFlight.contains(m.id),
-                   noteMissing: app.missingNotes.contains(m.id))
+                   noteMissing: app.noteIsMissing(m.id))
         .padding(.vertical, 3)
         .contextMenu {
-            if let f = m.noteFilename, let folder = prefs.notesFolder() {
-                Button("Reveal in Finder") {
-                    NSWorkspace.shared.selectFile(folder.appendingPathComponent(f).path,
-                                                  inFileViewerRootedAtPath: folder.path)
-                }
-                Button("Open in Editor") {
-                    NSWorkspace.shared.open(folder.appendingPathComponent(f))
-                }
+            ForEach(Self.rowActions(meeting: m,
+                                    link: app.noteLink(m.id),
+                                    isInFlight: app.inFlight.contains(m.id)), id: \.self) { a in
+                menuItem(a, for: m)
             }
-            if m.hasFailed || (!m.isComplete && !app.inFlight.contains(m.id)) {
-                Button(m.hasFailed ? "Retry transcription" : "Finish transcription") {
-                    Task { await SessionCoordinator.shared.retry(meetingID: m.id) }
-                }
+        }
+    }
+
+    /// What a row offers, as a value.
+    ///
+    /// A pure function, so the rule can be asserted without rendering a menu —
+    /// and the rule is worth asserting, because the version of it that shipped
+    /// offered `Open in Editor` whenever a *filename was recorded* rather than
+    /// when a *file existed*, which handed the user macOS's own "the file does not
+    /// exist" alert. The detail pane had the correct condition and a comment
+    /// explaining it; this menu never got the fix. One rule, one place, one test.
+    enum RowAction: Hashable {
+        case reveal(URL)
+        case openInEditor(URL)
+        case retry
+        case finish
+        case locate
+        case rewrite
+        case useThisFile(URL)
+        case revealRecording
+        case divider
+        case delete
+    }
+
+    static func rowActions(meeting m: Meeting,
+                           link: NoteLinkState,
+                           isInFlight: Bool) -> [RowAction] {
+        var out: [RowAction] = []
+        if let url = link.locatedURL {
+            out += [.reveal(url), .openInEditor(url)]
+        }
+        if case .ambiguous(let urls) = link {
+            out += urls.map { RowAction.useThisFile($0) }
+        }
+        if m.hasFailed { out.append(.retry) }
+        else if !m.isComplete && !isInFlight { out.append(.finish) }
+        if m.isComplete { out += [.locate, .rewrite] }
+        out += [.revealRecording, .divider, .delete]
+        return out
+    }
+
+    @ViewBuilder
+    private func menuItem(_ a: RowAction, for m: Meeting) -> some View {
+        switch a {
+        case .reveal(let url):
+            Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+        case .openInEditor(let url):
+            Button("Open in Editor") { NSWorkspace.shared.open(url) }
+        case .useThisFile(let url):
+            Button("Use “\(url.lastPathComponent)” as this note") {
+                Task { await SessionCoordinator.shared.adoptNote(url, meetingID: m.id) }
             }
-            if app.missingNotes.contains(m.id) {
-                Button("Rewrite note") {
-                    Task { await SessionCoordinator.shared.rewriteNote(meetingID: m.id) }
-                }
-            }
+        case .retry:
+            Button("Retry transcription") { Task { await SessionCoordinator.shared.retry(meetingID: m.id) } }
+        case .finish:
+            Button("Finish transcription") { Task { await SessionCoordinator.shared.retry(meetingID: m.id) } }
+        case .locate:
+            // Offered on a resolved link too: a user may want to point at a
+            // different file (FR-79).
+            Button("Locate note…") { Task { await SessionCoordinator.shared.locateNote(meetingID: m.id) } }
+        case .rewrite:
+            Button("Rewrite note") { Task { await SessionCoordinator.shared.rewriteNote(meetingID: m.id) } }
+        case .revealRecording:
             // The recordings live under ~/Library, which Finder hides, so without
             // this there is no route to them from anywhere in the app.
             Button("Reveal recording in Finder") {
@@ -205,12 +353,14 @@ struct MeetingsPane: View {
                     NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: dir.path)
                 }
             }
+        case .divider:
             Divider()
+        case .delete:
             Button("Delete…", role: .destructive) {
                 deleteNoteToo = false
                 // Right-clicking a row outside the selection acts on that row.
                 if !selected.contains(m.id) { selected = [m.id] }
-                confirmingDelete = true
+                askToDelete()
             }
         }
     }
@@ -308,30 +458,100 @@ struct MeetingDetail: View {
                     .foregroundStyle(Tok.textSecondary)
                     .fixedSize()
                 // FR-53: offering "Reveal note" for a file that is not there sends
-                // the user to an empty Finder window, so the two cases are split.
-                if noteIsMissing {
-                    Button("Rewrite note") {
-                        Task { await SessionCoordinator.shared.rewriteNote(meetingID: meeting.id) }
-                    }
-                    .buttonStyle(.borderless).font(.caption)
-                } else if let f = meeting.noteFilename, let folder = prefs.notesFolder() {
+                // the user to an empty Finder window, so the cases are split.
+                if let url = link.locatedURL {
                     Button("Reveal note") {
-                        NSWorkspace.shared.selectFile(folder.appendingPathComponent(f).path,
-                                                      inFileViewerRootedAtPath: folder.path)
+                        NSWorkspace.shared.activateFileViewerSelecting([url])
                     }
                     .buttonStyle(.borderless).font(.caption)
                     .fixedSize()
                 }
                 Spacer(minLength: 0)
             }
-            if noteIsMissing {
-                StateBanner(kind: .degraded,
-                            text: "This meeting's note is not in your notes folder. Rewriting recreates it from the recording's stored transcript — nothing is re-transcribed, and your speaker names are kept.")
+            // FR-80: the app shows the user's name for the file. Only when it is
+            // theirs — a name the app derived carries no information the row above
+            // does not already give.
+            if case .linked(let url, true) = link {
+                Text(url.lastPathComponent)
+                    .font(Tok.monoInline).foregroundStyle(Tok.textSecondary)
+                    // Middle, not tail: a filename's two informative ends are the
+                    // name the user gave it and the extension. Tail truncation
+                    // ate the `.md` at 320pt. Same treatment as the ambiguity
+                    // list, so one filename never reads differently from another.
+                    .lineLimit(1).truncationMode(.middle)
+                    .textSelection(.enabled)
+                    .help("You named this file. Minutes will not rename it.")
             }
+            noteLinkBanner
+            noteConflictBanner
         }
     }
 
-    private var noteIsMissing: Bool { app.missingNotes.contains(meeting.id) }
+    private var link: NoteLinkState { app.noteLink(meeting.id) }
+
+    /// FR-81. The app found something it will not decide.
+    ///
+    /// Here rather than at the window root because a conflict is about *this*
+    /// meeting's file, and the edit that discovered it was made on this pane.
+    @ViewBuilder
+    private var noteConflictBanner: some View {
+        if let c = app.noteConflict, c.meetingID == meeting.id {
+            DecisionBanner(
+                text: "“\(c.filename)” has been changed outside Minutes, so the note was not rewritten. Your edit to this meeting is saved either way.",
+                safeLabel: "Keep My Version",
+                safeAction: { Task { await SessionCoordinator.shared.keepNoteOnDisk() } },
+                riskyLabel: "Replace With Minutes' Note",
+                riskyAction: { Task { await SessionCoordinator.shared.replaceNoteWithFreshRender() } })
+        }
+    }
+
+    /// The unresolved and ambiguous states. Both name what was looked for, and
+    /// both distinguish the two remedies by what each does to the file on disk —
+    /// offering only "Rewrite note" for a renamed Note is how a recoverable state
+    /// became an unrecoverable one.
+    @ViewBuilder
+    private var noteLinkBanner: some View {
+        switch link {
+        case .notFound:
+            VStack(alignment: .leading, spacing: Tok.s3) {
+                StateBanner(kind: .degraded,
+                            text: "Minutes looked in your notes folder and could not find this meeting's note.")
+                Text("**Locate note…** points this meeting at a file that is already there — use it if you moved or renamed the note. **Rewrite note** creates a new file from the stored transcript; nothing is re-transcribed and your speaker names are kept.")
+                    .font(.caption).foregroundStyle(Tok.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: Tok.s3) {
+                    Button("Locate note…") {
+                        Task { await SessionCoordinator.shared.locateNote(meetingID: meeting.id) }
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                    Button("Rewrite note") {
+                        Task { await SessionCoordinator.shared.rewriteNote(meetingID: meeting.id) }
+                    }
+                    .buttonStyle(.bordered).controlSize(.small)
+                }
+            }
+        case .ambiguous(let urls):
+            VStack(alignment: .leading, spacing: Tok.s3) {
+                StateBanner(kind: .degraded,
+                            text: "\(urls.count) files in your notes folder say they belong to this meeting. Minutes will not choose between them.")
+                ForEach(urls, id: \.path) { u in
+                    HStack(spacing: Tok.s3) {
+                        Text(u.lastPathComponent)
+                            .font(Tok.monoInline)
+                            .lineLimit(1).truncationMode(.middle)
+                        Button("Use this one") {
+                            Task { await SessionCoordinator.shared.adoptNote(u, meetingID: meeting.id) }
+                        }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([u]) }
+                            .buttonStyle(.bordered).controlSize(.small)
+                    }
+                }
+            }
+        case .linked, .unknown:
+            EmptyView()
+        }
+    }
 
     private func openSummaries() {
         app.paneRequest = MainWindow.Pane.summaries.rawValue
@@ -970,5 +1190,50 @@ struct MeetingRow: View {
         let cal = Calendar.current
         f.dateFormat = cal.isDateInToday(meeting.startedAt) ? "'Today' HH:mm" : "d MMM HH:mm"
         return f.string(from: meeting.startedAt)
+    }
+}
+
+// MARK: - Unclaimed note row (FR-82)
+
+/// `{components.voice-row}`'s anatomy, verbatim.
+///
+/// Deliberately not a new shape. It is the same kind of thing the Remembered
+/// voices list holds — a short list of items the app is keeping on the user's
+/// behalf, each with a name, a line of provenance and a way to remove it from the
+/// list. The title is the filename the file **actually has**, because that is the
+/// only name that helps the user find it in Finder.
+struct UnclaimedNoteRow: View {
+    let note: UnclaimedNote
+
+    var body: some View {
+        HStack(spacing: Tok.s3) {
+            Image(systemName: "doc.text").foregroundStyle(Tok.brand)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(note.filename)
+                    .font(Tok.monoInline)
+                    .lineLimit(1).truncationMode(.middle)
+                Text(subtitle).font(.caption2).foregroundStyle(Tok.textSecondary)
+            }
+            Spacer(minLength: 0)
+            Button("Reveal") { NSWorkspace.shared.activateFileViewerSelecting([note.url]) }
+                .buttonStyle(.bordered).controlSize(.small)
+            Button {
+                // Changes the listing only. Never the file — its meeting is gone,
+                // and writing to an orphan to record that the app should stop
+                // mentioning it would be worse than remembering it locally.
+                Preferences.shared.dismissedUnclaimedNotes.append(note.filename)
+                Task { await SessionCoordinator.shared.refreshLibrary() }
+            } label: {
+                Image(systemName: "minus.circle")
+            }
+            .buttonStyle(.borderless)
+            .help("Stop listing this file. The file is not touched.")
+        }
+        .padding(.vertical, Tok.s2)
+    }
+
+    private var subtitle: String {
+        guard let d = note.startedAt else { return "Written by Minutes; its meeting is no longer in your library." }
+        return "\(d.formatted(date: .abbreviated, time: .shortened)) — its meeting is no longer in your library."
     }
 }

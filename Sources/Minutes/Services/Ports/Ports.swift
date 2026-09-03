@@ -111,8 +111,58 @@ protocol MetadataBackend: Sendable {
 // MARK: - Note output
 
 protocol NoteWriting: Sendable {
-    /// Renders and atomically writes the Note. Returns the filename it used —
-    /// it is the only component that computes one (AD-18).
-    func write(meeting: Meeting, into folder: URL) throws -> String
+    /// Renders and atomically writes the Note.
+    ///
+    /// `at` is the file the Note Link resolved to, when one was found. Passing it
+    /// is how a rewrite stops deriving a destination from a stored filename it has
+    /// not checked — the defect that turned a renamed Note into a permanently
+    /// orphaned duplicate (FR-35 as amended).
+    ///
+    /// Returns an outcome rather than a filename, because refusing to overwrite
+    /// bytes the app did not write is a result the caller must handle (FR-81).
+    func write(meeting: Meeting, into folder: URL, at located: URL?) throws -> NoteWriteOutcome
     func render(meeting: Meeting) -> String
+}
+
+/// What a Note write actually did. AD-41.
+///
+/// The refusal is a return value and not a thrown error on purpose: `throws`
+/// invites the `try?` that would discard it, and `Pipeline.rewriteNote` already
+/// logs-and-swallows its errors.
+enum NoteWriteOutcome: Equatable, Sendable {
+    /// `filename` is the name on disk — which may be the user's, not the app's.
+    /// `written` is the name the app would have chosen, stored so that a later
+    /// divergence between the two identifies a user rename (AD-40).
+    case wrote(filename: String, written: String, digest: String)
+    /// The file on disk is not the bytes Minutes last wrote. Nothing was written.
+    case refusedChangedOnDisk(URL)
+}
+
+// MARK: - Note location (AD-39)
+
+/// Where a Meeting's Note actually is.
+enum NoteLocation: Equatable, Sendable {
+    case located(URL)
+    /// More than one file claims this Meeting. Reported, never guessed — picking
+    /// one means the next rewrite destroys the other.
+    case ambiguous([URL])
+    case notFound
+}
+
+/// A file in the Notes Folder that Minutes wrote and no Meeting claims (FR-82).
+///
+/// Carries only what its own frontmatter says, because that is all there is: the
+/// Meeting it belonged to is gone, and a Note cannot be parsed back into one.
+struct UnclaimedNote: Equatable, Sendable, Identifiable {
+    let url: URL
+    let startedAt: Date?
+    var id: String { url.path }
+    var filename: String { url.lastPathComponent }
+}
+
+/// AD-39: resolving a Note Link. Reads frontmatter identity only, and creates,
+/// renames, moves and deletes nothing.
+protocol NoteLocating: Sendable {
+    func locate(meeting: Meeting, in folder: URL) throws -> NoteLocation
+    func unclaimed(meetings: [Meeting], in folder: URL) throws -> [UnclaimedNote]
 }

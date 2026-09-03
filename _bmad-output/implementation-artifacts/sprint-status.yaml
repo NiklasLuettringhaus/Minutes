@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-31-2026 11:23
-last_updated: 09-02-2026
+last_updated: '2026-09-03'
 project: Minutes
 project_key: NOKEY
 tracking_system: file-system
@@ -150,4 +150,19 @@ development_status:
   13-2-the-app-can-show-you-everything-it-stores-about-you: backlog
   13-3-export-and-import-the-folder: backlog
   13-4-uninstall-is-complete-and-documented-completely: backlog
+  13-5-meeting-content-cannot-reach-the-repository-through-prose: done
   epic-13-retrospective: optional
+
+  epic-14: done
+  14-1-deleting-a-meeting-can-be-undone: done
+  14-2-a-note-says-which-meeting-it-belongs-to: done
+  14-3-finding-a-note-that-moved: done
+  14-4-missing-means-minutes-looked-and-did-not-find-it: done
+  14-5-row-and-detail-actions-tell-the-truth-about-what-is-there: done
+  14-6-pointing-a-meeting-at-a-file: done
+  14-7-the-name-you-gave-the-file-is-the-name-it-keeps: done
+  14-8-a-rewrite-finds-the-file-before-it-writes-one: done
+  14-9-the-app-knows-what-it-wrote-so-it-can-tell-your-edit-from-it: done
+  14-10-the-delete-confirmation-names-the-file-it-will-delete: done
+  14-11-a-note-whose-meeting-is-gone-is-still-visible: done
+  epic-14-retrospective: optional

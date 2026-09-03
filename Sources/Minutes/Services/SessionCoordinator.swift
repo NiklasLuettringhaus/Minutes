@@ -192,7 +192,7 @@ final class SessionCoordinator: ObservableObject {
         if let centroid = await loadCentroid(meetingID: meetingID, label: label) {
             await SpeakerDirectory.shared.remember(name: trimmed, centroid: centroid)
         }
-        await Pipeline.shared.rewriteNote(meetingID: meetingID)
+        surface(await Pipeline.shared.rewriteNote(meetingID: meetingID), meetingID: meetingID)
         await AppStateBridge.reloadMeetings()
     }
 
@@ -200,7 +200,7 @@ final class SessionCoordinator: ObservableObject {
         let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         _ = try? await MeetingStore.shared.update(id: meetingID) { $0.metadata?.title = trimmed }
-        await Pipeline.shared.rewriteNote(meetingID: meetingID)
+        surface(await Pipeline.shared.rewriteNote(meetingID: meetingID), meetingID: meetingID)
         await AppStateBridge.reloadMeetings()
     }
 
@@ -218,16 +218,7 @@ final class SessionCoordinator: ObservableObject {
     }
 
     func delete(meetingID: String, alsoNote: Bool) async {
-        let store = MeetingStore.shared
-        var noteURL: URL? = nil
-        if alsoNote,
-           let m = try? await store.load(id: meetingID),
-           let f = m.noteFilename,
-           let folder = Preferences.shared.notesFolder() {
-            noteURL = folder.appendingPathComponent(f)
-        }
-        try? await store.delete(id: meetingID, alsoDeleteNote: noteURL)
-        await AppStateBridge.reloadMeetings()
+        await delete(meetingIDs: [meetingID], alsoNote: alsoNote)
     }
 
     /// FR-40 (amended): one confirmed action over a selection, one reload at the
@@ -235,21 +226,114 @@ final class SessionCoordinator: ObservableObject {
     func delete(meetingIDs: [String], alsoNote: Bool) async {
         let store = MeetingStore.shared
         let folder = Preferences.shared.notesFolder()
+        var failure: MinutesError?
         for id in meetingIDs {
             var noteURL: URL? = nil
-            if alsoNote, let m = try? await store.load(id: id), let f = m.noteFilename, let folder {
-                noteURL = folder.appendingPathComponent(f)
+            // FR-40 as amended: the file is *resolved*, not read off the record.
+            // Building this path from the stored filename is how the app deleted
+            // nothing while its dialog said it had.
+            if alsoNote, let m = try? await store.load(id: id), let folder {
+                noteURL = await NoteLinkService.resolvedNoteURL(for: m, in: folder)
             }
-            try? await store.delete(id: id, alsoDeleteNote: noteURL)
+            do {
+                try await store.delete(id: id, alsoDeleteNote: noteURL)
+            } catch let e as MinutesError {
+                // AD-42: nothing was removed. A swallowed `try?` here is how a
+                // delete that did not happen looked exactly like one that did.
+                failure = failure ?? e
+            } catch {
+                failure = failure ?? .deleteFailed(item: "The meeting", reason: error.localizedDescription)
+            }
         }
+        if let failure { AppState.shared.lastError = failure }
         await AppStateBridge.reloadMeetings()
     }
 
-    /// FR-53: re-render a Note that is recorded but absent, from the stored record.
+    /// FR-53: re-render a Note from the stored record.
+    ///
     /// No transcription, no diarization, and nothing parsed out of any file — the
-    /// record is the source of truth and the Note is a projection (AD-9).
+    /// record is the source of truth and the Note is a projection (AD-9). The
+    /// Pipeline resolves the link first, so this can only ever *create* a file
+    /// when no file claims the Meeting (FR-35 as amended).
     func rewriteNote(meetingID: String) async {
-        await Pipeline.shared.rewriteNote(meetingID: meetingID)
+        let outcome = await Pipeline.shared.rewriteNote(meetingID: meetingID)
+        surface(outcome, meetingID: meetingID)
+        await AppStateBridge.reloadMeetings()
+    }
+
+    /// FR-81: a refusal becomes a choice the user makes, not a silent no-op.
+    private func surface(_ outcome: NoteWriteOutcome?, meetingID: String) {
+        if case .refusedChangedOnDisk(let url) = outcome {
+            AppState.shared.noteConflict = .init(meetingID: meetingID, url: url)
+        }
+    }
+
+    // MARK: - Note links (FR-79, FR-81)
+
+    /// FR-79. The user points a Meeting at a file.
+    ///
+    /// Three cases, and the middle one is why this is not a bare file picker: a
+    /// file whose frontmatter names a *different* Meeting is allowed but stated,
+    /// because linking one file to two Meetings means the next rewrite destroys
+    /// one of them. A file Minutes did not write is also allowed and also stated —
+    /// the next rewrite would replace its contents, and the user hears that before
+    /// the link is made rather than after.
+    func locateNote(meetingID: String) async {
+        guard let folder = Preferences.shared.notesFolder() else {
+            AppState.shared.lastError = .notesFolderUnavailable
+            return
+        }
+        guard let url = NotePicker.chooseMarkdownFile(startingIn: folder) else { return }
+
+        let identity = (try? String(contentsOf: url, encoding: .utf8))
+            .flatMap { NoteIdentity.parse(frontmatterOf: String($0.prefix(NoteIdentity.headBytes))) }
+        let meetings = AppState.shared.meetings
+
+        if let identity, identity.isMinutesNote,
+           let other = meetings.first(where: { identity.matches($0) }),
+           other.id != meetingID {
+            let name = other.metadata?.title ?? "the meeting that started \(other.startedAt.formatted(date: .abbreviated, time: .shortened))"
+            guard NotePicker.confirm(
+                title: "That note belongs to another meeting",
+                message: "“\(url.lastPathComponent)” says it is the note for “\(name)”. Linking it here means both meetings point at one file, and the next time either is rewritten the other's note is replaced.",
+                confirm: "Link it anyway") else { return }
+        } else if identity?.isMinutesNote != true {
+            guard NotePicker.confirm(
+                title: "Minutes did not write that file",
+                message: "“\(url.lastPathComponent)” has no Minutes frontmatter. Linking it is fine, but the next time this meeting is rewritten — after a rename, a retitle or an exclusion — its contents will be replaced with the meeting's note.",
+                confirm: "Link it anyway") else { return }
+        }
+        await adoptNote(url, meetingID: meetingID)
+    }
+
+    /// Links a specific file, from FR-79's chooser or from the ambiguity list.
+    func adoptNote(_ url: URL, meetingID: String) async {
+        await NoteLinkService.adopt(url, for: meetingID)
+        await AppStateBridge.reloadMeetings()
+    }
+
+    /// FR-81, the outcome that changes nothing on disk. The record keeps its edit;
+    /// the file keeps the user's version, and the app stops reporting a conflict by
+    /// adopting the file's current bytes as its new baseline.
+    func keepNoteOnDisk() async {
+        guard let c = AppState.shared.noteConflict else { return }
+        AppState.shared.noteConflict = nil
+        await NoteLinkService.adopt(c.url, for: c.meetingID)
+    }
+
+    /// FR-81, the destructive outcome, taken deliberately because the user said so.
+    ///
+    /// Adopting the file's current bytes as the baseline first is what lets the
+    /// rewrite through: the digest check then passes and the write proceeds. The
+    /// alternative — a `force` flag on `NoteWriting.write` — would put a way to
+    /// skip AD-41 into the port itself, where a later caller could reach it by
+    /// accident. Here it takes two deliberate calls in one method that says what
+    /// it is for.
+    func replaceNoteWithFreshRender() async {
+        guard let c = AppState.shared.noteConflict else { return }
+        AppState.shared.noteConflict = nil
+        await NoteLinkService.adopt(c.url, for: c.meetingID)
+        _ = await Pipeline.shared.rewriteNote(meetingID: c.meetingID)
         await AppStateBridge.reloadMeetings()
     }
 
@@ -296,7 +380,7 @@ final class SessionCoordinator: ObservableObject {
             if excluded { set.insert(speaker.raw) } else { set.remove(speaker.raw) }
             m.excludedSpeakers = Array(set).sorted()
         }
-        await Pipeline.shared.rewriteNote(meetingID: meetingID)
+        surface(await Pipeline.shared.rewriteNote(meetingID: meetingID), meetingID: meetingID)
         await AppStateBridge.reloadMeetings()
     }
 
