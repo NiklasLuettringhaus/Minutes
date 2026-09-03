@@ -13,6 +13,15 @@ enum Entry {
             SelfTest.run()
         } else if CommandLine.arguments.contains("--doctor") {
             Doctor.run()
+        } else if CommandLine.arguments.contains("--check-rates") {
+            // FR-88. Assesses every recording on disk and, with --repair, fixes
+            // the ones whose true rate is recoverable and re-runs them.
+            //
+            // A terminal command rather than only a button, because the seven
+            // recordings this exists for were repaired from a terminal and the
+            // person who hits this next may have to do the same before there is
+            // any UI to click.
+            RateCheck.run(repair: CommandLine.arguments.contains("--repair"))
         } else if CommandLine.arguments.contains("--uishot") {
             // Renders the panes to PNG with fixture data, so a layout defect is
             // findable from a terminal. Needs no screen-recording permission —

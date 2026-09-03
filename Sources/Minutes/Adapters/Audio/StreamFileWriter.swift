@@ -35,6 +35,19 @@ final class StreamFileWriter {
     /// Counts frames written to the file, i.e. output frames at 16 kHz — not
     /// captured frames. `duration` divides by the output rate accordingly.
     private(set) var framesWritten: AVAudioFramePosition = 0
+    /// Counts frames *consumed from the ring*, i.e. captured frames at whatever
+    /// rate the device is really delivering. The numerator of AD-44's rate check.
+    private(set) var inputFramesConsumed: AVAudioFramePosition = 0
+    /// When capture started, for the denominator. `Date` rather than the audio
+    /// clock deliberately: the whole failure was the audio clock not being what
+    /// the app believed, so the check has to come from outside it.
+    private(set) var startedAt: Date?
+    /// Set once when the rate check first fails, so the failure is reported once
+    /// rather than on every drained chunk.
+    private(set) var rateFailure: RateFidelity?
+    /// Called on the drain thread the first time the observed rate disagrees with
+    /// the declared one (AD-44). Never called for a settling or correct stream.
+    var onRateDisagreement: (@Sendable (RateFidelity) -> Void)?
     /// The UI level meter. Decays on purpose so the meters fall when someone
     /// stops talking — which is exactly why it must never be used as evidence
     /// that a capture worked (AD-36). Use `evidence` for that.
@@ -89,6 +102,7 @@ final class StreamFileWriter {
         }
         c.sampleRateConverterQuality = AVAudioQuality.high.rawValue
         converter = c
+        startedAt = Date()
         running = true
         let t = Thread { [weak self] in self?.drainLoop() }
         t.name = "minutes.writer.\(url.lastPathComponent)"
@@ -125,9 +139,37 @@ final class StreamFileWriter {
         Double(nonSilentInputFrames) / max(1, format.sampleRate)
     }
 
-    /// What this capture can honestly claim (AD-36).
+    /// What this capture can honestly claim about producing audio (AD-36).
     var evidence: AudioEvidence {
         AudioEvidence(peak: peakEver, nonSilentSeconds: nonSilentSeconds, duration: duration)
+    }
+
+    /// What this capture can honestly claim about its *rate* (AD-44, AD-45).
+    ///
+    /// The second, independent half of capture evidence. Both counters are ones
+    /// this type already keeps: input frames consumed, and the wall time since
+    /// `start()`. Nothing new is measured — which matters, because a check that
+    /// costs something is a check somebody eventually makes optional.
+    ///
+    /// Wall time, not `duration`: `duration` is derived from frames *written* at
+    /// the output rate, so it carries the same error it is meant to detect, and
+    /// comparing it against input frames would always agree.
+    var rateFidelity: RateFidelity {
+        RateFidelity(declaredRate: format.sampleRate,
+                     framesObserved: Double(inputFramesConsumed),
+                     elapsedSeconds: startedAt.map { Date().timeIntervalSince($0) } ?? 0)
+    }
+
+    /// AD-44: the rate is checked *while recording*, because a two-hour meeting is
+    /// too expensive to discover afterwards. Reported once — a disagreement does
+    /// not improve, and one error is information while a hundred is noise.
+    private func checkRate() {
+        guard rateFailure == nil else { return }
+        let f = rateFidelity
+        guard case .wrong = f.verdict else { return }
+        rateFailure = f
+        Log.audio.error("rate disagreement: declared \(f.declaredRate, privacy: .public) Hz, observed \(f.observedRate, privacy: .public) Hz, ratio \(f.ratio, privacy: .public)")
+        onRateDisagreement?(f)
     }
 
     private func drainLoop() {
@@ -168,6 +210,11 @@ final class StreamFileWriter {
                 nonSilentInputFrames += AVAudioFramePosition(frames)
             }
         }
+
+        // AD-44. Counted whether or not the stream is muted — a mute is about what
+        // gets written, and the rate is about what arrives.
+        inputFramesConsumed += AVAudioFramePosition(frames)
+        checkRate()
 
         guard let out = convert(src, using: converter) else { return }
         if isMuted, let ch = out.floatChannelData?[0] {

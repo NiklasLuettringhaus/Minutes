@@ -178,6 +178,14 @@ struct NoteWriter: NoteWriting {
             }
         }
 
+        // FR-87, first among the degradation notices because it is the only one
+        // that makes the transcript below actively misleading rather than
+        // incomplete.
+        for (stream, why) in m.untrustworthyStreams {
+            out += "> **The recording of \(stream) is not reliable.** \(why) "
+            out += "The transcript below is what the transcription produced from it, kept because the audio is yours, but it does not reflect what was said. "
+            out += "No summary, title or tags were generated from it.\n\n"
+        }
         if !m.systemStreamCaptured {
             out += "> Only the microphone was captured for this meeting, so remote participants do not appear in the transcript.\n\n"
         }
@@ -296,6 +304,20 @@ struct NoteWriter: NoteWriting {
         // Provenance: a reader can always tell an LLM summary from keyphrase extraction (FR-30).
         lines.append("metadata_backend: \(Self.yamlScalar(m.metadata?.backend.rawValue ?? "none"))")
         lines.append("system_audio_captured: \(m.systemStreamCaptured)")
+        // Emitted only when a check actually failed, so a Note never carries a
+        // field implying a problem the recording did not have.
+        if !m.untrustworthyStreams.isEmpty {
+            let names = m.untrustworthyStreams.map { $0.stream }
+            lines.append("unreliable_streams: [\(names.map(Self.yamlScalar).joined(separator: ", "))]")
+            if let r = m.systemRate, !r.isTrustworthy {
+                lines.append(String(format: "system_declared_hz: %.0f", r.declaredRate))
+                lines.append(String(format: "system_observed_hz: %.0f", r.observedRate))
+            }
+            if let r = m.micRate, !r.isTrustworthy {
+                lines.append(String(format: "mic_declared_hz: %.0f", r.declaredRate))
+                lines.append(String(format: "mic_observed_hz: %.0f", r.observedRate))
+            }
+        }
         lines.append("speakers_separated: \(m.diarizationSucceeded)")
         lines.append("multiple_people_in_room: \(m.multipleInRoom)")
         // Provenance for the identity claim, not just for the summary (FR-30, FR-65).

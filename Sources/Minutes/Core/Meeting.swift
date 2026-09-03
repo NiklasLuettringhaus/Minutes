@@ -217,6 +217,45 @@ struct Meeting: Codable, Sendable, Identifiable {
     /// and not asking about every ordinary rewrite.
     var noteDigest: String?
 
+    // --- Rate fidelity (AD-45). Per stream, because in all seven observed
+    // failures the microphone was correct and the system stream was not. ---
+    /// Whether each stream's samples were at the rate its format claimed.
+    ///
+    /// Absent on every record written before increment 8, which reads as "never
+    /// checked" rather than as "passed" — see `untrustworthyStreams`.
+    var micRate: RateFidelity?
+    var systemRate: RateFidelity?
+
+    /// The streams whose transcript cannot be relied on (FR-85).
+    ///
+    /// Only a *failed* check counts. A record with no check is not evidence of a
+    /// problem, and treating unchecked history as broken would flag every meeting
+    /// recorded before this existed — including the seven that have since been
+    /// repaired.
+    var untrustworthyStreams: [(stream: String, why: String)] {
+        var out: [(String, String)] = []
+        if let r = micRate, let why = r.explanation { out.append(("your microphone", why)) }
+        if let r = systemRate, let why = r.explanation { out.append(("the far end of the call", why)) }
+        return out
+    }
+
+    /// FR-86. Whether derived content may be built from the whole transcript.
+    var mayDeriveMetadata: Bool { untrustworthyStreams.isEmpty }
+
+    /// The Utterances metadata may be derived from (FR-86).
+    ///
+    /// Where one stream failed and the other did not, the sound one's speech is
+    /// still perfectly good input — dropping it too would throw away a usable
+    /// summary of the user's own half of the meeting for no reason. Where both
+    /// failed, this is empty and no metadata is derived at all.
+    var trustworthyUtterances: [Utterance] {
+        let failed = Set([micRate.flatMap { $0.isTrustworthy ? nil : StreamKind.mic },
+                          systemRate.flatMap { $0.isTrustworthy ? nil : StreamKind.system }]
+            .compactMap { $0 })
+        guard !failed.isEmpty else { return utterances }
+        return utterances.filter { !failed.contains($0.origin) }
+    }
+
     /// Whether `name` is a name *this app* chose for this Meeting's Note (AD-40).
     ///
     /// Takes the name rather than reading `noteFilename`, because the two callers
@@ -266,6 +305,8 @@ struct Meeting: Codable, Sendable, Identifiable {
         self.noteFilename = nil
         self.noteFilenameWritten = nil
         self.noteDigest = nil
+        self.micRate = nil
+        self.systemRate = nil
     }
 
     /// Hand-written because the synthesised `Codable` was **not** tolerant of an
@@ -301,6 +342,8 @@ struct Meeting: Codable, Sendable, Identifiable {
         noteFilename = try c.decodeIfPresent(String.self, forKey: .noteFilename)
         noteFilenameWritten = try c.decodeIfPresent(String.self, forKey: .noteFilenameWritten)
         noteDigest = try c.decodeIfPresent(String.self, forKey: .noteDigest)
+        micRate = try c.decodeIfPresent(RateFidelity.self, forKey: .micRate)
+        systemRate = try c.decodeIfPresent(RateFidelity.self, forKey: .systemRate)
     }
 
     func displayName(for id: SpeakerLabelID) -> String {

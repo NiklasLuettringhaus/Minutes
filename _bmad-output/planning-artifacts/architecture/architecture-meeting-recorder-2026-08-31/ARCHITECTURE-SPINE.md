@@ -79,6 +79,12 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 - **Prevents:** two adapters disagreeing on sample rate or channel layout and silently producing garbage or half-length audio
 - **Rule:** Read `kAudioTapPropertyFormat` after tap creation and drive all downstream buffer handling from it. Handle interleaved, non-interleaved and mono layouts by inspecting the `AudioBufferList`, via `UnsafeMutableAudioBufferListPointer` — never by indexing past `mBuffers.0`. *(Measured on this host: 48 kHz, 2 ch, Float32, flags 9 = IsFloat|IsPacked.)*
 
+*Amended 2026-09-03, after the failure named in this AD's own Prevents clause happened anyway.*
+
+**Querying the format is necessary and is not sufficient.** This rule was followed exactly — the format is read from the tap, never assumed — and seven of sixteen recordings still came out at two or three times speed, because a rate read **once, at tap creation** is a claim about that instant and not about what the device goes on to deliver. Selecting a Bluetooth headset as the *input* device moves the shared clock, and the tap then delivers at a rate the app already believes it knows.
+
+The rule therefore gains a second half: a declared rate is a starting hypothesis, and it must be **checked against the session clock while recording** (AD-44). "Never assume it" now means never assume it *stays true* either.
+
 ### AD-4 — One session clock; all times are offsets from it
 
 - **Binds:** FR-6, FR-23, FR-29, FR-33
@@ -308,6 +314,17 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 - **Prevents:** the failure this rule was written from — a check that cannot fail. macOS exposes no API to query system-audio permission, so a measurement is the only evidence available, and a measurement satisfied by silence is indistinguishable from success. The app then asserts a green tick on a machine where capture is quietly broken, which is worse than admitting the unknown.
 - **Rule:** Any claim that a stream produced audio is derived from the samples — a peak above a stated floor, or a proportion of non-silent frames. Duration never contributes. The existence of a file never contributes. Every constant in that decision carries the reasoning for its value, and none is a setting. A test asserts that a silent capture of ample duration reports no audio; that test is the rule's enforcement, because this defect is invisible on any machine where capture works.
 
+*Amended 2026-09-03. The rule stands; its scope was too narrow.*
+
+**This AD answers "was anything captured", and that is not the only way a capture can be worthless.** A stream running at three times speed is full of signal, so it satisfies every clause above and is unintelligible. Seven recordings passed this check and transcribed into fluent invented dialogue.
+
+The distinction that keeps "duration never contributes" intact, because it is two different questions:
+
+- **Was audio captured?** Signal answers it. Duration is irrelevant, and a long silent file is the failure this AD exists to catch.
+- **Are the samples at the rate they claim?** Only the *ratio* of sample count to elapsed time answers it, and nothing else can. Duration is not evidence of capture here either — it is the denominator of a rate.
+
+So capture evidence has two independent parts, and a stream must satisfy both to be trusted: it produced signal (this AD), and its sample count agrees with the clock (AD-45).
+
 ### AD-37 — The user-data directory is the whole footprint
 
 - **Binds:** FR-74, FR-75, FR-76, PRD §9.1
@@ -352,6 +369,25 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 - **Prevents:** the app treating a user's folder as its own index. The Notes Folder holds the user's documents; listing, claiming or acting on a Markdown file Minutes did not write is an overstep, and a component that lists "every `.md`" will do exactly that.
 - **Rule:** Any enumeration of the Notes Folder considers a file only if its frontmatter carries a Minutes identity marker — a Meeting ID, or `generated_by: Minutes` together with `started_at` for files written before the stamp. Files without one are not listed, not linked automatically, and never modified. The one exception is FR-79, where the user names a specific file: an explicit choice may point at a file the app did not write, and the app then states what the next rewrite will do to it rather than refusing or staying silent.
 
+
+### AD-44 — The capture rate is observed, not merely declared
+
+- **Binds:** FR-6, FR-7, AD-3, AD-36, AD-45
+- **Prevents:** the defect that produced seven fabricated transcripts — a declared rate that the device does not honour, resampled as if it did. A component that reads the rate once at setup cannot tell a correct 48 kHz stream from a 16 kHz stream mislabelled as 48 kHz, and both are ordinary-looking float samples in a ring buffer.
+- **Rule:** A stream's writer counts the input frames it consumes and the elapsed time it has been running, and compares the two against the format it was given. A disagreement beyond a stated tolerance is a **named failure**, surfaced with both rates, and never a silent resample. The tolerance and the settling period before the first check both carry their reasoning at their declaration, and neither is a setting. The comparison runs while recording, not only at the end, because a two-hour meeting is too expensive to discover afterwards. What the app does about a disagreement — correct the converter, or stop the stream and say so — is a story-level decision; that it must not proceed silently is not.
+
+### AD-45 — A stream is trusted only if its sample count agrees with the clock
+
+- **Binds:** FR-42, FR-67, AD-36, AD-44, AD-46
+- **Prevents:** any future defect of this shape shipping silently, whatever its cause. A rate misread, a dropped-buffer bug, a converter misconfiguration and a clock drift all present identically: a file whose sample count does not match the time it took to record. One check catches the class, and it would have surfaced all seven of these at record time rather than after the notes were written.
+- **Rule:** Capture evidence gains a second, independent component: `samples / elapsed` against the format's rate. A stream that disagrees beyond AD-44's tolerance is recorded as **untrustworthy** on the Meeting, alongside the observed and declared rates, and that flag travels with the record — it is not a transient display state. Trust is per stream: the microphone being sound says nothing about the system stream, and in every observed case the microphone was sound. This check is cheap, is derived from values the writer already holds, and must not be gated on a preference.
+
+### AD-46 — Derived content is never generated from audio the app cannot vouch for
+
+- **Binds:** FR-26, FR-27, FR-30, AD-12, AD-45
+- **Prevents:** the reason this defect looked fine for three days. The title, the tags and the summary were generated from fabricated text, so a broken recording arrived with a confident name and a plausible shape — and the provenance field said `heuristic`, which was true and told the reader nothing. Metadata derived from untrustworthy audio is worse than absent metadata, because it disguises the failure.
+- **Rule:** A Meeting whose stream failed AD-45 does not have Metadata derived from that stream's text. The Note states which stream is untrustworthy and why, in the same voice as every other degradation (AD-17, FR-7): the transcript that exists is still written, because the samples are the user's and discarding them would be worse, but nothing is inferred *from* it and no title, tag or summary is produced from it. Where only one of the two streams is untrustworthy, the trustworthy stream's text may still produce Metadata, and the Note says that is what happened.
+
 ## Consistency Conventions
 
 
@@ -379,7 +415,9 @@ Arrows are the only permitted dependency directions. Notably: **no adapter may i
 | Visual tokens | Never hardcode a colour or metric present in `DESIGN.md`; resolve semantic colours from AppKit at render time. |
 | Voice fingerprints | `[Float]` plus a producer identifier and a dimension, persisted in `speakers.json` alongside Speaker Profiles (AD-29). Compared only in Core. Never logged, never rendered as numbers to the user beyond a single measured distance stated as a fact, never transmitted (PRD §9.1). |
 | Version | Derived from the git tag at bundle time and read back from the bundle (AD-33). No version literal is maintained in source or in the plist. |
-| Evidence of capture | Signal in the samples. Never duration, never the existence of a file (AD-36). |
+| Evidence of capture | Two independent parts, both required: signal in the samples (AD-36), and a sample count that agrees with the clock (AD-45). Never the existence of a file. |
+| Sample rates | A declared rate is a hypothesis. The writer compares consumed frames against elapsed time and names a disagreement (AD-44). No component resamples on a rate it has not checked. |
+| Derived content | Never generated from a stream that failed its evidence check (AD-46). A confident title on a broken recording is what hid this defect for three days. |
 | Paths outside the user-data directory | Enumerated in exactly one place, and the footprint listing, uninstall documentation and cask removal list all derive from it (AD-37). |
 | Calibrated constants | A number derived from measurement carries the measurement's date and a path to the report, in a comment at its declaration. If it cannot cite one it is a guess and must be labelled as one (AD-31). |
 | Decodable evolution | Every persisted `Codable` type that has shipped gets a hand-written `init(from:)` using `decodeIfPresent` with defaults. Swift ignores a property's default value when the key is absent and throws `keyNotFound` instead, which is how adding one field to `Meeting` silently orphaned five real recordings. `SpeakerDirectory.Profile` gains fields in increment 4 and therefore gains the same treatment. |
@@ -509,6 +547,7 @@ Minutes/
 | Summarisation intelligence (FR-55…61) | `Adapters/Metadata/*`, `Services/SummarizerCatalog`, `Adapters/System/KeyStore`, `UI/SummariesPane` | AD-12, AD-22, AD-23, AD-24, AD-25, AD-26, AD-27 |
 | Voice enrolment (FR-62…65) | `Core/VoiceMatch`, `Services/VoiceEnrolment`, `Services/SpeakerDirectory`, `Adapters/Diarize/SpeakerKitVoiceEmbedder`, `UI/GettingStartedPane` + `UI/GeneralPane` | AD-11 (amended), AD-28, AD-29, AD-30, AD-31, AD-32 |
 | Note file management (FR-77…83) | `Core/NoteIdentity`, `Services/Ports` (`NoteLocating`), `Adapters/Persistence/NoteLocator` + `NoteWriter`, `Adapters/Persistence/MeetingStore`, `UI/MeetingsPane` | AD-9 (amended), AD-18 (amended), AD-39, AD-40, AD-41, AD-42, AD-43 |
+| Rate fidelity (FR-84…88) | `Core/AudioEvidence`, `Adapters/Audio/StreamFileWriter`, `Adapters/Audio/SystemTapCapture`, `Services/Pipeline`, `Adapters/Persistence/NoteWriter`, `UI/MeetingsPane` | AD-3 (amended), AD-36 (amended), AD-44, AD-45, AD-46 |
 
 ## Build and Delivery Envelope, Increment 5
 

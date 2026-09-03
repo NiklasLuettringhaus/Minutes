@@ -166,3 +166,13 @@ development_status:
   14-10-the-delete-confirmation-names-the-file-it-will-delete: done
   14-11-a-note-whose-meeting-is-gone-is-still-visible: done
   epic-14-retrospective: optional
+
+  epic-15: done
+  15-1-a-stream-knows-the-rate-it-is-actually-receiving: done
+  15-2-a-rate-disagreement-is-a-named-failure-not-a-silent-resample: done
+  15-3-the-record-says-which-stream-cannot-be-relied-on: done
+  15-4-no-title-or-summary-is-derived-from-a-transcript-the-app-can: done
+  15-5-the-app-says-which-recordings-it-cannot-vouch-for: done
+  15-6-an-existing-recording-can-be-re-checked-and-repaired: done
+  15-7-the-rate-the-tap-reports-is-read-again-when-it-can-change: done
+  epic-15-retrospective: optional

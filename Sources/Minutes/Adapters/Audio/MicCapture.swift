@@ -82,21 +82,27 @@ final class MicCapture {
     /// under-reports, which for `duration` was a long-standing inaccuracy and for
     /// evidence would be a wrong verdict: on a five-second Test Playground where
     /// the speech lands late, the unflushed tail could hold all of the signal.
-    func stop() -> (duration: TimeInterval, evidence: AudioEvidence) {
-        guard isRunning else { return (0, .none) }
+    func stop() -> (duration: TimeInterval, evidence: AudioEvidence, rate: RateFidelity) {
+        guard isRunning else { return (0, .none, .unknown) }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         // Hold the writer past the teardown so its counters can be read once it
         // has finished flushing.
         let w = writer
+        // Before the flush, for the same reason as the system stream: the rate's
+        // denominator is wall time and keeps running.
+        let r = w?.rateFidelity ?? .unknown
         w?.stop()
         ring?.reset()
         writer = nil; ring = nil
         isRunning = false
         let d = w?.duration ?? 0
         let e = w?.evidence ?? .none
-        Log.audio.info("mic capture stopped duration=\(d) peak=\(e.peak) nonSilent=\(e.nonSilentSeconds)")
-        return (d, e)
+        Log.audio.info("mic capture stopped duration=\(d) peak=\(e.peak) nonSilent=\(e.nonSilentSeconds) declaredRate=\(r.declaredRate) observedRate=\(r.observedRate)")
+        if let why = r.explanation {
+            Log.audio.error("mic stream rate: \(why, privacy: .public)")
+        }
+        return (d, e, r)
     }
 
     var level: Float { writer?.peak ?? 0 }

@@ -12,6 +12,12 @@ enum MinutesError: LocalizedError, Equatable {
     /// elapsed time counted as proof of capture (AD-36).
     case systemAudioProducedSilence(String)
     case noDefaultOutputDevice
+    /// A stream's samples were not at the rate its format declared (AD-44).
+    ///
+    /// The loudest failure in the audio domain, because it is the only one whose
+    /// output *reads as correct*: seven recordings transcribed into fluent
+    /// invented dialogue and were titled from it.
+    case captureRateMismatch(stream: String, detail: String)
     case audioFileWriteFailed(String)
 
     // Transcription / diarization
@@ -62,6 +68,8 @@ enum MinutesError: LocalizedError, Equatable {
             return "No system audio was recorded — \(d). Only your side of the meeting was captured."
         case .noDefaultOutputDevice:
             return "No default audio output device was found."
+        case .captureRateMismatch(let stream, let detail):
+            return "The recording of \(stream) is not usable. \(Self.sentence(detail))"
         case .audioFileWriteFailed(let d):
             return "Could not write the recording to disk. \(Self.sentence(d))"
         case .modelNotDownloaded(let m):
@@ -158,6 +166,11 @@ enum MinutesError: LocalizedError, Equatable {
             return "Nothing was removed. Minutes deletes to the Trash so it can be undone, and this item could not be moved there."
         case .systemAudioTapFailed:
             return "macOS revokes system-audio permission when Minutes is rebuilt. Run the reset command shown in Settings, then try again."
+        case .captureRateMismatch:
+            // Names the correlation without asserting it: every one of the seven
+            // observed failures had a Bluetooth headset as the *input* device,
+            // and the mechanism is not proven against Apple's source.
+            return "This has only been seen with a Bluetooth headset selected as the input device. Switching the input to the built-in microphone and recording again is the quickest way to get a usable recording. The audio already captured is kept, and Minutes will not write a summary from a transcript it cannot trust."
         case .systemAudioProducedSilence:
             // Deliberately two causes, because the app genuinely cannot tell them
             // apart: a revoked permission and nothing having played both deliver

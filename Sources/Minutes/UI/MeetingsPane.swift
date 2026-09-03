@@ -408,6 +408,13 @@ struct MeetingDetail: View {
             VStack(alignment: .leading, spacing: Tok.cardGap) {
                 titleBlock
                 if meeting.hasFailed { failureBlock }
+                // FR-87. Before the mic-only notice, because an unreliable
+                // recording is worse than a missing one: its transcript reads
+                // like a real conversation that never happened.
+                ForEach(meeting.untrustworthyStreams, id: \.stream) { u in
+                    StateBanner(kind: .degraded,
+                                text: "The recording of \(u.stream) is not reliable. \(u.why) Minutes wrote no summary or title from it.")
+                }
                 if !meeting.systemStreamCaptured && meeting.isComplete {
                     StateBanner(kind: .degraded,
                                 text: "Only your microphone was captured, so remote participants are not in this transcript.")
@@ -1129,6 +1136,12 @@ struct MeetingRow: View {
             }
         } else if !meeting.isComplete {
             label("pause.circle", "Interrupted", secondary)
+        } else if !meeting.untrustworthyStreams.isEmpty {
+            // FR-87, ahead of every other complete-state badge. This row's
+            // transcript reads like a real conversation and is not one, so the
+            // list must say so before the user opens it — the whole defect was
+            // that seven of these looked exactly like the other nine.
+            label("waveform.badge.exclamationmark", "Recording unreliable", stateTint(Tok.recording))
         } else if noteMissing {
             // FR-53: complete in the record is not complete on disk.
             label("doc.badge.ellipsis", "Note missing", stateTint(Tok.recording))

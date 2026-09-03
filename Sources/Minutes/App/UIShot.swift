@@ -130,6 +130,24 @@ enum UIShot {
             }
         }
 
+        // The unreliable-rate state (increment 8). At every width, because the
+        // sentence has to carry two rates and a consequence, and a truncated
+        // sentence here would leave the reader thinking the recording is fine.
+        for (label, w) in widths {
+            shoot("detail-unreliable-rate-\(label)", w, nil) {
+                MeetingDetail(meeting: Fixtures.unreliableRate)
+            }
+        }
+        shoot("row-unreliable-rate", 320, nil) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach([Fixtures.unreliableRate, Fixtures.simple], id: \.id) { m in
+                    MeetingRow(meeting: m, isSelected: false, isInFlight: false, noteMissing: false)
+                        .padding(.horizontal, Tok.s4).padding(.vertical, 4)
+                    Divider()
+                }
+            }
+        }
+
         // The Note Link states (increment 7). A renamed note, a note nobody can
         // find, and two files claiming one meeting — the last of which is the only
         // place in the product where the app lists files and refuses to choose.
@@ -214,8 +232,26 @@ enum UIShot {
 
         static var all: [Meeting] {
             [crowded, longNames, simple, failed, interrupted,
-             userRenamed, noteLost, noteAmbiguous]
+             userRenamed, noteLost, noteAmbiguous, unreliableRate]
         }
+
+        /// A recording whose far end came out at three times speed (increment 8).
+        ///
+        /// The fixture that matters most in this set, because this is the state
+        /// that *looked identical to a working meeting* for three days: a real
+        /// title, a full transcript, and nothing wrong on the face of it.
+        static var unreliableRate: Meeting = {
+            var m = simpleShaped(id: "20260903-103103-rate", title: "3 September, 10:31")
+            m.systemSource = "system audio — Microsoft Teams"
+            m.micDevice = "a Bluetooth headset"
+            m.noteFilename = "2026-09-03 1031 3-September-1031.md"
+            m.noteFilenameWritten = m.noteFilename
+            m.micRate = RateFidelity(declaredRate: 16_000,
+                                     framesObserved: 16_000 * 1565, elapsedSeconds: 1565)
+            m.systemRate = RateFidelity(declaredRate: 16_000,
+                                        framesObserved: 5_333 * 1565, elapsedSeconds: 1565)
+            return m
+        }()
 
         // MARK: - Note link states (increment 7)
 
@@ -249,6 +285,8 @@ enum UIShot {
         static var noteLinks: [String: NoteLinkState] {
             let folder = URL(fileURLWithPath: "/Users/you/Documents/Minutes")
             return [
+                unreliableRate.id: .linked(url: folder.appendingPathComponent(unreliableRate.noteFilename!),
+                                           userNamed: false),
                 crowded.id: .linked(url: folder.appendingPathComponent("crowded.md"), userNamed: false),
                 longNames.id: .linked(url: folder.appendingPathComponent("long.md"), userNamed: false),
                 simple.id: .linked(url: folder.appendingPathComponent("simple.md"), userNamed: false),

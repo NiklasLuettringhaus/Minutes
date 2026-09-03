@@ -30,6 +30,11 @@ revisions:
 inputs:
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/brief.md
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/addendum.md
+  - 2026-09-03 increment 8 — a recording the app cannot vouch for. Adds §4.13
+    (FR-84 through FR-88) and amends FR-67 and §9.3. Driven by seven of sixteen
+    recordings transcribing into invented dialogue for three days without one
+    signal, and by the user's own written bug report finding it before the product
+    did.
   - 2026-09-03 increment 7 — the Note is the user's file. Adds §4.12 (FR-77 through
     FR-83) and amends FR-35, FR-40, FR-53, FR-54 and §4.8. Driven by a single user
     report — a Note renamed in Finder, reported missing, and the Meeting then deleted
@@ -909,6 +914,8 @@ Any claim that a stream produced audio rests on there having been audio in it.
 **Notes:**
 - This is load-bearing for FR-42 rather than incidental to it. macOS exposes no API to query system-audio permission, so a measurement is the only evidence obtainable — and a measurement that cannot fail is indistinguishable from success. Verified: `SystemTapCapture.stop()` accepts `duration > 0.25` as proof, three lines below a comment calling the value "the only evidence we can have that system-audio capture actually worked".
 
+- **Amended in increment 8: signal is necessary and is not sufficient.** Seven recordings passed every clause above and were unusable, because a stream running at three times speed is full of signal. This requirement answers *did it capture anything*; FR-84 and FR-85 answer *is what it captured at the rate it claims*. Both must hold. The clause "elapsed time is never sufficient" stands unchanged and is not in tension with the new check: there, duration was being offered as evidence of capture; in FR-84 it is the denominator of a rate, which is the only way that question can be answered at all.
+
 #### FR-68: Minutes never removes a directory it did not create
 The app deletes only what it wrote.
 
@@ -1101,6 +1108,74 @@ The safety property that binds this section together.
 - A rewrite whose link is broken finds the existing file first, and creates a new one only when no file claims the Meeting.
 - Every destructive path in the Library goes to the Trash, so every mistake in this section is recoverable by dragging one item back.
 
+---
+
+### 4.13 A Recording the App Cannot Vouch For
+
+**Description:** Every requirement before this one assumes that if audio was
+captured, the audio is usable. For three days that was false and nothing said so.
+This section makes a recording's *fidelity* something the app checks, states, and
+refuses to build on.
+
+**Why it exists:** measured, not hypothesised. **Seven of sixteen recordings** on
+the author's machine held a system stream declaring 16 kHz whose real rate was
+8 kHz or 5.3 kHz — two or three times too fast. Speech at that speed is still
+speech-like, so transcription did not fail; it produced fluent, confidently
+formatted, entirely invented dialogue for the remote participant, and the title,
+tags and summary were then derived from the fabrication. Every affected recording
+had a Bluetooth headset as the *input* device; every microphone stream was
+correct. The raw samples were intact, so all seven were recovered — but nothing in
+the product had noticed, and the app's own capture-evidence check (FR-67) passed
+each one, because a stream at three times speed is full of signal.
+
+**Functional Requirements:**
+
+#### FR-84: The capture rate is checked against the clock, while recording
+A declared sample rate is a claim the app verifies rather than trusts.
+
+**Consequences (testable):**
+- While a Session runs, each stream compares the input frames it has consumed against the time it has been running, and against the rate its format declares.
+- A disagreement beyond a stated tolerance is a named failure carrying **both** rates — the one declared and the one observed. It is never a silent resample.
+- The check runs during the Session, not only at the end: a two-hour meeting is too expensive to discover afterwards.
+- There is a settling period before the first comparison, because the first buffers arrive irregularly. Its length is stated where it is defined, and it is not a setting.
+- A correct recording never triggers it. Verified against the nine recordings on this machine that were correct, whose ratios sit at 1.00–1.03.
+
+#### FR-85: A stream that disagrees with the clock is marked untrustworthy
+The record says which stream cannot be relied on, and why.
+
+**Consequences (testable):**
+- The Meeting record carries, per stream, whether it passed and the two rates involved. It is stored, not derived on read — a fact about a recording that happened, not a display state.
+- Trust is per stream. In every observed case the microphone was correct and the system stream was not, so a single per-Meeting flag would be wrong in both directions.
+- The check is derived from values the writer already holds and is never gated on a preference.
+- This is the second half of FR-67's capture evidence: *did it capture anything* and *is what it captured at the rate it claims* are different questions, and a recording must pass both.
+
+#### FR-86: No title, tag or summary comes from a transcript the app cannot vouch for
+The app does not name a meeting after invented text.
+
+**Consequences (testable):**
+- A Meeting whose stream failed FR-85 gets no Metadata derived from that stream's text.
+- The transcript that exists is still written. The samples are the user's, and discarding them would be worse than labelling them.
+- Where one stream passed and the other did not, Metadata may still come from the one that passed, and the Note says that is what happened.
+- This is the requirement that addresses *why the defect looked fine*: a broken recording arrived with a confident name and a plausible shape, and the provenance field said `heuristic`, which was true and told the reader nothing.
+
+#### FR-87: The app says which recordings it cannot vouch for
+An untrustworthy recording is visible without opening it.
+
+**Consequences (testable):**
+- The Library marks such a Meeting, and its detail pane states which stream, both rates, and what that means for the transcript.
+- The Note carries the same statement, because in six months the Note is all there is.
+- The wording names the likely cause where the app knows it — a Bluetooth input device was present in all seven observed cases — without asserting it as certain.
+- Nothing is hidden or auto-deleted. The user decides what to do with a recording the app has flagged.
+
+#### FR-88: An existing recording can be re-checked and repaired
+A recording already on disk can be assessed and, where the samples are intact, recovered.
+
+**Consequences (testable):**
+- The app can evaluate recordings made before this check existed and report which fail it.
+- Where a stream's true rate is recoverable from its own sample count and the Session's duration, the app can repair the declared rate and re-run the pipeline from the retained audio.
+- Repair changes only what is wrong. The samples are not resampled, re-encoded or discarded, and the original declared rate is recorded so the change is reversible.
+- Nothing is repaired without the user asking. `[ASSUMPTION: the seven affected recordings on the author's machine were repaired by hand on 2026-09-03, before this requirement existed. The requirement is what makes that repeatable for a colleague.]`
+
 ## 5. Non-Goals (Explicit)
 
 These exist to stop the "let me also add the nearby thing" failure mode at epic, story and code level.
@@ -1239,6 +1314,8 @@ Stakes are personal-utility, so these are deliberately few and mostly binary. Th
 ### 9.3 Honesty of derived content
 
 Generated Metadata must never be presented as fact when it is inference — FR-30's provenance field and FR-29's timestamp references exist so a reader can check derived content against the record — and no section is ever padded with invented content: an absent decision list is the correct output for a meeting with no decisions.
+
+**Amended in increment 8, after the strongest possible counter-example.** The rules above govern how derived content is *labelled*, and every one of them was satisfied while the product produced three days of invented dialogue: the provenance field correctly said `heuristic`, the timestamps were real, no section was padded. What none of them covered is derived content resting on an *input the app cannot vouch for* — a different failure, because labelling cannot fix it. A summary honestly marked as keyphrase extraction from a fabricated transcript is not honest output. So this guardrail gains a floor beneath its labelling rules: **the app does not derive content from audio that failed its evidence check** (FR-86), and it says which recording it cannot vouch for (FR-87). Honesty about provenance is not a substitute for honesty about fidelity.
 
 ## 10. Information Architecture and Visual Design
 

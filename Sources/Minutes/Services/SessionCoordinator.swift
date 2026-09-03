@@ -119,6 +119,9 @@ final class SessionCoordinator: ObservableObject {
         _ = try? await store.update(id: id) { m in
             m.duration = streams.duration
             m.systemStreamCaptured = streams.systemCaptured
+            // AD-45: a fact about a recording that happened, stored per stream.
+            m.micRate = streams.micRate
+            m.systemRate = streams.systemRate
         }
 
         // The only evidence available about system-audio permission (FR-42),
@@ -134,6 +137,16 @@ final class SessionCoordinator: ObservableObject {
         if streams.systemTapEstablished, !streams.systemCaptured,
            let why = streams.systemEvidence.failureReason {
             AppState.shared.lastError = .systemAudioProducedSilence(why)
+        }
+
+        // AD-44 / FR-84. A rate disagreement is louder than a silent stream,
+        // because the recording *looks* fine and its transcript will read fine.
+        // Reported after the silence check so the more specific failure wins.
+        for (stream, why) in [("your microphone", streams.micRate.explanation),
+                              ("the far end of the call", streams.systemRate.explanation)] {
+            if let why {
+                AppState.shared.lastError = .captureRateMismatch(stream: stream, detail: why)
+            }
         }
 
         AppState.shared.setSessionState(.transcribing(meetingID: id, title: nil))
@@ -266,6 +279,107 @@ final class SessionCoordinator: ObservableObject {
         if case .refusedChangedOnDisk(let url) = outcome {
             AppState.shared.noteConflict = .init(meetingID: meetingID, url: url)
         }
+    }
+
+    // MARK: - Rate fidelity of recordings already on disk (FR-88)
+
+    /// What a stored recording's own samples say about their rate.
+    struct RateAudit: Sendable {
+        var meetingID: String
+        var title: String
+        var mic: RateFidelity?
+        var system: RateFidelity?
+        var failing: [String] {
+            var out: [String] = []
+            if let m = mic, !m.isTrustworthy { out.append("mic") }
+            if let s = system, !s.isTrustworthy { out.append("system") }
+            return out
+        }
+        var repairable: Bool {
+            (mic.map { !$0.isTrustworthy && $0.integerRatio != nil } ?? false)
+            || (system.map { !$0.isTrustworthy && $0.integerRatio != nil } ?? false)
+        }
+    }
+
+    /// Assesses every recording on disk, including those made before the live
+    /// check existed. Reads headers only — no audio, no writes.
+    func auditRates() async -> [RateAudit] {
+        let store = MeetingStore.shared
+        var out: [RateAudit] = []
+        for m in await store.loadAll() where m.duration > 0 {
+            let dir = await store.directory(for: m.id)
+            func check(_ stream: StreamKind) -> RateFidelity? {
+                let u = dir.appendingPathComponent("\(stream.rawValue).wav")
+                guard FileManager.default.fileExists(atPath: u.path) else { return nil }
+                return try? WavRateRepair.fidelity(of: u, sessionDuration: m.duration)
+            }
+            out.append(RateAudit(meetingID: m.id,
+                                 title: m.metadata?.title ?? "Untitled",
+                                 mic: check(.mic), system: check(.system)))
+        }
+        return out
+    }
+
+    /// Repairs a recording's declared rate and re-runs the pipeline over the
+    /// retained audio (FR-88).
+    ///
+    /// Nothing here is automatic. The samples are the user's and a repair is a
+    /// change to their file, so it happens when they ask and not on a launch.
+    /// Re-running uses the existing pipeline — there is deliberately no second
+    /// transcription path for recovered recordings.
+    func repairAndReprocess(meetingID id: String) async {
+        let store = MeetingStore.shared
+        guard let m = try? await store.load(id: id), m.duration > 0 else { return }
+        let dir = await store.directory(for: id)
+        var repaired: [String] = []
+        for stream in StreamKind.allCases {
+            let u = dir.appendingPathComponent("\(stream.rawValue).wav")
+            guard FileManager.default.fileExists(atPath: u.path),
+                  let f = try? WavRateRepair.fidelity(of: u, sessionDuration: m.duration),
+                  !f.isTrustworthy, f.integerRatio != nil else { continue }
+            do {
+                let change = try WavRateRepair.repair(u, sessionDuration: m.duration)
+                repaired.append("\(stream.rawValue) \(Int(change.was))->\(Int(change.now)) Hz")
+            } catch let e as MinutesError {
+                AppState.shared.lastError = e
+                return
+            } catch {
+                AppState.shared.lastError = .audioFileWriteFailed(error.localizedDescription)
+                return
+            }
+        }
+        guard !repaired.isEmpty else { return }
+        Log.session.info("repaired \(id, privacy: .public): \(repaired.joined(separator: ", "), privacy: .public)")
+
+        // The rate check has to be cleared as well as the audio fixed: the record
+        // still carries the failure that was true before the repair, and leaving
+        // it would mark a now-sound recording unreliable for ever.
+        _ = try? await store.update(id: id) { rec in
+            rec.micRate = nil
+            rec.systemRate = nil
+            rec.stage = .captured          // re-transcribe, re-diarize, re-derive
+            rec.failure = nil
+        }
+        // Deliberately *not* enqueued here.
+        //
+        // The stage is reset and the re-run is left to whichever process owns the
+        // library. Enqueueing from a short-lived `--check-rates --repair` process
+        // either exits before the work runs — which it did, leaving a meeting
+        // stuck at `captured` — or transcribes concurrently with a running app,
+        // and two processes writing one `meeting.json` is worse than a recording
+        // that needs one more click.
+        //
+        // `Pipeline.resumeInterrupted()` on launch and the row's "Finish
+        // transcription" both already pick this up, so recovery uses a path that
+        // existed and was tested rather than a new one.
+        await AppStateBridge.reloadMeetings()
+    }
+
+    /// Repairs and re-runs immediately, for a caller that owns the library — the
+    /// running app, from a button.
+    func repairAndReprocessNow(meetingID id: String) async {
+        await repairAndReprocess(meetingID: id)
+        await Pipeline.shared.enqueue(meetingID: id)
     }
 
     // MARK: - Note links (FR-79, FR-81)

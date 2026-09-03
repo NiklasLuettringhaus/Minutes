@@ -152,6 +152,44 @@ final class SystemTapCapture {
         guard st == noErr else {
             throw MinutesError.systemAudioTapFailed(stage: "start device", status: st)
         }
+        logTapFormatAfterStart()
+    }
+
+    /// Story 15.7 / AD-3 as amended. Re-reads the tap's format once the device is
+    /// actually running.
+    ///
+    /// The format used to be read only at step 4, immediately after
+    /// `AudioHardwareCreateAggregateDevice` — a claim about that instant, not about
+    /// what the device goes on to deliver. That is the located mechanism of the
+    /// sample-rate defect: with a Bluetooth headset as the *input* device the
+    /// shared clock moves, and the app resampled as though it had not.
+    ///
+    /// It logs rather than corrects, deliberately. A disagreement here is a
+    /// *second* signal on the same fact that AD-44 already measures from the
+    /// samples, and the measured one is the trustworthy one — this reading is the
+    /// same API that was wrong before. So the observable stays authoritative and
+    /// this exists to say, in the log of a future failure, whether CoreAudio's own
+    /// answer had changed by the time capture started.
+    private func logTapFormatAfterStart() {
+        var asbd = AudioStreamBasicDescription()
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioTapPropertyFormat,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        let st = AudioObjectGetPropertyData(tapID, &addr, 0, nil, &size, &asbd)
+        guard st == noErr, asbd.mSampleRate > 0 else {
+            Log.audio.error("could not re-read tap format after start (OSStatus \(st))")
+            return
+        }
+        let declared = format?.sampleRate ?? 0
+        if abs(asbd.mSampleRate - declared) > 1 {
+            // Not a thrown error: the writer's own measurement decides, and this
+            // reading has already been proven capable of being wrong.
+            Log.audio.error("tap format CHANGED between creation and start: \(declared, privacy: .public) -> \(asbd.mSampleRate, privacy: .public) Hz; the writer's measured rate decides")
+        } else {
+            Log.audio.info("tap format after start confirms \(asbd.mSampleRate, privacy: .public) Hz")
+        }
     }
 
     private func stopIO() {
@@ -167,18 +205,26 @@ final class SystemTapCapture {
     /// that system-audio capture worked, because macOS exposes no API to query
     /// the permission (FR-42) — so it is derived from the samples and never from
     /// elapsed time (AD-36).
-    func stop() -> (duration: TimeInterval, evidence: AudioEvidence) {
+    func stop() -> (duration: TimeInterval, evidence: AudioEvidence, rate: RateFidelity) {
         // Hold the writer past teardown: teardown calls writer.stop(), which is
         // what flushes the remainder of the ring. Reading the counters before it
         // under-reports the tail.
         let w = writer
+        // Read the rate *before* teardown. Its denominator is wall time since
+        // start, which keeps running while teardown flushes — so reading it after
+        // would divide the same frames by a longer elapsed and invent a
+        // disagreement on every recording.
+        let r = w?.rateFidelity ?? .unknown
         teardown()
         let e = w?.evidence ?? .none
-        Log.audio.info("system capture stopped duration=\(e.duration) peak=\(e.peak) nonSilent=\(e.nonSilentSeconds) producedAudio=\(e.producedAudio)")
+        Log.audio.info("system capture stopped duration=\(e.duration) peak=\(e.peak) nonSilent=\(e.nonSilentSeconds) producedAudio=\(e.producedAudio) declaredRate=\(r.declaredRate) observedRate=\(r.observedRate)")
         if let why = e.failureReason {
             Log.audio.error("system stream produced no usable audio: \(why, privacy: .public)")
         }
-        return (e.duration, e)
+        if let why = r.explanation {
+            Log.audio.error("system stream rate: \(why, privacy: .public)")
+        }
+        return (e.duration, e, r)
     }
 
     var level: Float { writer?.peak ?? 0 }
