@@ -237,11 +237,15 @@ enum UIShot {
             m.micDevice = "AirPods Pro"
             m.systemSource = "system audio — Slack"
             m.noteFilename = "long.md"
-            m.metadata = MeetingMetadata(title: "Payment Terminal firmware and the migration window",
+            // A deliberately long title, and deliberately *not* borrowed from a real
+            // meeting: this repository is public and a meeting title is meeting content
+            // (PRD §9.1). The fixture's job is length and awkwardness, which invented
+            // words do just as well.
+            m.metadata = MeetingMetadata(title: "Quarterly widget rollout and the migration window",
                                          tags: [], summary: "", decisions: [], actionItems: [],
                                          backend: .heuristic)
             m.utterances = [
-                Utterance(start: 0, end: 8, text: "The firmware question is separable.",
+                Utterance(start: 0, end: 8, text: "The first question is separable.",
                           speaker: .inRoom(0), origin: .mic),
                 Utterance(start: 8, end: 16, text: "I disagree, they land in the same release.",
                           speaker: .inRoom(1), origin: .mic),
@@ -266,14 +270,14 @@ enum UIShot {
             m.diarizationSucceeded = true
             m.micDevice = "MacBook Pro Microphone"
             m.noteFilename = "simple.md"
-            m.metadata = MeetingMetadata(title: "Charge Point", tags: ["ops"],
-                                         summary: "A short call about one charge point.",
+            m.metadata = MeetingMetadata(title: "Spare Part", tags: ["ops"],
+                                         summary: "A short call about one broken unit.",
                                          decisions: [Decision(text: "Replace the unit.", at: 30)],
                                          actionItems: [ActionItem(text: "Order a replacement.",
                                                                   owner: "Me", at: 42)],
                                          backend: .heuristic)
             m.utterances = [
-                Utterance(start: 0, end: 20, text: "The charge point on site three is offline again.",
+                Utterance(start: 0, end: 20, text: "The unit on site three is offline again.",
                           speaker: .local, origin: .mic),
                 Utterance(start: 20, end: 40, text: "We have replaced that controller twice now.",
                           speaker: .remote(0), origin: .system),

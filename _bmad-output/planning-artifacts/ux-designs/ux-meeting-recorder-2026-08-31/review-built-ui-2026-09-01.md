@@ -83,7 +83,7 @@ for the General pane and then failed to apply to the pane it had just changed.
 
 This is "the colors not working", precisely.
 
-In the first screenshot the *CSMS migration* row is selected and carries the
+In the first screenshot the selected row carries the
 system blue selection fill. The chips inside it do not know that:
 
 | Chip | Renders as | Result |

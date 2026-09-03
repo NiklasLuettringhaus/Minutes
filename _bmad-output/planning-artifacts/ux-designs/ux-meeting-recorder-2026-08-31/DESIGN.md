@@ -3,7 +3,7 @@ name: Minutes
 description: A native macOS menu bar utility that inherits Apple's visual system and adds only what recording state and setup progress genuinely require.
 status: final
 created: 2026-08-31
-updated: 2026-09-01
+updated: 2026-09-03
 sources:
   - ../../prds/prd-meeting-recorder-2026-08-31/prd.md
   - ../../prds/prd-meeting-recorder-2026-08-31/addendum.md
@@ -153,6 +153,16 @@ components:
     recording:    { background: '{colors.state-recording}',    opacity: '0.12', foreground: '{colors.state-recording}' }
     transcribing: { background: '{colors.state-transcribing}', opacity: '0.12', foreground: '{colors.state-transcribing}' }
     degraded:     { background: '{colors.state-transcribing}', opacity: '0.12', foreground: '{colors.state-transcribing}', icon: 'exclamationmark.triangle' }
+    note: 'This component **announces**. It carries no control, and a state it announces is one the app has already resolved. A state the app has deliberately *not* resolved — because resolving it would mean choosing on the user behalf between two outcomes it cannot rank — is {components.decision-banner}, which is the same shape with the choice inside it. Added increment 7, because the note-conflict state was about to be built as a degraded banner and a degraded banner cannot say "you decide".'
+  decision-banner:
+    derived-from: 'the {components.state-banner} degraded variant — same radius, same padding, same 12% tint, same warning glyph'
+    background: '{colors.state-transcribing}'
+    opacity: '0.12'
+    foreground: '{colors.state-transcribing}'
+    icon: 'exclamationmark.triangle'
+    layout: 'the sentence on its own line, the controls on the line beneath it — never side by side'
+    controls: 'exactly two, and the non-destructive one is `.borderedProminent`'
+    note: 'Added increment 7 for FR-81. It exists for one situation: the app has found something it will not decide, and both outcomes are legitimate. Two rules make it different from a degraded banner. It states what was **found**, never what the user should do — "this note has been changed outside Minutes" and not "your edits will be lost". And the prominent control is the one that changes nothing on disk, because the app is the party proposing the destructive option and must not also be the party recommending it. Never used for a failure with a single remedy; that is a degraded banner with a button.'
   speaker-chip:
     radius: '{rounded.full}'
     padding: '{spacing.1} {spacing.3}'
@@ -183,6 +193,7 @@ components:
     trailing-enrolled:   'Re-record · a minus-circle Delete'
     separator: '{colors.separator}, one above each row'
     note: 'The Remembered-voices row, declared increment 4 for FR-51 and FR-64. The enrolled entry is the same row with a different glyph and a badge — not a second component and not a separate card. One of these entries is the user and the rest are other people, and that is the only distinction the row draws.'
+    reused-by: 'The Unclaimed Notes list (FR-82) uses this anatomy verbatim — leading glyph `doc.text`, the title being the *filename the file actually has*, the subtitle its own frontmatter date and title, trailing `Reveal` and a minus-circle `Dismiss`. Added increment 7. It is the same kind of thing: a short list of items the app is holding on the user behalf, each with a name, a line of provenance and a way to remove it from the list. Inventing a second shape for it would have been the defect.'
   enrolment-card:
     derived-from: 'the Test Playground card — same card, same banner, same meter, same result-as-facts ending'
     idle:      { banner: '{components.state-banner}.info', control: '{components.button-primary}', meters: 'one — Microphone' }
@@ -333,6 +344,8 @@ not *is the app correct*.
 - State a blocked capability's reason **and** its remedy, in the row itself. If the remedy is a command, show the command.
 - Reserve `{components.egress-marker}` for the two elements that involve transmission, and nothing else.
 - Mirror the Transcription model row's anatomy in the Summaries pane. A second visual language for the same job is a defect.
+- **Show a file by the name it has.** When the user has renamed a Note, every surface that names that file uses the user's name for it, in `{typography.mono-inline}`. The app's derived name is an internal detail from that moment on, and displaying it means the app and Finder disagree in front of the user about what a file is called. *Added increment 7, after the app spent a day calling a file `2026-09-03 0930 Actually.md` while Finder called it `2026-09-03 0930 Morning -standup.md`.*
+- **Put the choice in the banner when the app will not make it.** `{components.decision-banner}`, two controls, the non-destructive one prominent. A banner that describes a conflict and offers one button has picked a side.
 - Put card headings outside the card, flush with the pane margin.
 - Make a control in a shared row bordered. If a reader has to hover to find out what is clickable, the row has failed.
 - Let a chip truncate and let its container wrap. A chip that reflows is a chip that has been asked to be a paragraph.

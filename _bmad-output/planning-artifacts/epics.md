@@ -1,6 +1,11 @@
 ---
 stepsCompleted: [1, 2, 3, 4]
 revisions:
+  - 2026-09-03 increment 7 — added Epic 14 (11 stories, FR-77 to FR-83 plus the FR-35,
+    FR-40, FR-53 and FR-54 amendments) after a single user report and a measured
+    reconstruction of what the app did with a renamed Note. Epics 1-13 untouched and not
+    renumbered. The first epic whose ordering is set by what has already been lost rather
+    than by dependency.
   - 2026-09-02 increment 5 — added Epics 11, 12 and 13 (15 stories, FR-66 to FR-76) after
     the repository was published and the app was audited for the first time against a
     machine other than the author's. Epics 1-10 untouched and not renumbered. First
@@ -22,6 +27,7 @@ inputDocuments:
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/addendum.md
   - _bmad-output/planning-artifacts/spikes/spike-mic-isolation-2026-09-01.md
   - _bmad-output/planning-artifacts/spikes/calibration-speaker-threshold-2026-09-01.md
+  - _bmad-output/planning-artifacts/spikes/investigation-note-linkage-2026-09-03.md
   - _bmad-output/planning-artifacts/RELEASE-PLAN.md
 ---
 
@@ -29,11 +35,11 @@ inputDocuments:
 
 ## Overview
 
-This document decomposes the 76 functional requirements, 8 cross-cutting NFRs, the 38 architecture decisions and the two UX spines into 78 implementable stories across 13 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build; Epic 9 is increment 3; Epic 10 is increment 4; Epics 11-13 are increment 5, the first aimed at a machine other than the author's. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
+This document decomposes the 83 functional requirements, 8 cross-cutting NFRs, the 43 architecture decisions and the two UX spines into 90 implementable stories across 14 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build; Epic 9 is increment 3; Epic 10 is increment 4; Epics 11-13 are increment 5, the first aimed at a machine other than the author's; Epic 14 is increment 7, the first written from something the product had already destroyed. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
 
 Every FR is covered by exactly one story — verified programmatically, see the FR Coverage Map for increment 1 and each later epic's own coverage table.
 
-**Requirements inventory scope.** The inventory below covers FR-1 to FR-48, the requirement set that existed when this document was created. Every increment since has carried its new requirements inside its own epic section, restated there rather than duplicated at the top. Epic 10 and Epics 11-13 follow that convention.
+**Requirements inventory scope.** The inventory below covers FR-1 to FR-48, the requirement set that existed when this document was created. Every increment since has carried its new requirements inside its own epic section, restated there rather than duplicated at the top. Epic 10, Epics 11-13 and Epic 14 follow that convention.
 
 ## Requirements Inventory
 
@@ -2672,6 +2678,40 @@ a launch agent starting an app that no longer exists.
   a user's meetings are not deleted by an uninstall they did not ask to be
   destructive.
 
+### Story 13.5: Meeting content cannot reach the repository through prose
+
+*(tier T2 · PRD §9.1 as amended)*
+
+As someone whose meetings are private and whose repository is public, I want the
+guard to cover the way content actually escaped, so that "all user data is local"
+holds for documents as well as for files.
+
+**Acceptance Criteria:**
+
+**Given** a staged change quoting a real meeting title from the local library
+**When** the pre-commit guard runs
+**Then** the commit is refused, naming the file, the line and the title it matched
+**And** the same guard in CI states that it cannot run this check and why
+
+**And** each of the following holds:
+
+- The title list is derived from the local library at check time — meeting titles
+  and Note filenames — and is never written to a file in the repository, because
+  a list of what must not be committed would itself be the leak.
+- Single common words are not matched. A title of "Meeting" or "Sorry" would
+  otherwise refuse every commit; the check requires a multi-word title, or a
+  distinctive single word above a length threshold.
+- The check is local-only by construction. In CI there is no library, so it
+  reports *skipped, no library present* rather than passing silently — the
+  increment-6 rule that a check which cannot run must say so.
+- The two known leaks are fixed in the working tree: the `--uishot` fixtures use
+  invented words, and the one review sentence naming a real meeting is rewritten.
+- **The history is not rewritten, and that is stated rather than quietly left.**
+  The titles are already in the public commit history from earlier increments.
+  Rewriting 50-odd commits a second time to remove three strings is a poor trade
+  against the disruption, and it cannot un-publish them; the decision belongs to
+  the user, and this story records it as theirs to take.
+
 **FR Coverage — Epic 13**
 
 | FR | Story |
@@ -2679,3 +2719,370 @@ a launch agent starting an app that no longer exists.
 | FR-74 | 13.1 |
 | FR-75 | 13.2, 13.3 |
 | FR-76 | 13.4 |
+| §9.1 (amended) | 13.5 |
+
+---
+
+## Epic 14: The Note Is Yours, Not the App's
+
+**Why this epic exists.** The user renamed a Note in Finder to a name that
+described the meeting. The app reported the Note as missing, offered one remedy
+that would have orphaned the renamed file permanently, showed the renamed file
+nowhere in the UI, and then deleted the Meeting on a confirmation that named a
+file it did not touch. **The recording is not recoverable.** The Trash was empty;
+`removeItem` does not use it.
+
+The whole epic follows from one sentence the product had not believed: the Note is
+the user's file, in the user's folder, and they will rename it, move it and edit
+it. `Meeting.noteFilename` was a `String` and the only link — so the link was a
+*name*, and a name is the one property of a file a user is most likely to change.
+
+Measured account, including the reconstruction from disk:
+`../spikes/investigation-note-linkage-2026-09-03.md`.
+
+**The ordering is set by what has already been lost, not by dependencies.**
+Story 14.1 — deletion to the Trash — is first because it depends on nothing, is
+a few lines, and is the only story here that prevents the outcome that has already
+happened. Everything after it is in dependency order: identity, then finding, then
+the surfaces that report it, then the two writes that must stop being destructive,
+then the confirmation, then visibility of what was already orphaned.
+
+**What this epic explicitly does not build:** parsing a Note's content back into
+state; merging a user's edit with a fresh render; adopting a filename as the
+Meeting's title; watching the Notes Folder with FSEvents. The first two are
+refused permanently and the spine records why. The last two are deferred with
+their reasons — a filename is a date prefix plus a slug rather than a title, and a
+watcher owns only the latency while AD-39 owns the correctness.
+
+### Story 14.1: Deleting a Meeting can be undone
+
+*(tier T2 · FR-40 amended · AD-42)*
+
+As someone who has already lost a recording to a confirmed delete, I want deletion
+to be recoverable, so that a mistake costs me a drag out of the Trash rather than
+the meeting.
+
+**Acceptance Criteria:**
+
+**Given** a Meeting selected in the Library
+**When** the user confirms the delete
+**Then** the Meeting directory is in the Trash and can be restored intact
+**And** if the user chose to delete the Note, that file is in the Trash too
+
+**And** each of the following holds:
+
+- `trashItem` is used, not `removeItem`. A restored directory holds the audio and
+  the record exactly as they were.
+- A `trashItem` failure surfaces as an error naming the reason. There is **no**
+  fallback to unlinking — a volume without a Trash means the delete does not
+  happen, because an undoable delete is the entire point of this story.
+- `removeItem` remains in use for staged writes and temporary files, and a test
+  pins that no user-visible path calls it.
+- Deleting audio only (FR-44) goes to the Trash on the same rule.
+
+**Implementation constraints:**
+
+- `MeetingStore.delete(id:alsoDeleteNote:)` and `deleteAudio(id:)` are the only
+  call sites. AD-42 governs.
+
+### Story 14.2: A Note says which Meeting it belongs to
+
+*(tier T6 · FR-77 · AD-39, AD-9 amended)*
+
+As someone whose notes are files in my own folder, I want each Note to carry its
+own provenance, so that renaming or moving it cannot sever it from its meeting.
+
+**Acceptance Criteria:**
+
+**Given** a Meeting whose Note is written
+**When** the Note is rendered
+**Then** its frontmatter carries the Meeting's ID
+**And** a reader can tell what the file is with no other file present
+
+**And** each of the following holds:
+
+- `NoteIdentity` lives in Core, compiles against Foundation alone, and parses a
+  frontmatter block into a Meeting ID and a start time — **nothing else.** Its
+  return type cannot represent a title, a summary or a transcript line, so AD-9's
+  identity-versus-content line is enforced by the type rather than by discipline.
+- It reads only up to the closing `---`, and refuses a file whose first line is
+  not `---` rather than scanning an arbitrary document.
+- The `started_at` fallback parses every one of the fifteen real Notes on the
+  author's machine, and a test reads them from disk to prove it.
+- No existing Note is rewritten to add the stamp. The stamp appears when a Note is
+  next written for its own reasons.
+- A file with neither a Meeting ID nor `generated_by: Minutes` plus `started_at`
+  yields no identity at all, and is therefore never claimed (AD-43).
+
+### Story 14.3: Finding a Note that moved
+
+*(tier T6 · FR-78 · AD-39, AD-43)*
+
+As someone who renames files, I want Minutes to look for my note before it tells
+me anything about it, so that it does not report a file as gone while I am looking
+at it.
+
+**Acceptance Criteria:**
+
+**Given** a Meeting whose recorded Note path does not exist
+**When** the link is resolved
+**Then** the folder's Notes are matched by identity and exactly one match relinks
+**And** two matches are reported as an ambiguity and nothing is assumed
+**And** no match leaves the record untouched
+
+**And** each of the following holds:
+
+- One port, `NoteLocating`, taking a Meeting and a folder and returning
+  `located(URL)` / `ambiguous([URL])` / `notFound`. No caller reaches into the
+  folder itself.
+- Only files carrying a Minutes identity marker are considered. A test puts an
+  unrelated `.md` file in the folder and proves it is never returned, never
+  listed and never touched.
+- Matching prefers the Meeting ID and falls back to `started_at` within one
+  second, because the frontmatter's ISO timestamp is second-precision while
+  `Meeting.startedAt` is not.
+- The locator creates, renames, moves and deletes nothing. A test asserts the
+  folder's contents and every file's modification time are identical before and
+  after a resolution.
+- Subdirectories are searched one level, because "moved it" often means "moved it
+  into a folder", and a bounded depth is the difference between a fix and a
+  filesystem crawl.
+
+### Story 14.4: "Missing" means Minutes looked and did not find it
+
+*(tier T6 · FR-78, FR-53 amended, FR-54 amended)*
+
+As someone reading the Library, I want its claims about my folder to be true, so
+that a badge means something.
+
+**Acceptance Criteria:**
+
+**Given** a library with one Meeting whose Note was renamed and one whose Note was
+deleted
+**When** the Library reloads
+**Then** the renamed one is silently relinked and shows no badge
+**And** only the deleted one is reported as not found
+
+**And** each of the following holds:
+
+- Reconciliation runs **only** when an existence check has failed. A library with
+  no broken link performs zero folder reads, and a test proves it by counting
+  reads through the port.
+- A single match is persisted through `MeetingStore` (AD-21). Ambiguity and
+  absence persist nothing, so a folder that is temporarily unavailable cannot
+  write a false claim into history.
+- Relinking is silent: no banner, no alert, no confirmation. The only visible
+  change is the filename the detail pane shows.
+- The explicit refresh (FR-54) reconciles and recounts, in both directions —
+  records against files and files against records.
+- Moving the Notes Folder still does not mark every past Meeting broken.
+
+### Story 14.5: Row and detail actions tell the truth about what is there
+
+*(tier T2 · FR-53 amended, FR-37 · EXPERIENCE.md Row actions)*
+
+As someone right-clicking a meeting, I want the actions on offer to work, so that
+the app stops handing me a system error.
+
+**Acceptance Criteria:**
+
+**Given** a Meeting whose Note cannot be found
+**When** the user opens the row's context menu
+**Then** `Reveal in Finder` and `Open in Editor` are absent
+**And** `Locate note…` and `Rewrite note` are present
+
+**And** each of the following holds:
+
+- The condition is *a file has been located*, never *a filename is recorded*.
+  This is the defect the user reported as "file not found": `NSWorkspace.open` on
+  an absent path produces macOS's own alert.
+- The detail pane and the row menu apply one rule from one place. They had
+  diverged, with the fix and a comment explaining it living only in the detail
+  pane.
+- The unresolved copy says what was looked for and where, and distinguishes the
+  two remedies by what each does to the file on disk.
+- The ambiguous state lists the competing files by name with `Use this one` per
+  file, and the app picks none.
+
+### Story 14.6: Pointing a Meeting at a file
+
+*(tier T6 · FR-79 · AD-43)*
+
+As the user who renamed the file, I want to attach it to the meeting myself, so
+that I am not dependent on the app guessing right.
+
+**Acceptance Criteria:**
+
+**Given** any Meeting
+**When** the user chooses `Locate note…` and picks a Markdown file
+**Then** that file becomes the Meeting's Note
+**And** the file's contents are not modified by the act of choosing
+
+**And** each of the following holds:
+
+- Available on an unresolved link and on a linked Meeting alike — a user may want
+  to point at a different file.
+- If the chosen file's frontmatter identifies a different Meeting, the app names
+  that Meeting and asks. It does not refuse, and it does not stay silent: one file
+  linked to two Meetings means the next rewrite destroys one of them.
+- If the file carries no Minutes frontmatter, the app states plainly that the next
+  rewrite of this Meeting would replace its contents — before the link is made.
+- The chooser starts in the Notes Folder and is filtered to Markdown.
+- Nothing is stamped, moved or reformatted on linking.
+
+### Story 14.7: The name you gave the file is the name it keeps
+
+*(tier T6 · FR-80 · AD-40, AD-18 amended, FR-35 amended)*
+
+As someone who named a file deliberately, I want the app to stop renaming it back,
+so that my filing survives editing the meeting.
+
+**Acceptance Criteria:**
+
+**Given** a Note the user has renamed in Finder
+**When** the Meeting's title changes
+**Then** the file keeps the user's name and only its contents change
+**And** the app shows the user's name for the file
+
+**And** each of the following holds:
+
+- The record carries two names: the linked file, and the filename `NoteWriter`
+  last wrote. Divergence *is* the test — there is no `didUserRename` flag to fall
+  out of sync with the filesystem.
+- While the two are equal, AD-18 applies unchanged and a title change renames the
+  file as it always has.
+- Every surface that names the file uses the user's name, in
+  `{typography.mono-inline}`. A test pins that the derived name appears in no
+  user-facing string once the two have diverged.
+- Adopting the filename as the Meeting's title is **not** implemented, and the
+  story records why rather than leaving it as an apparent oversight.
+
+### Story 14.8: A rewrite finds the file before it writes one
+
+*(tier T2 · FR-35 amended, FR-83)*
+
+As someone clicking the only button the app offered, I want it not to be the
+action that makes my problem permanent.
+
+**Acceptance Criteria:**
+
+**Given** a Meeting whose Note was renamed and whose link is broken
+**When** the user chooses `Rewrite note`
+**Then** the existing file is found and rewritten under its own name
+**And** no second file is created
+
+**And** each of the following holds:
+
+- A new file is created only when reconciliation returns `notFound`. A test
+  reproduces the original defect — rename the file, rewrite, and assert the folder
+  still holds exactly one Note for that Meeting.
+- The rename branch in `NoteWriter` no longer treats an absent stored filename as
+  a reason to write at the old path.
+- `Rewrite note` remains a user action. A Note the user deliberately deleted is
+  still not silently recreated (FR-53).
+
+### Story 14.9: The app knows what it wrote, so it can tell your edit from its own
+
+*(tier T6 · FR-81 · AD-41, AD-9 amended · DESIGN.md components.decision-banner)*
+
+As someone who might add a paragraph of my own to a note, I want the app to notice
+rather than discard it, so that my folder is a place I can actually work in.
+
+**Acceptance Criteria:**
+
+**Given** a Note whose bytes on disk differ from what Minutes last wrote
+**When** an edit would rewrite it
+**Then** nothing is written
+**And** the user is offered exactly two outcomes: keep the file, or replace it
+
+**And** each of the following holds:
+
+- Every write persists a digest of the exact bytes written, in the same
+  `MeetingStore` update that persists the filename.
+- The comparison is digest against disk bytes — **never** against a fresh render.
+  The renderer has changed in four increments, so re-rendering an old Note
+  legitimately differs and would report every Note as edited. A test pins this by
+  rendering an increment-3-era record and asserting no conflict is raised.
+- The banner is `{components.decision-banner}`: it states what was found, not what
+  the user should do, and the prominent control is the one that changes nothing on
+  disk.
+- The choice is per Note and is not remembered as a preference.
+- The record edit that triggered the rewrite is still applied. The record is not
+  the file, and holding a rename hostage to a file conflict would be a second
+  defect.
+- **Migration:** a Note with no digest adopts the current bytes as its baseline
+  when the file's modification time is not later than the record's last write, and
+  raises a conflict when it is later. All fifteen real Notes adopt cleanly —
+  measured — and a test constructs the later-mtime case to prove the other branch
+  fires.
+
+### Story 14.10: The delete confirmation names the file it will delete
+
+*(tier T2 · FR-40 amended · EXPERIENCE.md destructive-action rule)*
+
+As someone about to delete something permanently, I want the dialog to describe my
+filesystem rather than the app's memory of it.
+
+**Acceptance Criteria:**
+
+**Given** a Meeting whose Note has been renamed, with *also delete notes* ticked
+**When** the confirmation is shown
+**Then** it names the file that will actually be deleted
+**And** deleting it removes that file
+
+**And** each of the following holds:
+
+- The link is resolved when the dialog is composed, not read from the record.
+- When no file can be found, the dialog says so instead of naming the file the
+  record remembers.
+- The dialog says the items go to the Trash.
+- A multi-selection enumerates per Meeting and the count of Notes is the count of
+  files actually resolved.
+- The reverse case is covered by a test: a Note renamed to the filename another
+  Meeting's record holds must not be deleted as that Meeting's Note.
+
+### Story 14.11: A note whose meeting is gone is still visible
+
+*(tier T6 · FR-82 · AD-43 · DESIGN.md components.voice-row reuse)*
+
+As someone whose meeting was deleted while its renamed note survived, I want the
+app to admit the file exists, so that it is not invisible in the one place that
+should know about it.
+
+**Acceptance Criteria:**
+
+**Given** a Notes Folder containing a Note Minutes wrote whose Meeting is deleted
+**When** the Library is shown
+**Then** a footer reports how many such files there are
+**And** expanding it lists each with the date and title from its own frontmatter
+
+**And** each of the following holds:
+
+- The list uses `{components.voice-row}`'s anatomy verbatim — leading `doc.text`
+  glyph, the *actual* filename as the title, its own frontmatter as the subtitle,
+  `Reveal` and a minus-circle `Dismiss`.
+- `Dismiss` changes the listing only and never touches the file.
+- Files Minutes did not write are not listed at all.
+- They are not offered as an import. A Note cannot be parsed back into a Meeting,
+  and the epic's non-goals say so.
+- The footer is absent, not empty, when there are none.
+- The specific file that prompted this epic —
+  `2026-09-03 0930 Morning -standup.md`, whose Meeting was deleted on 3 September
+  2026 — appears in this list on the author's machine when the story is done. That
+  is the story's acceptance test on real data.
+
+**FR Coverage — Epic 14**
+
+| FR | Story |
+| --- | --- |
+| FR-77 | 14.2 |
+| FR-78 | 14.3, 14.4 |
+| FR-79 | 14.6 |
+| FR-80 | 14.7 |
+| FR-81 | 14.9 |
+| FR-82 | 14.11 |
+| FR-83 | 14.1, 14.8, 14.10 |
+| FR-35 (amended) | 14.7, 14.8 |
+| FR-40 (amended) | 14.1, 14.10 |
+| FR-53 (amended) | 14.4, 14.5 |
+| FR-54 (amended) | 14.4 |
