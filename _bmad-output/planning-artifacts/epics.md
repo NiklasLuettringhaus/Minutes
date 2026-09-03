@@ -1,6 +1,11 @@
 ---
 stepsCompleted: [1, 2, 3, 4]
 revisions:
+  - 2026-09-03 increment 8 — added Epic 15 (7 stories, FR-84 to FR-88 plus the FR-67
+    amendment) after seven of sixteen recordings were found to have transcribed into
+    invented dialogue for three days. Epics 1-14 untouched and not renumbered. The
+    first epic written from a defect the *user* found and documented before the
+    product did.
   - 2026-09-03 increment 7 — added Epic 14 (11 stories, FR-77 to FR-83 plus the FR-35,
     FR-40, FR-53 and FR-54 amendments) after a single user report and a measured
     reconstruction of what the app did with a renamed Note. Epics 1-13 untouched and not
@@ -35,7 +40,7 @@ inputDocuments:
 
 ## Overview
 
-This document decomposes the 83 functional requirements, 8 cross-cutting NFRs, the 43 architecture decisions and the two UX spines into 90 implementable stories across 14 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build; Epic 9 is increment 3; Epic 10 is increment 4; Epics 11-13 are increment 5, the first aimed at a machine other than the author's; Epic 14 is increment 7, the first written from something the product had already destroyed. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
+This document decomposes the 83 functional requirements, 8 cross-cutting NFRs, the 43 architecture decisions and the two UX spines into 97 implementable stories across 15 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build; Epic 9 is increment 3; Epic 10 is increment 4; Epics 11-13 are increment 5, the first aimed at a machine other than the author's; Epic 14 is increment 7, the first written from something the product had already destroyed; Epic 15 is increment 8, written from a defect the user found and documented before the product did. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
 
 Every FR is covered by exactly one story — verified programmatically, see the FR Coverage Map for increment 1 and each later epic's own coverage table.
 
@@ -3086,3 +3091,232 @@ should know about it.
 | FR-40 (amended) | 14.1, 14.10 |
 | FR-53 (amended) | 14.4, 14.5 |
 | FR-54 (amended) | 14.4 |
+
+---
+
+## Epic 15: A Recording the App Cannot Vouch For
+
+**Why this epic exists.** For three days Minutes wrote confident, well-formatted,
+entirely invented dialogue for the remote half of seven meetings, and every check
+it had said everything was fine.
+
+**Seven of sixteen recordings.** A system stream declaring 16 kHz whose real rate
+was 8 kHz or 5.3 kHz — two or three times too fast. Speech at that speed is still
+speech-like, so transcription did not fail. It fabricated. Then the title, the
+tags and the summary were derived from the fabrication, so a broken recording
+arrived with a plausible name. Every affected recording had a Bluetooth headset as
+the *input* device. Every microphone stream was correct.
+
+**The user found it, not the product.** They measured the sample counts, wrote up
+the mechanism and the recovery, and left the report in their notes folder. The
+product's own capture-evidence check — built one increment earlier for exactly the
+purpose of not asserting a capture it could not prove — passed all seven, because
+it checks for *signal*, and a stream at three times speed is full of signal.
+
+Two lessons are written into the spine rather than left here. **AD-3's Prevents
+clause already named this exact failure** — "two adapters disagreeing on sample
+rate and silently producing garbage or half-length audio" — so the rule was
+followed and was insufficient: reading a format once at tap creation says nothing
+about what the device goes on to deliver. And **AD-36's scope was too narrow**:
+*was anything captured* and *is it at the rate it claims* are different questions.
+
+**What this epic explicitly does not build:** a fix aimed only at Bluetooth input
+devices, or only at sample rates. The correlation is 7 of 7 and the mechanism is
+not proven against Apple's source, so the guard is built on the *observable* — a
+sample count that disagrees with the clock — which catches a rate misread, a
+dropped-buffer bug, a converter misconfiguration and a clock drift alike. It also
+does not build automatic repair without asking, and it does not delete or hide a
+flagged recording: the samples are the user's.
+
+### Story 15.1: A stream knows the rate it is actually receiving
+
+*(tier T1 · FR-84 · AD-44)*
+
+As someone recording a meeting, I want the app to notice when audio is arriving at
+a different rate from the one it believes, so that it cannot resample my meeting
+into nonsense.
+
+**Acceptance Criteria:**
+
+**Given** a stream whose declared format says 48 kHz while frames arrive at 16 kHz
+**When** the stream has been running past its settling period
+**Then** the observed rate is available alongside the declared one
+**And** the disagreement is detectable without waiting for the Session to end
+
+**And** each of the following holds:
+
+- The writer counts input frames consumed and the wall time it has been running.
+  Both are values it already holds; nothing new is measured.
+- The observed rate is `frames / elapsed`, and it is reported as a number, never
+  as a verdict on its own.
+- A settling period passes before the first comparison, because the first buffers
+  arrive irregularly. Its length carries its reasoning at its declaration.
+- On the nine correct recordings on this machine the observed rate sits within
+  3% of the declared one. A test drives the writer at a deliberately wrong rate
+  and asserts the ratio comes back as 2 and as 3.
+
+### Story 15.2: A rate disagreement is a named failure, not a silent resample
+
+*(tier T1 · FR-84 · AD-44)*
+
+As someone whose recording is being quietly ruined, I want the app to stop and say
+so, so that I find out during the meeting rather than in six months.
+
+**Acceptance Criteria:**
+
+**Given** a stream whose observed rate disagrees with its declared rate
+**When** the disagreement exceeds the tolerance
+**Then** a failure is raised naming both rates
+**And** the Session continues with whatever streams are still sound
+
+**And** each of the following holds:
+
+- The error names the declared rate, the observed rate and the stream. "Audio
+  problem" is not an acceptable message; a reader must be able to tell what
+  happened from the sentence.
+- It follows FR-7's degradation rule: the microphone surviving means the Session
+  survives, mic-only, and says so.
+- The tolerance is a stated constant with its reasoning, and is not a setting.
+- A correct recording never raises it — asserted against real ratios of 1.00–1.03.
+
+### Story 15.3: The record says which stream cannot be relied on
+
+*(tier T1 · FR-85 · AD-45)*
+
+As someone reading a meeting months later, I want the record to say the far end
+was unreliable, so that I do not trust a transcript I should not.
+
+**Acceptance Criteria:**
+
+**Given** a Session in which one stream failed its rate check
+**When** the Meeting is persisted
+**Then** the record carries, per stream, whether it passed and both rates
+**And** that survives a relaunch
+
+**And** each of the following holds:
+
+- Stored, not derived on read. It is a fact about a recording that happened.
+- **Per stream.** In all seven observed cases the microphone was correct and the
+  system stream was not, so a per-Meeting flag would be wrong in both directions.
+- The field decodes as absent on every record written before it existed, per the
+  Decodable-evolution convention — adding one field to `Meeting` once orphaned
+  five real recordings.
+- Capture evidence now has two independent parts and a test asserts a stream can
+  fail either one alone: full of signal at the wrong rate, and silent at the right
+  rate.
+
+### Story 15.4: No title or summary is derived from a transcript the app cannot vouch for
+
+*(tier T1 · FR-86 · AD-46)*
+
+As someone scanning a list of meetings, I want a broken recording to look broken,
+so that a confident title does not hide it.
+
+**Acceptance Criteria:**
+
+**Given** a Meeting whose system stream failed its rate check
+**When** the metadata stage runs
+**Then** no title, tags or summary are derived from that stream's text
+**And** the transcript itself is still written
+
+**And** each of the following holds:
+
+- This is the clause that addresses *why the defect looked fine*. Titles like
+  "Die", "Sorry" and "Put The Fashion" were generated from fabricated text and
+  looked like ordinary weak auto-titles.
+- Where the microphone passed and the system stream did not, metadata may come
+  from the microphone's text alone, and the Note says that is what happened.
+- The Meeting still gets a title — a date and time, which is honest — rather than
+  no title at all.
+- Nothing is discarded. The samples are the user's.
+
+### Story 15.5: The app says which recordings it cannot vouch for
+
+*(tier T2 · FR-87 · AD-46)*
+
+As someone with sixteen meetings in a list, I want to see which ones are suspect
+without opening each, so that I know what I am dealing with.
+
+**Acceptance Criteria:**
+
+**Given** a library containing a Meeting that failed its rate check
+**When** the Library is shown
+**Then** that Meeting is marked
+**And** its detail pane states which stream, both rates, and what it means
+
+**And** each of the following holds:
+
+- The Note carries the same statement. In six months the Note is all there is.
+- The copy names a Bluetooth input device as the likely cause where one was
+  recorded, and does not assert it as certain — the correlation is 7 of 7 and the
+  mechanism is not proven against Apple's source.
+- It uses the existing degradation treatment rather than a new one. A recording
+  the app cannot vouch for is a degradation, and the product already has a voice
+  for those.
+- Nothing is hidden, greyed out or auto-deleted.
+
+### Story 15.6: An existing recording can be re-checked and repaired
+
+*(tier T2 · FR-88)*
+
+As someone who already has seven ruined recordings, I want the app to find and fix
+them, so that the fix is not a script somebody ran once.
+
+**Acceptance Criteria:**
+
+**Given** recordings made before the rate check existed
+**When** the user asks the app to check them
+**Then** each stream is assessed and the failures are named with both rates
+**And** where the true rate is recoverable the recording can be repaired and re-run
+
+**And** each of the following holds:
+
+- The true rate is derived from the stream's own sample count and the Session's
+  duration, snapped to the integer ratio — the empirical figure reads a few per
+  mil low because the wall clock includes the moments before the first sample
+  arrived, which is how 8000 Hz measured as 7919–7996.
+- Repair rewrites only the declared rate. Samples are not resampled, re-encoded
+  or discarded, and the original declared rate is recorded so the change is
+  reversible.
+- Re-running uses the retained audio and the existing pipeline. No second
+  transcription path exists.
+- Nothing is repaired without the user asking.
+- Verified on real data: the seven affected recordings recovered, one of them from
+  144 to 355 utterances, and a German meeting from word salad to grammatical
+  German.
+
+### Story 15.7: The rate the tap reports is read again when it can change
+
+*(tier T2 · FR-84 · AD-3 amended)*
+
+As someone who plugs in headphones mid-meeting, I want the app to keep up, so that
+a device change does not silently corrupt the rest of the recording.
+
+**Acceptance Criteria:**
+
+**Given** a running Session
+**When** the tap's format is re-read after the device chain is fully started
+**Then** the rate driving the converter is the one the device is actually using
+**And** a change that cannot be honoured stops the stream with a stated reason
+
+**And** each of the following holds:
+
+- The format is re-read after `AudioDeviceStart`, not only after the aggregate
+  device is created. Reading it at creation is what produced this defect.
+- The existing device-change path already refuses to continue on a format change
+  mid-recording (FR-8). That behaviour is kept; this story makes the *initial*
+  rate as trustworthy as the post-change one.
+- This story is ranked last deliberately. It addresses the mechanism, which is
+  inferred; 15.1 through 15.4 address the observable, which is measured. If the
+  mechanism turns out to be something else, the guard still holds.
+
+**FR Coverage — Epic 15**
+
+| FR | Story |
+| --- | --- |
+| FR-84 | 15.1, 15.2, 15.7 |
+| FR-85 | 15.3 |
+| FR-86 | 15.4 |
+| FR-87 | 15.5 |
+| FR-88 | 15.6 |
+| FR-67 (amended) | 15.3 |

@@ -17,6 +17,13 @@ struct CapturedStreams: Sendable {
     /// state *why* a stream produced nothing rather than only that it did.
     var micEvidence: AudioEvidence = .none
     var systemEvidence: AudioEvidence = .none
+    /// Whether each stream's samples are at the rate it claimed (AD-45).
+    ///
+    /// Per stream, not per Meeting. In all seven observed failures the microphone
+    /// was correct and the system stream was not, so one flag for the recording
+    /// would have been wrong in both directions.
+    var micRate: RateFidelity = .unknown
+    var systemRate: RateFidelity = .unknown
     /// Whether the tap was actually established. Distinguishes "the tap failed to
     /// start", which reported itself at start, from "the tap ran and heard
     /// nothing", which is the condition worth telling the user about — including

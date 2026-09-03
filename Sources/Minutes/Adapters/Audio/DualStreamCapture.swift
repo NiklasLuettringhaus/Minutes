@@ -54,13 +54,16 @@ final class DualStreamCapture: Capturing {
         let micResult = mic.stop()
         let micDuration = micResult.duration
         let micEvidence = micResult.evidence
+        let micRate = micResult.rate
         var systemDuration: TimeInterval = 0
         var systemEvidence = AudioEvidence.none
+        var systemRate = RateFidelity.unknown
         let tapEstablished = (system != nil)
         if let s = system {
             let r = s.stop()
             systemDuration = r.duration
             systemEvidence = r.evidence
+            systemRate = r.rate
         }
         let produced = systemEvidence.producedAudio
         system = nil
@@ -85,6 +88,8 @@ final class DualStreamCapture: Capturing {
             systemCaptured: produced,
             micEvidence: micEvidence,
             systemEvidence: systemEvidence,
+            micRate: micRate,
+            systemRate: systemRate,
             systemTapEstablished: tapEstablished)
     }
 

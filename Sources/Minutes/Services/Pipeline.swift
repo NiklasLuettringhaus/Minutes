@@ -371,6 +371,25 @@ actor Pipeline {
         let store = MeetingStore.shared
         let meeting = try await store.load(id: id)
 
+        // FR-86 / AD-46. Nothing is derived from a stream the app cannot vouch
+        // for. This is the clause that addresses *why* the sample-rate defect
+        // looked fine for three days: seven recordings arrived with confident
+        // titles — "Die", "Sorry", "Put The Fashion" — generated from fabricated
+        // text, and read as ordinary weak auto-titles.
+        let usable = meeting.trustworthyUtterances
+        if usable.count != meeting.utterances.count {
+            let dropped = meeting.utterances.count - usable.count
+            Log.pipeline.error("metadata: ignoring \(dropped, privacy: .public) utterances from a stream that failed its rate check")
+        }
+        guard !usable.isEmpty else {
+            // No trustworthy speech at all: the Meeting still gets a name, and
+            // the name is a date, which is honest (FR-26).
+            let fallback = MeetingMetadata.fallback(date: meeting.startedAt, app: meeting.triggeringApp)
+            _ = try await store.update(id: id) { $0.metadata = fallback }
+            Log.pipeline.error("metadata: no trustworthy speech, using the date as the title")
+            return
+        }
+
         // AD-12: prefer the LLM, fall back to the deterministic backend. The
         // fallback is NOT an error here — it is the expected path on this machine.
         var result: MeetingMetadata
@@ -379,13 +398,13 @@ actor Pipeline {
         let pinHeuristic = await AppStateBridge.pinHeuristicBackend()
         if !pinHeuristic, await llm.isAvailable() {
             do {
-                result = try await llm.derive(from: meeting.utterances, names: meeting.speakerNames)
+                result = try await llm.derive(from: usable, names: meeting.speakerNames)
             } catch {
                 Log.pipeline.info("LLM metadata failed, using heuristic: \(error.localizedDescription, privacy: .public)")
-                result = try await heuristic.derive(from: meeting.utterances, names: meeting.speakerNames)
+                result = try await heuristic.derive(from: usable, names: meeting.speakerNames)
             }
         } else {
-            result = try await heuristic.derive(from: meeting.utterances, names: meeting.speakerNames)
+            result = try await heuristic.derive(from: usable, names: meeting.speakerNames)
         }
 
         // No Meeting is ever left untitled (FR-26).
