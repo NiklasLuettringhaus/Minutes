@@ -374,7 +374,15 @@ So capture evidence has two independent parts, and a stream must satisfy both to
 
 - **Binds:** FR-6, FR-7, AD-3, AD-36, AD-45
 - **Prevents:** the defect that produced seven fabricated transcripts — a declared rate that the device does not honour, resampled as if it did. A component that reads the rate once at setup cannot tell a correct 48 kHz stream from a 16 kHz stream mislabelled as 48 kHz, and both are ordinary-looking float samples in a ring buffer.
-- **Rule:** A stream's writer counts the input frames it consumes and the elapsed time it has been running, and compares the two against the format it was given. A disagreement beyond a stated tolerance is a **named failure**, surfaced with both rates, and never a silent resample. The tolerance and the settling period before the first check both carry their reasoning at their declaration, and neither is a setting. The comparison runs while recording, not only at the end, because a two-hour meeting is too expensive to discover afterwards. What the app does about a disagreement — correct the converter, or stop the stream and say so — is a story-level decision; that it must not proceed silently is not.
+- **Rule:** A stream's writer counts the input frames it consumes and the elapsed time it has been running, and compares the two against the format it was given. A disagreement beyond a stated tolerance is **acted on**, never resampled silently. The tolerance and the settling period both carry their reasoning at their declaration, and neither is a setting. The comparison runs while recording, not only at the end, because a two-hour meeting is too expensive to discover afterwards.
+
+**What the app does about it, decided 2026-09-03 rather than deferred to story level.** Detection alone leaves the recording ruined and merely honest about it, which is not what "so it does not happen again" means. So:
+
+1. **Nothing reaches the file until the rate has settled.** The opening is held in memory — about 1 MB — rather than written and later regretted, because deciding after some audio is on disk leaves every corrected recording with compressed opening seconds.
+2. **If the observed rate is one a real device uses, the converter is rebuilt from it** and the recording comes out correct. The record still carries the declared rate, the observed rate and the correction, because a record that hid its own correction would make this defect invisible again one layer down.
+3. **If it is not**, the declared rate stands, the file comes out wrong, and AD-45 refuses to build anything on it. Guessing a rate that no device uses is how a *different* defect would get silently resampled into this one.
+
+**Both halves of the rate are sampled at the same instant.** Frames counted at the last chunk divided by elapsed measured *now* is biased low by up to half a chunk period — measured at 13% on a correct 16 kHz stream with 375 ms chunks — and a wider tolerance would hide that rather than fix it. The measurement also starts at the *second* chunk: the first arrives almost immediately after the stream opens, and dividing a full chunk by a near-zero elapsed reads 76 kHz on a 16 kHz stream.
 
 ### AD-45 — A stream is trusted only if its sample count agrees with the clock
 

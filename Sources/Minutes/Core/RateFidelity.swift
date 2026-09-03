@@ -32,6 +32,15 @@ struct RateFidelity: Equatable, Sendable, Codable {
     var framesObserved: Double
     /// Wall-clock seconds the stream has been running.
     var elapsedSeconds: TimeInterval
+    /// The rate the writer actually converted from, when it refused to believe
+    /// `declaredRate` and used the observation instead (AD-44).
+    ///
+    /// Present means the disagreement was **corrected at capture time**, so the
+    /// file on disk is right and the recording is trustworthy. The declared and
+    /// observed rates are still recorded, because what happened is worth keeping:
+    /// a record that hid its own correction would make this defect invisible
+    /// again, just at a different layer.
+    var correctedTo: Double?
 
     /// How fast samples are really arriving, in Hz. Zero before anything arrives.
     var observedRate: Double {
@@ -96,8 +105,25 @@ struct RateFidelity: Equatable, Sendable, Codable {
     }
 
     var isTrustworthy: Bool {
+        if correctedTo != nil { return true }
         if case .wrong = finalVerdict { return false }
         return true
+    }
+
+    /// The nearest rate a real audio device would actually use.
+    ///
+    /// Snapping is what makes correction safe. The observation carries noise — the
+    /// wall clock includes the moments before the first sample arrived — so a true
+    /// 16 kHz reads as 15935, and converting from 15935 would be very slightly
+    /// wrong for ever. The standard rates are far enough apart that a 5% window
+    /// around each cannot reach its neighbour.
+    ///
+    /// Returns nil when the observation is not near any of them, which is the
+    /// case the app must *not* guess at: it keeps the declared rate, records the
+    /// disagreement and refuses to derive anything (FR-85, FR-86).
+    static func standardRate(nearest observed: Double) -> Double? {
+        let standard: [Double] = [8_000, 11_025, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000]
+        return standard.first { abs(observed - $0) / $0 <= 0.05 }
     }
 
     /// What happened, in a sentence a person can act on.
@@ -106,6 +132,9 @@ struct RateFidelity: Equatable, Sendable, Codable {
     /// while the device used another — and a reader who cannot see both numbers
     /// cannot tell this from any other audio problem.
     var explanation: String? {
+        // A corrected stream has nothing to explain to the user: the file is
+        // right. What happened is in the log and in the record.
+        guard correctedTo == nil else { return nil }
         guard case .wrong(let r) = finalVerdict else { return nil }
         let speed = r > 1 ? "faster" : "slower"
         return String(format:

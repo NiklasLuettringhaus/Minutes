@@ -1135,7 +1135,10 @@ A declared sample rate is a claim the app verifies rather than trusts.
 
 **Consequences (testable):**
 - While a Session runs, each stream compares the input frames it has consumed against the time it has been running, and against the rate its format declares.
-- A disagreement beyond a stated tolerance is a named failure carrying **both** rates — the one declared and the one observed. It is never a silent resample.
+- A disagreement beyond a stated tolerance is **corrected where the observed rate is one a real device uses**, so the recording comes out right. Nothing is written to the file until the rate has settled, so a corrected recording has no compressed opening.
+- Where the observed rate is *not* one a real device uses, the app does not guess: the declared rate stands, the recording is marked untrustworthy (FR-85) and nothing is derived from it (FR-86). Guessing there would resample a different defect into this one.
+- Either way the record carries **both** rates and the correction, if any. A record that hid its own correction would make this defect invisible again one layer down.
+- The user is told **during the Session** when a disagreement cannot be corrected. *(Amended 2026-09-03: the first implementation of this requirement raised the event and nothing subscribed to it, so it only surfaced at stop. A requirement whose code does not implement it is worse than an unwritten one, because the document says it is done.)*
 - The check runs during the Session, not only at the end: a two-hour meeting is too expensive to discover afterwards.
 - There is a settling period before the first comparison, because the first buffers arrive irregularly. Its length is stated where it is defined, and it is not a setting.
 - A correct recording never triggers it. Verified against the nine recordings on this machine that were correct, whose ratios sit at 1.00–1.03.
