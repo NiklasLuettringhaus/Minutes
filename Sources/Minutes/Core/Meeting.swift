@@ -341,6 +341,36 @@ struct Meeting: Codable, Sendable, Identifiable {
                                     wordsScored: words, wordsTotal: total)
     }
 
+    /// What this Meeting's **merged** Transcript still holds of the far end
+    /// twice (FR-23 as amended, FR-90).
+    ///
+    /// Asked of the record rather than of the stage that wrote it, so a
+    /// regression between the two is visible. `nil` when the Meeting has only
+    /// one Stream and the question does not arise.
+    var duplicateResidual: EchoDeduplication.Residual? {
+        let mic = utterances.filter { $0.origin == .mic }
+        let system = utterances.filter { $0.origin == .system }
+        guard !mic.isEmpty, !system.isEmpty else { return nil }
+        // Both sides are already on the Mic Stream's clock by the time they are
+        // on the record (FR-97), so no further shift is applied here.
+        return EchoDeduplication.residual(
+            mic: mic.map { .init(start: $0.start, end: $0.end, text: $0.text) },
+            system: system.map { .init(start: $0.start, end: $0.end, text: $0.text) })
+    }
+
+    /// Words per minute over the whole Transcript, as a model-independent
+    /// sanity signal (FR-23 as amended).
+    ///
+    /// **Measured:** the two severely affected recordings read **226 and 270**
+    /// against a library median of **148**, and natural speech is 110 to 160. A
+    /// transcript that holds the same speech twice reads impossibly fast, which
+    /// is a symptom available without any reference to the audio.
+    var wordsPerMinute: Double? {
+        guard duration > 0, !utterances.isEmpty else { return nil }
+        let words = utterances.reduce(0) { $0 + $1.text.split(separator: " ").count }
+        return Double(words) / (duration / 60)
+    }
+
     /// The streams whose transcript cannot be relied on (FR-85).
     ///
     /// Only a *failed* check counts. A record with no check is not evidence of a

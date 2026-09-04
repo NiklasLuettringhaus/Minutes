@@ -181,17 +181,17 @@ development_status:
   16-1-transcription-accuracy-can-be-measured-from-a-terminal: done
   16-2-the-app-can-tell-that-the-microphone-was-hearing-the-call: done
   16-3-what-cannot-be-echo-is-never-excluded: done
-  16-4-the-echo-never-reaches-the-model-or-the-diariser: in-progress
+  16-4-the-echo-never-reaches-the-model-or-the-diariser: done   # transcript rule shipped in inc 9; the diarisation clause was withdrawn on measurement and is replaced by 16-15
   16-5-the-people-in-the-room-are-counted-from-the-room: backlog   # WITHDRAWN: measured worse (5->7, 6->6, 3->5). Superseded by 16-15.
   16-6-the-record-says-the-recording-was-affected-and-by-how-much: done
-  16-7-the-same-sentence-never-appears-twice: in-progress
+  16-7-the-same-sentence-never-appears-twice: done
   16-8-the-app-stops-rating-accuracy-it-has-not-measured: done
-  16-9-the-rate-is-checked-against-the-audio-clock: backlog
-  16-10-an-utterance-carries-how-sure-the-engine-was: backlog
-  16-11-audio-the-engine-could-not-read-is-a-recorded-gap: backlog
-  16-12-the-transcript-is-ordered-by-when-things-were-said: backlog
-  16-13-minutes-knows-whether-the-echo-is-even-possible: backlog
-  16-14-the-far-end-is-cancelled-while-recording-not-reasoned-about: backlog
-  16-15-the-people-in-the-room-are-found-by-ruling-out-the-call: backlog
-  16-16-a-pooled-figure-is-something-the-harness-prints: backlog
+  16-9-the-rate-is-checked-against-the-audio-clock: done
+  16-10-an-utterance-carries-how-sure-the-engine-was: done
+  16-11-audio-the-engine-could-not-read-is-a-recorded-gap: done
+  16-12-the-transcript-is-ordered-by-when-things-were-said: done
+  16-13-minutes-knows-whether-the-echo-is-even-possible: done
+  16-14-the-far-end-is-cancelled-while-recording-not-reasoned-about: done   # BUILT, MEASURED, NOT SHIPPED: best 7.3 dB against a 20 dB bar, and 6.49 dB on a recording with no echo in it. AD-55 keeps it out of the capture path. See spikes/measurement-echo-cancellation-2026-09-04.md
+  16-15-the-people-in-the-room-are-found-by-ruling-out-the-call: done
+  16-16-a-pooled-figure-is-something-the-harness-prints: done
   epic-16-retrospective: optional

@@ -100,6 +100,54 @@ enum EchoDeduplication {
                        residualDuplicateWords: residual)
     }
 
+    /// What a **merged** Transcript still contains, measured over the record
+    /// rather than assumed from the stage that produced it (FR-23 as amended).
+    ///
+    /// **The invariant belongs here and not upstream, and that is the point of
+    /// the story it comes from.** `apply` runs once, inside transcription; the
+    /// property it is supposed to guarantee is about the Transcript that ends up
+    /// on the record, and the stage between them can regress without the stage's
+    /// own tests noticing. So this asks the finished article.
+    ///
+    /// It is **not** asserted to be zero, and a test that demanded zero would be
+    /// asserting something the design does not deliver: a partial overlap, where
+    /// Echo and a room voice fall inside one Utterance, survives the
+    /// Utterance-level rule by construction. Measured on the three affected
+    /// recordings the residual is 695, 493 and 244 words. Reported, not hidden.
+    struct Residual: Equatable, Sendable {
+        var duplicateWords: Int
+        var micWords: Int
+
+        var proportion: Double {
+            micWords > 0 ? Double(duplicateWords) / Double(micWords) : 0
+        }
+    }
+
+    /// Measures the residual over a merged set of spans.
+    ///
+    /// `offset` moves the System Stream onto the Mic Stream's clock, which is
+    /// the same shift FR-97 applies at the merge — comparing raw offsets would
+    /// misalign the very recordings this is for.
+    static func residual(mic: [Span], system: [Span],
+                         offset: TimeInterval = 0,
+                         similarityThreshold: Double = Self.textSimilarityThreshold) -> Residual {
+        let shifted = offset == 0 ? system : system.map {
+            Span(start: $0.start + offset, end: $0.end + offset, text: $0.text)
+        }
+        var duplicate = 0, total = 0
+        for span in mic {
+            let words = tokens(span.text)
+            guard !words.isEmpty else { continue }
+            total += words.count
+            if shifted.contains(where: {
+                span.overlaps($0) && similarity(words, tokens($0.text)) >= similarityThreshold
+            }) {
+                duplicate += words.count
+            }
+        }
+        return Residual(duplicateWords: duplicate, micWords: total)
+    }
+
     // MARK: - Text
 
     /// Lowercased word tokens, punctuation removed.

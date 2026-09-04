@@ -3545,9 +3545,14 @@ transcript is a record of the meeting rather than of the room's acoustics.
   nine clean real recordings hold literally zero coincidentally duplicated
   words, so a headphones recording must pass through untouched — proven, not
   assumed.
-- **Diarization** clusters from audio with echo frames excluded, muted in the
-  processing path with ramps rather than hard cuts. The app never edits the
-  user's recording to fix its own problem (AD-49).
+- ~~**Diarization** clusters from audio with echo frames excluded, muted in the
+  processing path with ramps rather than hard cuts.~~ **Withdrawn by measurement
+  before it shipped, and now forbidden** (AD-47 as amended): the in-room voice
+  count went 5→7, 6→6 and 3→5, because muting fragments continuous speech and
+  the clusterer splits one voice into several. Story 16.15 replaces it — the Mic
+  Stream is diarized unmodified and the far end's *clusters* are ruled out by
+  comparison. The app never edits the user's recording to fix its own problem
+  (AD-49), and it no longer edits a derived copy either.
 - **The transcript** drops a mic Utterance only where the frame test *and* the
   text agree — flagged as echo **and** substantially repeating a time-overlapping
   system Utterance. It cannot delete unique content, because it only ever
