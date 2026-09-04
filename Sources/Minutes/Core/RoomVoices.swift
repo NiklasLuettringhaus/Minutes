@@ -106,3 +106,29 @@ enum RoomVoices {
         return Outcome(matches: matches, excluded: excluded)
     }
 }
+
+/// One microphone voice ruled out as the far end, and how close the call it
+/// matched was (FR-100, AD-56).
+///
+/// Stored on the Meeting so the decision can be re-derived rather than
+/// re-trusted. The distance is the whole evidence: the calibration's separation
+/// is **0.295 against 0.373**, which is real and is the tightest margin in this
+/// increment, so a reader who later doubts a ruling has the number in front of
+/// them instead of a verdict.
+struct RuledOutVoice: Equatable, Sendable, Codable {
+    /// The Diarizer's cluster index on the Mic Stream.
+    var micCluster: Int
+    /// Cosine distance to the nearest System Stream centroid.
+    var distance: Float
+
+    init(micCluster: Int, distance: Float) {
+        self.micCluster = micCluster
+        self.distance = distance
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        micCluster = try c.decodeIfPresent(Int.self, forKey: .micCluster) ?? 0
+        distance = try c.decodeIfPresent(Float.self, forKey: .distance) ?? 0
+    }
+}

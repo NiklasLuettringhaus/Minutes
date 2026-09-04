@@ -33,12 +33,22 @@ struct SpeakerLabelID: Hashable, Codable, Sendable, CustomStringConvertible {
     static let inRoomUnidentified = SpeakerLabelID("room-unidentified")
     /// A participant on the other end of the call.
     static func remote(_ index: Int) -> SpeakerLabelID { SpeakerLabelID("remote-\(index)") }
+    /// The far end, arriving through the loudspeakers and back into the
+    /// microphone (FR-100).
+    ///
+    /// **Not an in-room voice, and not a Remote Speaker either.** It is the call,
+    /// counted once on the System Stream and reaching the microphone a second
+    /// time; giving it a label of its own is what stops it being counted as a
+    /// person who was in the room, which was the whole defect. It renders on the
+    /// call's side, never in the room, and it never becomes a Speaker Profile —
+    /// a phantom attendee that is *remembered* comes back next week.
+    static let farEndEcho = SpeakerLabelID("far-end-echo")
 
     /// Certainly the user.
     var isLocal: Bool { self == .local }
     /// In the room — the user, or someone sitting next to them.
     var isInRoom: Bool { self == .local || raw.hasPrefix("room-") }
-    var isRemote: Bool { raw.hasPrefix("remote-") }
+    var isRemote: Bool { raw.hasPrefix("remote-") || self == .farEndEcho }
 
     /// Where this voice was, which is the part that IS structural.
     enum Place { case you, room, remote }
@@ -291,6 +301,14 @@ struct Meeting: Codable, Sendable, Identifiable {
     /// Whether the output device changed kind while recording.
     var outputDeviceChanged: Bool = false
 
+    /// Microphone voices ruled out as the far end coming back (FR-100, AD-56).
+    ///
+    /// Recorded rather than only acted on, so the decision is re-derivable after a
+    /// threshold change — the same rule AD-49 sets for Echo exclusion, and for the
+    /// same reason: a number this thin needs to be re-checkable against the
+    /// recordings it was measured on.
+    var ruledOutVoices: [RuledOutVoice] = []
+
     /// Stretches of audio that produced no usable text (FR-96, AD-52).
     ///
     /// Empty means either "none found" or "never looked", and the two are told
@@ -411,6 +429,7 @@ struct Meeting: Codable, Sendable, Identifiable {
         self.outputDevice = nil
         self.outputDeviceChanged = false
         self.gaps = []
+        self.ruledOutVoices = []
     }
 
     /// Hand-written because the synthesised `Codable` was **not** tolerant of an
@@ -455,11 +474,13 @@ struct Meeting: Codable, Sendable, Identifiable {
         outputDevice = try c.decodeIfPresent(OutputDevice.self, forKey: .outputDevice)
         outputDeviceChanged = try c.decodeIfPresent(Bool.self, forKey: .outputDeviceChanged) ?? false
         gaps = try c.decodeIfPresent([TranscriptGap].self, forKey: .gaps) ?? []
+        ruledOutVoices = try c.decodeIfPresent([RuledOutVoice].self, forKey: .ruledOutVoices) ?? []
     }
 
     func displayName(for id: SpeakerLabelID) -> String {
         if let n = speakerNames[id.raw] { return n }
         if id == .inRoomUnidentified { return "In-room, unidentified" }
+        if id == .farEndEcho { return "The call, through your microphone" }
         switch id.place {
         case .you:    return "Me"
         case .room:   return "In-room speaker"
@@ -477,6 +498,10 @@ struct Meeting: Codable, Sendable, Identifiable {
     /// How a given Speaker reached the recording. Structural, not guessed: mic
     /// means the room, system means the far end (AD-11).
     func heardThrough(_ id: SpeakerLabelID) -> String {
+        // The far end coming back through the loudspeakers is on the call's side
+        // of the record and was heard through the *microphone*. It is the one
+        // label where place and device disagree, which is exactly what it is for.
+        if id == .farEndEcho { return micDevice ?? "microphone" }
         switch id.place {
         case .you, .room:
             return micDevice ?? "microphone"

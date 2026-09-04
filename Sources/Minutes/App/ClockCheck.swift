@@ -45,6 +45,23 @@ enum ClockCheck {
             return
         }
 
+        // FR-98 / AD-54. What the device says about itself, before anything is
+        // recorded — the classification has to be checkable against a machine
+        // rather than only against a unit test's literals.
+        if let device = OutputDeviceMonitor.current() {
+            print("output device: \(device.name ?? "unnamed") "
+                  + "transport '\(device.transport)' "
+                  + "dataSource '\(device.dataSource ?? "-")' -> \(device.kind.rawValue)")
+            switch device.kind.echoPossible {
+            case true?: print("  echo is possible here; exclusion and cancellation may act")
+            case false?: print("  echo is impossible here; nothing is excluded whatever the signal says")
+            case nil: print("  the device cannot say; FR-89's measurement decides, as before")
+            }
+        } else {
+            print("output device: none reported")
+        }
+        print("")
+
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("minutes-clock-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dir) }

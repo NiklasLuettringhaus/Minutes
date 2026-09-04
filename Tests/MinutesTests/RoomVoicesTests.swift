@@ -92,6 +92,59 @@ final class RoomVoicesTests: XCTestCase {
         XCTAssertNil(empty.matches.first { $0.micCluster == 0 }?.distance)
     }
 
+    // MARK: - The calibration, as a test
+
+    /// **The measured separation** (`spikes/calibration-room-voices-2026-09-04.md`).
+    /// Every microphone cluster in the author's library, by its distance to the
+    /// nearest far-end centroid. The threshold has to sit in the gap, and this
+    /// fails if anybody moves it out.
+    func testTheCalibratedThresholdSitsInTheMeasuredGap() {
+        let ruledOut: [Float] = [0.049, 0.066, 0.068, 0.071, 0.109, 0.128, 0.291, 0.295]
+        let kept: [Float] = [0.373, 0.389, 0.402, 0.687, 0.746, 0.778, 0.783, 0.793,
+                             0.819, 0.826, 0.834, 0.838, 0.841, 0.868, 0.885, 0.923,
+                             0.929, 0.937, 0.987, 1.014, 1.027]
+        let t = VoiceMatch.sameSpeakerThreshold
+        XCTAssertGreaterThan(t, ruledOut.max()!,
+                             "0.35 must be above every far-end match measured (0.295)")
+        XCTAssertLessThan(t, kept.min()!,
+                          "and below every genuine in-room voice measured (0.373)")
+    }
+
+    /// **The direction of the change on the three affected recordings**, which is
+    /// the assertion the previous attempt did not make and would have failed.
+    /// Reproduced from the cluster distances `--check-echo --diarize` printed.
+    func testTheRealAffectedRecordingsLoseVoicesRatherThanGainThem() {
+        // 50.3 min: six mic clusters, five of them the far end.
+        let severe: [Float] = [0.838, 0.049, 0.066, 0.109, 0.071, 0.291]
+        // 16.3 min: three mic clusters, two of them the far end.
+        let second: [Float] = [0.068, 0.819, 0.295]
+        // 33.9 min: five mic clusters, one of them the far end.
+        let mild: [Float] = [0.783, 0.826, 0.937, 0.128, 0.373]
+
+        for (name, distances, before, expected) in [
+            ("50.3 min", severe, 6, 1), ("16.3 min", second, 3, 1), ("33.9 min", mild, 5, 4)
+        ] as [(String, [Float], Int, Int)] {
+            let after = distances.filter { $0 > VoiceMatch.sameSpeakerThreshold }.count
+            XCTAssertLessThan(after, before, "\(name): the count must fall")
+            XCTAssertEqual(after, expected, "\(name)")
+        }
+    }
+
+    /// **The control.** The nine clean recordings must lose nothing — the same
+    /// property the recording gate had to have, and the reason the rule is safe.
+    func testNoCleanRecordingLosesAVoice() {
+        // The nearest far-end distance for every mic cluster on a clean
+        // recording that had a far end to compare against.
+        let clean: [Float] = [0.923, 0.987,          // 19.1 min
+                              0.402, 0.841, 0.793,   // 28.7 min
+                              0.885, 1.014, 1.027, 0.687,  // 57.3 min
+                              0.746, 0.778,          // 12.4 min
+                              0.868, 0.389,          // 22.1 min
+                              0.834, 0.929]          // 26.8 min
+        let lost = clean.filter { $0 <= VoiceMatch.sameSpeakerThreshold }
+        XCTAssertTrue(lost.isEmpty, "a clean recording must pass through untouched, lost \(lost)")
+    }
+
     /// The reporting shape AD-56 requires: distances come out even when nothing
     /// is excluded, because that is what a threshold has to be set from.
     func testDistancesAreReportedWhateverTheThreshold() {

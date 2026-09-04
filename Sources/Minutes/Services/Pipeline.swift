@@ -319,74 +319,14 @@ actor Pipeline {
         /// before enrolment existed and what it must keep doing.
         var localMicVoice: Int?
         var localMatchDistance: Float?
-
-        // --- Microphone: the room ---
-        //
-        // **Diarization runs on the recording as it is, and the reason is a
-        // measurement that refuted the design.** AD-47 first had clustering run
-        // on Echo-muted audio, on the argument that clustering tolerates missing
-        // frames while the Transcript does not. Checked against the real
-        // Diarizer on the three affected recordings — once on the recording,
-        // once on the muted copy — the voice count went **5 to 7, 6 to 6, and
-        // 3 to 5**. Muting made it worse or made no difference, never better.
-        //
-        // In hindsight the mechanism is obvious: muting punches silence through
-        // the middle of continuous speech, so one voice arrives as a handful of
-        // fragments and the clusterer splits it. The Echo is gone and the room
-        // is now more crowded than before.
-        //
-        // So the phantom-attendee half of AD-47 is **not implemented**, and
-        // pretending otherwise by shipping a change that worsens the number
-        // would be worse than leaving the defect visible. FR-90's Transcript
-        // rule stands on its own measurement and is unaffected. The route that
-        // remains untried is filtering the *clusters* after diarization rather
-        // than the audio before it — a cluster whose spans are mostly Echo is
-        // the far end — which never fragments anybody's speech.
-        if let mic = await store.audioURL(id: id, stream: .mic) {
-
-            do {
-                let (spans, c) = try await diarizer.diarizeFull(url: mic)
-                let voices = Set(spans.map(\.speakerIndex))
-                if voices.count > 1 {
-                    // Several people in the room. Which of them is the user is not
-                    // assumed — it is either measured against an enrolled voice
-                    // (FR-63) or left unclaimed, exactly as before.
-                    multipleInRoom = true
-                    micSpans = spans
-
-                    // FR-63 / AD-30. The lookup happens here because this is the
-                    // only stage holding the mic clusters' embeddings, and its
-                    // result is handed to `assign` as a value — no stage is added
-                    // to AD-8's list, and `assign` gains no dependency on the
-                    // speaker store.
-                    let candidates = VoiceMatch.candidates(from: c,
-                                                           producer: SpeakerKitVoiceEmbedder.producerID)
-                    let resolution = await SpeakerDirectory.shared.identifyLocal(among: candidates)
-                    localMicVoice = VoiceMatch.micVoiceIndex(resolution)
-                    localMatchDistance = resolution.matchedDistance
-
-                    // The identified voice is keyed `local` so every consumer —
-                    // the note, the detail pane, a future rename — sees the user
-                    // where it expects them, and the rest stay in-room.
-                    for (idx, vec) in c {
-                        let label = (idx == localMicVoice)
-                            ? SpeakerLabelID.local
-                            : SpeakerLabelID.inRoom(idx)
-                        centroids[label.raw] = vec
-                    }
-                } else {
-                    // A single voice on the microphone is the user, and that
-                    // inference is safe.
-                    for (_, vec) in c { centroids[SpeakerLabelID.local.raw] = vec }
-                }
-                anySucceeded = true
-            } catch {
-                // Degrade to the old assumption rather than fail: one voice, the user.
-                Log.pipeline.error("mic diarization failed, treating the mic as a single speaker: \(error.localizedDescription, privacy: .public)")
-            }
-        }
+        var farEndCentroids: [Int: [Float]] = [:]
+        var ruledOut: [RuledOutVoice] = []
 
         // --- System: the far end ---
+        //
+        // **Diarized first, since increment 10.** Its centroids are what the
+        // microphone's clusters are judged against (FR-100), so the order is a
+        // dependency rather than a preference.
         if let sys = await store.audioURL(id: id, stream: .system) {
             do {
                 let (spans, c) = try await diarizer.diarizeFull(url: sys)
@@ -401,10 +341,101 @@ actor Pipeline {
                     DiarizedSpan(start: $0.start + offset, end: $0.end + offset,
                                  speakerIndex: $0.speakerIndex)
                 }
+                farEndCentroids = c
                 for (idx, vec) in c { centroids[SpeakerLabelID.remote(idx).raw] = vec }
                 if !spans.isEmpty { anySucceeded = true }
             } catch {
                 Log.pipeline.error("system diarization failed, degrading to one speaker: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+
+        // --- Microphone: the room ---
+        //
+        // **The recording is clustered as it is, and the reason is a measurement
+        // that refuted the design.** AD-47 first had clustering run on Echo-muted
+        // audio, on the argument that clustering tolerates missing frames.
+        // Checked against the real Diarizer on the three affected recordings the
+        // voice count went **5 to 7, 6 to 6, and 3 to 5**: muting punches silence
+        // through the middle of continuous speech, so one voice arrives as
+        // fragments and the clusterer splits it. Removing audio to fix a speaker
+        // count is forbidden (AD-47 as amended).
+        //
+        // What replaces it is FR-100: cluster the microphone unmodified, then
+        // **rule out the voices that demonstrably were not in the room** by
+        // comparing them against the far end's own embeddings. Nothing is muted
+        // and nobody's speech is fragmented.
+        //
+        // Measured across the whole library on 2026-09-04, threshold 0.35
+        // (`spikes/calibration-room-voices-2026-09-04.md`):
+        //
+        //   affected:  5 -> 4,  6 -> 1,  3 -> 1   — the count falls on all three
+        //   clean:     nine recordings, not one voice lost
+        //
+        // and the two populations separate at **0.295 against 0.373**.
+        if let mic = await store.audioURL(id: id, stream: .mic) {
+            do {
+                let (spans, all) = try await diarizer.diarizeFull(url: mic)
+                micSpans = spans
+
+                let outcome = RoomVoices.classify(
+                    mic: all, system: farEndCentroids,
+                    producer: SpeakerKitVoiceEmbedder.producerID,
+                    threshold: VoiceMatch.sameSpeakerThreshold)
+                ruledOut = outcome.matches
+                    .filter { outcome.excluded.contains($0.micCluster) }
+                    .compactMap { m in m.distance.map { RuledOutVoice(micCluster: m.micCluster, distance: $0) } }
+                if !ruledOut.isEmpty {
+                    Log.pipeline.info("room: ruled out \(ruledOut.count, privacy: .public) of \(all.count, privacy: .public) mic voice(s) as the far end")
+                }
+
+                // Only the voices that survive count as people in the room, and
+                // only they are candidates for being the user.
+                let room = all.filter { !outcome.excluded.contains($0.key) }
+                let voices = Set(spans.map(\.speakerIndex)).subtracting(outcome.excluded)
+                if voices.count > 1 {
+                    // Several people in the room. Which of them is the user is not
+                    // assumed — it is either measured against an enrolled voice
+                    // (FR-63) or left unclaimed, exactly as before.
+                    multipleInRoom = true
+
+                    // FR-63 / AD-30. The lookup happens here because this is the
+                    // only stage holding the mic clusters' embeddings, and its
+                    // result is handed to `assign` as a value — no stage is added
+                    // to AD-8's list, and `assign` gains no dependency on the
+                    // speaker store.
+                    //
+                    // It runs against the **surviving** clusters (FR-100): the
+                    // user's own voice was previously competing with the far end
+                    // for a match, and on the worst real recording lost — six
+                    // in-room labels and the user never identified at all.
+                    let candidates = VoiceMatch.candidates(from: room,
+                                                           producer: SpeakerKitVoiceEmbedder.producerID)
+                    let resolution = await SpeakerDirectory.shared.identifyLocal(among: candidates)
+                    localMicVoice = VoiceMatch.micVoiceIndex(resolution)
+                    localMatchDistance = resolution.matchedDistance
+
+                    // The identified voice is keyed `local` so every consumer —
+                    // the note, the detail pane, a future rename — sees the user
+                    // where it expects them, and the rest stay in-room.
+                    for (idx, vec) in room {
+                        let label = (idx == localMicVoice)
+                            ? SpeakerLabelID.local
+                            : SpeakerLabelID.inRoom(idx)
+                        centroids[label.raw] = vec
+                    }
+                } else if let only = room.first {
+                    // A single voice on the microphone is the user, and that
+                    // inference is safe. It is *newly* safe on a recording where
+                    // the far end had been padding the room.
+                    centroids[SpeakerLabelID.local.raw] = only.value
+                }
+                // A ruled-out cluster's centroid is deliberately **not** written.
+                // A phantom attendee that gets remembered comes back next week
+                // with a name on it (FR-25).
+                anySucceeded = true
+            } catch {
+                // Degrade to the old assumption rather than fail: one voice, the user.
+                Log.pipeline.error("mic diarization failed, treating the mic as a single speaker: \(error.localizedDescription, privacy: .public)")
             }
         }
 
@@ -435,16 +466,21 @@ actor Pipeline {
         let mic = micSpans, sysSpans = systemSpans, multi = multipleInRoom
         let ok = anySucceeded
         let localVoice = localMicVoice, localDistance = localMatchDistance
+        let excluded = Set(ruledOut.map(\.micCluster))
+        let ruledOutVoices = ruledOut
         _ = try await store.update(id: id) { m in
             m.diarizationSucceeded = ok
             m.multipleInRoom = multi
             m.localIdentifiedByEnrolment = localVoice != nil
             m.localMatchDistance = localDistance
+            m.ruledOutVoices = ruledOutVoices
             for (k, v) in names { m.speakerNames[k] = v }
             m.inferredSpeakers = inferred
             m.utterances = Self.assign(micSpans: mic, systemSpans: sysSpans,
                                        multipleInRoom: multi,
-                                       localMicVoice: localVoice, to: m.utterances)
+                                       localMicVoice: localVoice,
+                                       farEndMicVoices: excluded,
+                                       to: m.utterances)
         }
     }
 
@@ -460,10 +496,16 @@ actor Pipeline {
     /// absent this function behaves exactly as it did before enrolment existed —
     /// which is why it has a default, so the tests that assert the old behaviour
     /// assert it against unchanged call sites.
+    /// `farEndMicVoices` names the microphone clusters ruled out as the far end
+    /// coming back through the loudspeakers (FR-100). Their Utterances are
+    /// **relabelled, never deleted**: the words stay in the record and stop being
+    /// counted as somebody in the room, which is the defect. Empty by default, so
+    /// every existing call site behaves exactly as it did.
     static func assign(micSpans: [DiarizedSpan],
                        systemSpans: [DiarizedSpan],
                        multipleInRoom: Bool,
                        localMicVoice: Int? = nil,
+                       farEndMicVoices: Set<Int> = [],
                        to utterances: [Utterance]) -> [Utterance] {
         utterances.map { u in
             let spans = u.origin == .mic ? micSpans : systemSpans
@@ -490,12 +532,17 @@ actor Pipeline {
             var c = u
             switch u.origin {
             case .mic:
-                // One voice on the mic stays the user. With several, the enrolled
-                // voice's match is the user and the rest are in-room voices; with
-                // no match, none of them is claimed.
-                if !multipleInRoom {
+                // A cluster the far end demonstrably owns is the call, not a
+                // person in the room — checked before anything else, because
+                // every branch below would otherwise put it in the room.
+                if farEndMicVoices.contains(b.idx) {
+                    c.speaker = .farEndEcho
+                } else if !multipleInRoom {
+                    // One voice on the mic stays the user.
                     c.speaker = .local
                 } else if let localMicVoice, b.idx == localMicVoice {
+                    // With several, the enrolled voice's match is the user and
+                    // the rest are in-room voices; with no match, none is claimed.
                     c.speaker = .local
                 } else {
                     c.speaker = SpeakerLabelID.inRoom(b.idx)

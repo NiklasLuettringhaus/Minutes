@@ -133,25 +133,39 @@ enum EchoCheck {
             // The distances are printed because AD-56 forbids using AD-31's
             // threshold across the two Streams without a measurement taken across
             // them. This is that measurement.
-            if Self.alsoDiarize, analysis.verdict == .present, let mic, let system {
+            //
+            // **It runs on clean recordings too, and that is the control.** The
+            // rule is only safe if it leaves a headphones recording alone, which
+            // is the same property the recording gate had to have — seven of the
+            // nine clean recordings contain literally zero coincidentally
+            // duplicated words, and the equivalent claim here is that no clean
+            // recording loses an in-room voice.
+            if Self.alsoDiarize, analysis.verdict != .notApplicable, let mic, let system {
                 let temp = FileManager.default.temporaryDirectory
                     .appendingPathComponent("echo-check-\(meeting.id).wav")
                 defer { try? FileManager.default.removeItem(at: temp) }
                 do {
                     let diarizer = SpeakerKitDiarizerAdapter()
                     let before = try await diarizer.diarizeFull(url: mic)
-                    try EchoDetector.writeRetained(micURL: mic, analysis: analysis, to: temp)
-                    let muted = try await diarizer.diarizeFull(url: temp)
                     let far = try await diarizer.diarizeFull(url: system)
-
                     let b = Set(before.spans.map(\.speakerIndex)).count
-                    let m = Set(muted.spans.map(\.speakerIndex)).count
+
+                    // The withdrawn approach, run only where there is an Echo to
+                    // mute. Kept so its refutation stays reproducible rather than
+                    // becoming a story someone tells.
+                    var mutedCount = "n/a"
+                    if analysis.verdict == .present {
+                        try EchoDetector.writeRetained(micURL: mic, analysis: analysis, to: temp)
+                        let muted = try await diarizer.diarizeFull(url: temp)
+                        mutedCount = "\(Set(muted.spans.map(\.speakerIndex)).count)"
+                    }
+
                     let outcome = RoomVoices.classify(
                         mic: before.centroids, system: far.centroids,
                         producer: SpeakerKitVoiceEmbedder.producerID,
                         threshold: VoiceMatch.sameSpeakerThreshold)
                     print("           voices in the room: \(b) before, "
-                          + "\(m) after muting (withdrawn), "
+                          + "\(mutedCount) after muting (withdrawn), "
                           + "\(outcome.inRoomCount) after ruling out the call")
                     print("           far-end clusters: \(far.centroids.count)")
                     for match in outcome.matches {
