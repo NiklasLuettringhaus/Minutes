@@ -20,6 +20,11 @@ under ~/Library/Application Support/MinutesEval (PRD §9.1).
     asr_eval.py reference ES2004a          build the reference transcript
     asr_eval.py score ref.json hyp.json    score one hypothesis
     asr_eval.py sweep --models a,b --sessions ES2004a --mics Mix-Headset
+    asr_eval.py pool  --models a,b     pooled: total errors / total ref words
+
+Pooling is the only aggregation permitted (AD-50), and until increment 10 it was
+done by hand — which is how one published figure came to be the mean of three
+session percentages. `pool` makes the correct answer the easy one.
 """
 
 import argparse
@@ -347,6 +352,93 @@ def sweep(models, sessions, mics):
     return rows
 
 
+# ------------------------------------------------------------------------ pool
+
+def pool(models, sessions, mics):
+    """Total errors over total reference words, which is the only aggregation
+    AD-50 permits.
+
+    **This exists because the rule failed against itself.** The harness printed
+    per-session rows and every pooled figure in every document was added up by
+    hand from them — and one of them was added up the forbidden way. PRD §4.14
+    quoted 82% proper-noun recall for the default model on close mics; that is
+    the mean of 90, 78 and 77. Pooled over pooled reference words it is 81%.
+    Nothing rested on the difference, which is exactly why it survived: a rule is
+    only tested when following it is inconvenient, and this one never was.
+
+    A set with a session missing is refused rather than pooled over what is
+    there. Two sessions and three sessions are not comparable figures, and the
+    per-session swing is +-8 points — larger than any difference the pooled
+    number is used to argue about.
+    """
+    missing, rows = [], []
+    for mic in mics:
+        for model in models:
+            parts = []
+            for session in sessions:
+                hyp_path = os.path.join(RESULTS, f"hyp-{session}.{mic}.{model}.json")
+                ref_path = os.path.join(RESULTS, f"reference-{session}.json")
+                if not (os.path.exists(hyp_path) and os.path.exists(ref_path)):
+                    missing.append(f"{session}.{mic}.{model}")
+                    continue
+                with open(hyp_path) as f:
+                    hyp = json.load(f)
+                with open(ref_path) as f:
+                    ref = json.load(f)
+                text = " ".join(s["text"] for s in hyp["segments"]) \
+                    if "segments" in hyp else hyp["text"]
+                parts.append((session, score(ref["text"], text, ref["words"])))
+            if len(parts) != len(sessions):
+                continue
+
+            # Totals, never means. Every numerator and denominator is a count.
+            errors = sum(p["substitutions"] + p["deletions"] + p["insertions"]
+                         for _, p in parts)
+            ref_words = sum(p["refWords"] for _, p in parts)
+            dels = sum(p["deletions"] for _, p in parts)
+            c_words = sum(p["refContentWords"] for _, p in parts)
+            c_errors = sum(round(p["contentWer"] * p["refContentWords"]) for _, p in parts)
+            names = sum(p["properNouns"] for _, p in parts)
+            names_hit = sum(round(p["properNounRecall"] * p["properNouns"]) for _, p in parts)
+            rows.append(dict(
+                mic=mic, model=model, sessions=len(parts), refWords=ref_words,
+                wer=errors / ref_words,
+                contentWer=c_errors / c_words if c_words else None,
+                deletionRate=dels / ref_words,
+                properNounRecall=names_hit / names if names else None,
+                perSession={s: round(p["wer"] * 100, 1) for s, p in parts},
+            ))
+
+    if missing:
+        print("REFUSED: pooling needs every session for every condition.")
+        print("A figure over two sessions and one over three are not comparable,")
+        print("and the per-session swing is +-8 points. Missing:")
+        for m in sorted(set(missing)):
+            print(f"  {m}")
+        if not rows:
+            sys.exit(1)
+        print("")
+
+    for mic in mics:
+        here = [r for r in rows if r["mic"] == mic]
+        if not here:
+            continue
+        print(f"\n== {mic} == pooled over {here[0]['sessions']} sessions, "
+              f"{here[0]['refWords']} reference words")
+        for r in sorted(here, key=lambda x: x["wer"]):
+            print(f"  {r['model']:46} "
+                  f"WER {r['wer'] * 100:5.1f}%  "
+                  f"content {(r['contentWer'] or 0) * 100:5.1f}%  "
+                  f"del {r['deletionRate'] * 100:5.1f}%  "
+                  f"names {(r['properNounRecall'] or 0) * 100:3.0f}%")
+            # The per-session rows stay. The pooled figure hides the swing that
+            # makes a single session untrustworthy, and a reader needs both to
+            # trust either.
+            spread = "  ".join(f"{s} {w}%" for s, w in r["perSession"].items())
+            print(f"    per session: {spread}")
+    return rows
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -363,6 +455,11 @@ def main():
     sw.add_argument("--models", required=True)
     sw.add_argument("--sessions", default="ES2004a")
     sw.add_argument("--mics", default="Mix-Headset,Array1-01")
+
+    pl = sub.add_parser("pool")
+    pl.add_argument("--models", required=True)
+    pl.add_argument("--sessions", default="ES2004a,IS1000a,TS3003a")
+    pl.add_argument("--mics", default="Mix-Headset,Array1-01")
 
     a = p.parse_args()
     if a.cmd == "reference":
@@ -382,6 +479,8 @@ def main():
         text = " ".join(s["text"] for s in hyp["segments"]) \
             if "segments" in hyp else hyp["text"]
         print(json.dumps(score(ref["text"], text, ref["words"]), indent=2))
+    elif a.cmd == "pool":
+        pool(a.models.split(","), a.sessions.split(","), a.mics.split(","))
     else:
         sweep(a.models.split(","), a.sessions.split(","), a.mics.split(","))
 

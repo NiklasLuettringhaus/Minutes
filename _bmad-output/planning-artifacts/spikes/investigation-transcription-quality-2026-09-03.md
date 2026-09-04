@@ -218,12 +218,21 @@ ordinary recognition quality, not a failure mode.
 
 ### Pooled over all three sessions — total errors over total reference words
 
+> **Corrected 2026-09-04.** Every proper-noun recall figure in this document was
+> the **mean of the three session percentages**, which AD-50 forbids. Pooled over
+> pooled reference words, `parakeet-v3` on close mics is **81%** and not 82%
+> (the mean of 90, 78 and 77); the others round to the same number either way,
+> which is exactly why this went unnoticed — the rule was stated here and
+> enforced by nobody, and the pooled figures were being added up by hand.
+> `asr_eval.py pool` now produces them (FR-101). The word error rates were
+> already pooled and are unchanged. Nothing in this document's conclusions moves.
+
 `Mix-Headset` (7,374 reference words):
 
 | model | WER | content WER | deletions | proper nouns |
 |---|---|---|---|---|
 | `parakeet-tdt-0.6b-v2-en` | **20.3%** | **18.5%** | 12.3% | 80% |
-| `parakeet-tdt-0.6b-v3` | 22.6% | 22.3% | 12.8% | 82% |
+| `parakeet-tdt-0.6b-v3` | 22.6% | 22.3% | 12.8% | 81% |
 
 `Array1-01` (7,374 reference words):
 
@@ -246,7 +255,7 @@ The confirmation run has now landed, so this is the complete picture.
 | model | WER | content WER | proper nouns | ×realtime |
 |---|---|---|---|---|
 | `parakeet-tdt-0.6b-v2-en` | **20.3%** | **18.5%** | 80% | 0.005 |
-| `parakeet-tdt-0.6b-v3` | 22.6% | 22.3% | **82%** | 0.005 |
+| `parakeet-tdt-0.6b-v3` | 22.6% | 22.3% | **81%** | 0.005 |
 | `whisper-large-v3-turbo-632MB` | 22.8% | 19.3% | 77% | 0.039 |
 
 **Far field** (7,374 reference words):
@@ -284,7 +293,7 @@ a pipeline around it.
 ## 3. The far-field case is much worse, and normalisation half-helps
 
 Same model, same meeting, different microphone: pooled WER **22.6% → 29.4%**
-and proper-noun recall **82% → 77%**. The room is where quality is lost, and
+and proper-noun recall **81% → 77%**. The room is where quality is lost, and
 the room is exactly where §1's echo also happens.
 
 Level and dynamic-range normalisation were measured (ES2004a, `parakeet-v3`):
