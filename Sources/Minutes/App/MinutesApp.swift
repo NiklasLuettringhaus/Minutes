@@ -29,6 +29,12 @@ enum Entry {
             // received, and the offset between the two streams' first samples.
             // Creates no Meeting and keeps no audio.
             ClockCheck.run()
+        } else if CommandLine.arguments.contains("--check-aec") {
+            // FR-99 / AD-55. The measurement that has to come before the
+            // feature: run the canceller over the recordings on disk and print
+            // the ERLE, what it costs where there is no echo, and — with
+            // --transcribe — what it does to the duplicated-word count.
+            AecCheck.run(transcribe: CommandLine.arguments.contains("--transcribe"))
         } else if CommandLine.arguments.contains("--check-echo") {
             // FR-89. Runs echo detection over every recording and prints the
             // verdict, which is also how the recording gate was calibrated.
