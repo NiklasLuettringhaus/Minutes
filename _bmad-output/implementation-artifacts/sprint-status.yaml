@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-31-2026 11:23
-last_updated: '09-04-2026 13:55'
+last_updated: '09-04-2026 16:04'
 project: Minutes
 project_key: NOKEY
 tracking_system: file-system
@@ -194,4 +194,40 @@ development_status:
   16-14-the-far-end-is-cancelled-while-recording-not-reasoned-about: done   # BUILT, MEASURED, NOT SHIPPED: best 7.3 dB against a 20 dB bar, and 6.49 dB on a recording with no echo in it. AD-55 keeps it out of the capture path. See spikes/measurement-echo-cancellation-2026-09-04.md
   16-15-the-people-in-the-room-are-found-by-ruling-out-the-call: done
   16-16-a-pooled-figure-is-something-the-harness-prints: done
-  epic-16-retrospective: optional
+  epic-16-retrospective: done
+action_items:
+  - id: "16-2"
+    epic: 16
+    action: "Decide whether the echo detector should resample so the eight rate-repaired
+      recordings can be compared at all (PRD Q22)"
+    owner: "whoever next touches EchoDetector.read"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/retrospective.md"
+  - id: "16-3"
+    epic: 16
+    action: "Watch FR-100 keep-side margin of 0.023: two genuine in-room voices sit
+      at 0.373 and 0.389"
+    owner: "follow-up"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/retrospective.md"
+  - id: "16-4"
+    epic: 16
+    action: "If FR-99 is revisited: fix EchoCanceller quadratic history first, and
+      measure at the capture rate rather than at 16 kHz"
+    owner: "follow-up"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/retrospective.md"
+  - id: "16-5"
+    epic: 16
+    action: "Confirm the in-room count of 4 on the mild recording is right — only
+      the direction is measured"
+    owner: "Niklas"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/retrospective.md"
+  - id: "16-1"
+    epic: 16
+    action: "Reprocess the three affected recordings — the user decision, command
+      prepared and not run"
+    owner: "Niklas"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/retrospective.md"

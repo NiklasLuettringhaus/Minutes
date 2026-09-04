@@ -101,3 +101,151 @@ detection fires during a real call — and in the gap between "compiles and is
 covered by tests" and "a human has looked at it". Eleven of 43 stories are marked
 `done` on evidence; the other 32 are marked `review` rather than `done`, which is
 the accurate state and not a formality.
+
+---
+
+# Retrospective — Epic 16, increment 10
+
+**Date:** 2026-09-04 · **Mode:** headless · **Range:** `986566d..2df2b5d`, 11 commits
+**Evidence:** the diff, `spikes/calibration-room-voices-2026-09-04.md`,
+`spikes/measurement-echo-cancellation-2026-09-04.md`,
+`code-review-increment-10.md`, `sprint-status.yaml`, and the recorded output of
+`--check-clock`, `--check-echo --diarize`, `--check-aec`, `--check-rates`,
+`--doctor` and `asr_eval.py pool`.
+
+## What the measurements changed about the plan
+
+This is the section the increment exists for. Four things the plan asserted were
+overturned by taking the measurement, and in three of them the plan was the
+*more* plausible answer.
+
+**1. The plan spent a story searching for something the callbacks already
+carried.** FR-97 said the two Streams' start offset should be *measured*, and
+left where as `[NOTE FOR PM]`. Story 16.2 had already built a correlation search
+for the acoustic delay and it returned 920 ms on one recording, which was twice
+dismissed as physically impossible. Reading the capture path for a different
+story found that both adapters receive the device's own sample counter and a
+host-time stamp in every callback and bind them to `_`. The offset is a
+subtraction of two numbers the process was already being handed — and it works
+on the nine *clean* recordings, which a correlation search cannot touch because
+there is nothing correlated to align on. One discarded fact answered three
+requirements (AD-53).
+
+**2. The residual echo suppressor — the thing AD-48 was amended to permit —
+buys nothing here, and the control is what says so.** FR-99's argument was
+sound: the linear bound is 8.7–10.6 dB because the loudspeaker path is not
+linear, and a power-domain stage does not need it to be. Built and measured, the
+best figure is **7.3 dB against a 20 dB bar**. What settles it is not that
+number but the control: on a **headphones** recording, where no echo can exist,
+the same canceller reports **6.49 dB** — more than two of the three genuinely
+affected recordings. It is attenuation, not cancellation, and at 6× suppression
+the clean figure (8.80 dB) *exceeds* the affected one (7.32 dB). There is no
+operating point that tells the two apart.
+
+**3. Three canceller implementations failed before the fourth worked, and every
+one was caught by a control rather than by reading the code.** `+ 1e-6` as the
+NLMS regularisation let a near-silent reference explode the weights: −30 dB, the
+canceller adding a thousand times the energy it removed. A double-talk freeze
+gated on "the filter already explains half this frame" was circular and froze on
+frame one: 1.4 × 10⁻⁸ dB. Minimum statistics for the power coupling — correct
+for *noise*, which is stationary — landed on frames where the echo had not
+arrived: mean gain 0.997 at 32× suppression, the stage doing nothing at all.
+**Every one of the three would have produced a publishable-looking negative
+result.** What stopped them was printing the mean applied gain beside the ERLE: a
+stage that is not working and a stage working on audio it cannot help are
+indistinguishable without it.
+
+**4. A threshold measured for one question survived being pointed at the
+opposite one, and nobody knew until it was measured.** AD-31's 0.35 was
+calibrated between voices captured the same way; FR-100 asks it to compare a
+voice that has been through a loudspeaker, a room and a different microphone
+against its own electrical copy. AD-56 forbade using it without a cross-stream
+measurement, so the mechanism reported distances and changed nothing until one
+existed. It separates: **0.049–0.295 matched against 0.373–1.027 kept**, with
+0.35 in the gap. The in-room count falls 5→4, 6→1, 3→1 on the affected
+recordings and **not one of nine clean recordings loses a voice**.
+
+## What the plan got right, and it is worth naming
+
+The build order in the epic was **dependency order, not value order**, and it was
+argued for in writing before anything was built: 16.14 needs the aligned
+reference 16.9 provides and the device gate 16.13 provides. Had the epic been
+built in the evidence ranking it named, the canceller would have been built first
+— on an unmeasured offset and no gate — and its negative result would have been
+uninterpretable.
+
+## Findings from the code review, folded in
+
+Three defects, **all in code the tests already covered**, which is the finding as
+much as the defects are: the coverage was aimed at what the code was meant to do
+rather than at what it would do when a device behaved unusually.
+
+- The writer could hold a whole meeting in memory and never write it. AD-44 says
+  nothing reaches the file until the rate settles; AD-51 made the device the
+  authority on when that is; and decisiveness needs a number of *callbacks*, not
+  of seconds. A device delivering one enormous buffer per second is usable and
+  permanently undecidable. Four gigabytes held over two hours and an empty file
+  if the process dies — exactly what FR-9's incremental commit prevents.
+- The phantom attendee came back on the call's side: `farEndEcho`'s place is
+  `.remote`, so `assignedSpeakerNames` gave it a Speaker number and it rendered
+  as "Speaker 3" beside the real remote speakers.
+- Three loads of the same record a few lines apart in one pipeline stage.
+
+## What the epic produced, against what it promised
+
+| | before | after | source |
+|---|---|---|---|
+| pooled WER, close mics / far field | 22.6% / 29.4% | **22.6% / 29.4%** | `asr_eval.py pool`, re-run through the shipping path |
+| pooled proper-noun recall, close mics | 82% *(a mean, forbidden)* | **81%** *(pooled)* | FR-101 |
+| in-room voices, three affected recordings | 5, 6, 3 | **4, 1, 1** | `--check-echo --diarize` |
+| in-room voices, nine clean recordings | 2,5,3,2,4,2,2,2,2 | **unchanged** | the control |
+| transcript duplicates removed | 51%, 55%, 5% | unchanged | echo rule untouched |
+| rate check tolerance, system tap | 12% declared | **0.63% derived** | `--check-clock` |
+| frames the device produced and we never got | unmeasurable | **0 of 388,096** | `--check-clock` |
+| `RateCorrectionTests` | gated, ~1 run in 3 failed | **ungated, 8/8 including under load** | `swift test` |
+| tests run by a plain `swift test` | 173 of 306 *(the rest lost to a crash)* | **373, 0 failures** | `swift test` |
+| ERLE from cancellation | unmeasured | **7.3 dB against a 20 dB bar — not shipped** | `--check-aec` |
+
+**Nothing moved the AMI numbers, and nothing was supposed to.** Every change here
+is to capture, alignment, attribution or disclosure; the recogniser and its input
+are untouched. Re-running the corpus through the shipping path after the work
+is how that is known rather than assumed.
+
+## Action items
+
+| # | Item | Owner | Condition |
+|---|---|---|---|
+| 16-1 | Reprocess the three affected recordings — **the user's decision, command prepared, not run** | Niklas | It rewrites those three notes; see the increment's closing report |
+| 16-2 | Decide Q22: should the detector resample so the eight repaired recordings can be echo-checked at all? | whoever next touches `EchoDetector.read` | A third of the library is currently unanalysable |
+| 16-3 | Watch the 0.023 margin on FR-100's keep side | follow-up | Two genuine in-room voices sit at 0.373 and 0.389; a real attendee at 0.36 would be ruled out |
+| 16-4 | If FR-99 is ever revisited, fix `EchoCanceller`'s quadratic history first, and measure at the capture rate rather than at 16 kHz | follow-up | Both recorded in the review; neither worth doing while the measurement says do not ship |
+| 16-5 | Confirm the in-room count of 4 on the mild recording is actually right | Niklas | Only the *direction* is measured; the absolute count is unverified against the room |
+| 16-6 | Q19 still open: nine or more sessions before the default model moves | follow-up | Unchanged by this increment |
+
+## Acceptance verdict
+
+**Machine verdict: rejected.** One story in epic 16 is not `done` —
+`16-5-the-people-in-the-room-are-counted-from-the-room` — and the rubric makes
+any unfinished story a rejection regardless of why.
+
+**Why a human would likely override to `accepted-with-open-items`:** 16.5 was
+*withdrawn on measurement* in increment 9 (muting made the count worse: 5→7,
+6→6, 3→5) and is superseded by 16.15, which is done and whose number moves in the
+right direction on all three recordings. Leaving it un-`done` is the accurate
+record of a story that was refuted rather than delivered. That override is the
+user's to make and has not been made here.
+
+Fifteen of sixteen stories are `done`, including 16.14 — built, measured, and
+deliberately not shipped, which the epic's own bar names as an acceptable and
+better outcome than an unmeasured change.
+
+## Assumptions recorded (headless run)
+
+- Epic 16 was supplied, not detected.
+- `pending_stories` = `["16-5-..."]`; proceeding over it was not confirmed by a
+  human, and the machine verdict above reflects it.
+- The acceptance verdict is the machine's. No human override was sought or given.
+- Every action item above is *proposed*, not applied.
+- Phase 3's team discussion was skipped, as headless runs require.
+- No previous epic-16 retrospective existed, so there is no follow-through record
+  to check.

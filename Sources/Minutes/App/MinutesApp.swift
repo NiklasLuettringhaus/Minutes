@@ -22,6 +22,11 @@ enum Entry {
             // person who hits this next may have to do the same before there is
             // any UI to click.
             RateCheck.run(repair: CommandLine.arguments.contains("--repair"))
+        } else if CommandLine.arguments.contains("--reprocess") {
+            // Re-derives named Meetings from the audio already on disk. Never
+            // "all", refuses without --yes, and rewrites Notes — which is why it
+            // is a decision the user makes and not one the app makes for them.
+            Reprocess.run()
         } else if CommandLine.arguments.contains("--check-clock") {
             // FR-94, FR-97. Opens both streams for a few seconds and prints what
             // the devices themselves say — the rate from their own counters, the
