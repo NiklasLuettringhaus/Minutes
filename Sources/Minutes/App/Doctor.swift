@@ -48,6 +48,25 @@ enum Doctor {
         let matched = await MainActor.run { DetectionService.appsUsingAudioInput() }
         for m in matched { print("  MATCH               \(m.appName) — \(m.bundleID)") }
 
+        section("Audio")
+        if let device = OutputDeviceMonitor.current() {
+            print("  output device:      \(device.name ?? "unnamed") "
+                  + "(\(device.transport)/\(device.dataSource ?? "-"))")
+            switch device.kind.echoPossible {
+            case true?:
+                print("  echo possible:      yes — the call can reach your microphone")
+                print("  → headphones prevent it. Minutes counts the far end once either way.")
+            case false?:
+                print("  echo possible:      no — sound is going into your ears")
+            case nil:
+                print("  echo possible:      unknown — this transport cannot say")
+                print("  → Core Audio reports AirPods and a Bluetooth speaker identically,")
+                print("    so the correlation detector decides on this device.")
+            }
+        } else {
+            print("  output device:      none reported")
+        }
+
         section("Transcription")
         let model = await MainActor.run { Preferences.shared.model }
         print("  active model:       \(model)")
