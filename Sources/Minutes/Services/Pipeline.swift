@@ -136,20 +136,6 @@ actor Pipeline {
         }
     }
 
-    /// Where the Echo-muted copy of the Mic Stream lives while Diarization runs.
-    ///
-    /// Caches, not the Meeting folder: it is derived, it is recomputable from the
-    /// recording plus the stored intervals (AD-49), and a 50-minute meeting's
-    /// copy is nearly 100 MB — "one folder is the whole footprint" (Epic 13) did
-    /// not mean doubling it.
-    private static func retainedMicURL(id: String) -> URL {
-        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-            ?? URL(fileURLWithPath: NSTemporaryDirectory())
-        let dir = base.appendingPathComponent("Minutes", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("retained-\(id).wav")
-    }
-
     // MARK: - Stages
 
     private func transcribeStage(_ id: String) async throws {
@@ -266,34 +252,28 @@ actor Pipeline {
 
         // --- Microphone: the room ---
         //
-        // FR-90 / AD-47. Clustering runs on Mic Stream audio with the Echo
-        // muted. This is the requirement the defect actually broke: on one real
-        // recording the far end arriving through the loudspeakers produced
-        // **six** in-room speakers and the user was never identified at all.
-        // Duplicated text was the visible symptom; a phantom attendee is a false
-        // statement about who was in the room.
-        let meetingForEcho = try? await store.load(id: id)
-        let retained = Self.retainedMicURL(id: id)
-        var micForDiarization = await store.audioURL(id: id, stream: .mic)
-        if let source = micForDiarization,
-           let analysis = meetingForEcho?.echo, analysis.verdict == .present {
-            do {
-                try EchoDetector.writeRetained(micURL: source, analysis: analysis, to: retained)
-                micForDiarization = retained
-                Log.audio.info("""
-                    echo: diarizing from retained mic audio, \
-                    \(Int(analysis.excludedProportion * 100), privacy: .public)% muted
-                    """)
-            } catch {
-                // Falling back to the raw stream keeps the Meeting processable.
-                // It is logged rather than silent: the speaker count that comes
-                // out cannot be trusted the way an excluded one can.
-                Log.audio.error("echo: could not write retained mic audio — \(error.localizedDescription, privacy: .public)")
-            }
-        }
-        defer { try? FileManager.default.removeItem(at: retained) }
+        // **Diarization runs on the recording as it is, and the reason is a
+        // measurement that refuted the design.** AD-47 first had clustering run
+        // on Echo-muted audio, on the argument that clustering tolerates missing
+        // frames while the Transcript does not. Checked against the real
+        // Diarizer on the three affected recordings — once on the recording,
+        // once on the muted copy — the voice count went **5 to 7, 6 to 6, and
+        // 3 to 5**. Muting made it worse or made no difference, never better.
+        //
+        // In hindsight the mechanism is obvious: muting punches silence through
+        // the middle of continuous speech, so one voice arrives as a handful of
+        // fragments and the clusterer splits it. The Echo is gone and the room
+        // is now more crowded than before.
+        //
+        // So the phantom-attendee half of AD-47 is **not implemented**, and
+        // pretending otherwise by shipping a change that worsens the number
+        // would be worse than leaving the defect visible. FR-90's Transcript
+        // rule stands on its own measurement and is unaffected. The route that
+        // remains untried is filtering the *clusters* after diarization rather
+        // than the audio before it — a cluster whose spans are mostly Echo is
+        // the far end — which never fragments anybody's speech.
+        if let mic = await store.audioURL(id: id, stream: .mic) {
 
-        if let mic = micForDiarization {
             do {
                 let (spans, c) = try await diarizer.diarizeFull(url: mic)
                 let voices = Set(spans.map(\.speakerIndex))

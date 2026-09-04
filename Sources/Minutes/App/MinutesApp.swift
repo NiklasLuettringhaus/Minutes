@@ -25,7 +25,7 @@ enum Entry {
         } else if CommandLine.arguments.contains("--check-echo") {
             // FR-89. Runs echo detection over every recording and prints the
             // verdict, which is also how the recording gate was calibrated.
-            EchoCheck.run()
+            EchoCheck.run(diarize: CommandLine.arguments.contains("--diarize"))
         } else if CommandLine.arguments.contains("--asr") {
             // Transcribes one file and prints the segments, so accuracy can be
             // scored against a reference corpus instead of assumed.

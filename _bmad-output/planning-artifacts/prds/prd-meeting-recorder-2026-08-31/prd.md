@@ -1264,6 +1264,35 @@ A Meeting whose Mic Stream contained Echo records that fact, and the user can se
 - A recording processed before this existed is not silently presented as clean; an unknown verdict reads as unknown.
 - The advice is actionable: headphones prevent it, which is why the nine clean recordings are clean.
 
+#### FR-98: Whether Echo is possible is read from the output device, not inferred
+Minutes knows whether the far end can reach the microphone acoustically, from what the audio is playing through.
+
+**Consequences (testable):**
+- The output device kind is read at Session start and whenever it changes (the property listener already exists for FR-8), and recorded on the Meeting.
+- On headphones, Echo handling is **off** — not gated by a threshold, and not measured for. Every clean recording in the library was on headphones and every affected one was not, so this is a fact available for free where FR-89 spends a correlation search to guess it.
+- The correlation detector of FR-89 remains, for recordings already on disk and for the case where the device is unknown. A device fact and a signal measurement that disagree are both recorded; neither is silently preferred.
+
+#### FR-99: Echo is cancelled during the Session, with the System Stream as the reference
+Where the output device makes Echo possible, it is removed while recording rather than reasoned about afterwards.
+
+**Consequences (testable):**
+- Cancellation runs inside the Session with the System Stream as the reference signal, so the alignment is known by construction rather than searched for.
+- It includes a non-linear residual stage. A linear filter alone is measured insufficient: 8.7–10.6 dB against the 20–40 dB a canceller needs (addendum).
+- Its benefit is **measured on our own recordings with FR-93's harness before it is relied on**, and the figure is published the way the model figures are. Until then FR-90's post-hoc rule stays in place and is not removed on the strength of an expectation.
+- The Mic Stream on disk is the cancelled one, and the Meeting records that cancellation was applied — a recording processed one way must not be indistinguishable from one processed the other.
+- Apple's voice-processing audio unit is not a route and the reason is recorded rather than rediscovered: its reference is the app's own output bus, and the meeting audio is played by the conferencing app.
+
+#### FR-100: In-room voices are found by excluding the far end's voices, not by removing audio
+Diarization identifies who was in the room by ruling out the people who demonstrably were not.
+
+**Amended into being by a measurement.** FR-90 first excluded Echo audio before clustering. Measured against the real Diarizer on the three affected recordings, the in-room voice count went **5→7, 6→6 and 3→5** — muting fragments continuous speech and the clusterer splits one voice into several. Removing audio to fix a speaker count made the count worse.
+
+**Consequences (testable):**
+- The Mic Stream is diarized unmodified.
+- Speaker embeddings from the **System Stream** identify the far end, and any in-room cluster matching one of them is excluded or relabelled. The threshold and its measured separation already exist for FR-63 — this points the same machinery at the opposite question.
+- The in-room count on an affected recording must **fall**, and a test asserts the direction rather than assuming it. This is the failure mode of the previous attempt.
+- No audio is modified for the benefit of Diarization.
+
 #### FR-97: The two Streams' start offset is measured and applied
 The Transcript is ordered by when things were said, not by each Stream's own file position.
 

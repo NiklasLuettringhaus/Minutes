@@ -1,7 +1,7 @@
 ---
 stepsCompleted: [1, 2, 3, 4]
 revisions:
-  - 2026-09-03 increment 9 — added Epic 16 (12 stories, FR-89 to FR-97 plus the FR-17,
+  - 2026-09-03 increment 9 — added Epic 16 (15 stories, FR-89 to FR-100 plus the FR-17,
     FR-21, FR-22 and FR-23 amendments) after a measurement harness was built first and
     found that three of twelve dual-stream recordings had the microphone recording the
     far end. Epics 1-15 untouched and not renumbered. The first epic whose opening story
@@ -40,6 +40,8 @@ inputDocuments:
   - _bmad-output/planning-artifacts/spikes/calibration-speaker-threshold-2026-09-01.md
   - _bmad-output/planning-artifacts/spikes/investigation-note-linkage-2026-09-03.md
   - _bmad-output/planning-artifacts/spikes/investigation-transcription-quality-2026-09-03.md
+  - _bmad-output/planning-artifacts/spikes/calibration-echo-threshold-2026-09-03.md
+  - _bmad-output/planning-artifacts/spikes/research-multisource-transcription-2026-09-04.md
   - _bmad-output/planning-artifacts/RELEASE-PLAN.md
 ---
 
@@ -47,7 +49,7 @@ inputDocuments:
 
 ## Overview
 
-This document decomposes the 97 functional requirements, 8 cross-cutting NFRs, the 52 architecture decisions and the two UX spines into 109 implementable stories across 16 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build; Epic 9 is increment 3; Epic 10 is increment 4; Epics 11-13 are increment 5, the first aimed at a machine other than the author's; Epic 14 is increment 7, the first written from something the product had already destroyed; Epic 15 is increment 8, written from a defect the user found and documented before the product did; Epic 16 is increment 9, the first written from a defect nobody had noticed, because the affected notes merely read as verbose until accuracy became measurable. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
+This document decomposes the 100 functional requirements, 8 cross-cutting NFRs, the 52 architecture decisions and the two UX spines into 112 implementable stories across 16 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build; Epic 9 is increment 3; Epic 10 is increment 4; Epics 11-13 are increment 5, the first aimed at a machine other than the author's; Epic 14 is increment 7, the first written from something the product had already destroyed; Epic 15 is increment 8, written from a defect the user found and documented before the product did; Epic 16 is increment 9, the first written from a defect nobody had noticed, because the affected notes merely read as verbose until accuracy became measurable. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
 
 Every FR is covered by exactly one story — verified programmatically, see the FR Coverage Map for increment 1 and each later epic's own coverage table.
 
@@ -3748,6 +3750,88 @@ when they happened, so that a reply does not appear before the thing it answers.
   echo, not a part of it — and because fixing it at capture rather than at the
   merge is the better answer and belongs to whichever increment owns capture.
 
+### Story 16.13: Minutes knows whether the echo is even possible
+
+*(tier T2 · FR-98 · AD-47)*
+
+As someone who sometimes wears headphones and sometimes does not, I want the app
+to know which, so that it is not guessing at something it can simply look up.
+
+**Acceptance Criteria:**
+
+**Given** a Session
+**When** it starts, and whenever the output device changes
+**Then** the output device kind is recorded, and echo handling is off on headphones
+
+**And** each of the following holds:
+
+- Read from the device, not inferred from the signal. The property listener
+  already exists for FR-8; this is a fact available for free where Story 16.2
+  spends a search to estimate it.
+- Every clean recording in the library was on headphones and every affected one
+  was not, so this is expected to reproduce the same split the correlation gate
+  found — and a test asserts they agree on the library.
+- Where the device kind and the signal measurement **disagree**, both are
+  recorded and neither is silently preferred. A disagreement is information.
+
+### Story 16.14: The far end is cancelled while recording, not reasoned about later
+
+*(tier T1 · FR-99 · AD-48 amended)*
+
+As someone who takes calls on speakers, I want the other side kept out of my
+microphone track in the first place, so that nothing downstream has to guess.
+
+**Acceptance Criteria:**
+
+**Given** a Session where the output device makes echo possible
+**When** audio is captured
+**Then** the far end is cancelled from the Mic Stream using the System Stream as reference
+
+**And** each of the following holds:
+
+- Runs **inside** the Session, where the reference is aligned by construction.
+  Post hoc on two independently-clocked files is the hardest version of the
+  problem, and is why the measured offsets ran to 920 ms.
+- Includes a **non-linear residual** stage. A linear filter alone is measured
+  insufficient — 8.7–10.6 dB against the 20–40 dB needed — which is what a
+  first pass at this concluded made cancellation impossible altogether. It made
+  *post-hoc linear* cancellation impossible.
+- The benefit is **measured with Story 16.1's harness before this is relied on**,
+  and published like the model figures. Story 16.4's post-hoc rule is not
+  removed on the strength of an expectation.
+- Apple's `VoiceProcessingIO` is **not** the mechanism, and the story records
+  why so it is not rediscovered: its reference is our own output bus, and the
+  meeting audio is played by the conferencing app.
+- A recording that was cancelled is distinguishable from one that was not.
+
+### Story 16.15: The people in the room are found by ruling out the call
+
+*(tier T1 · FR-100 · AD-47 amended, AD-30, AD-31)*
+
+As someone recording in a room, I want the app to work out who was with me by
+ruling out who was on the call, so that the far end never becomes an attendee.
+
+**Acceptance Criteria:**
+
+**Given** an affected recording
+**When** diarization runs
+**Then** the in-room voice count falls, and no audio was modified to achieve it
+
+**And** each of the following holds:
+
+- The Mic Stream is diarized **unmodified**. This story exists because the
+  previous approach removed audio first and the count went **5→7, 6→6 and 3→5**:
+  muting fragments continuous speech and the clusterer splits one voice into
+  several.
+- Speaker embeddings from the **System Stream** identify the far end, and a
+  matching in-room cluster is excluded or relabelled. AD-31's threshold and its
+  measured separation already exist for FR-63; this points the same machinery at
+  the opposite question.
+- **The test asserts the direction of the change**, on the three affected
+  recordings, because assuming it is what went wrong last time.
+- `local` identification is re-evaluated afterwards, since the user's own voice
+  was competing with the far end for a cluster.
+
 ### Epic 16 FR Coverage
 
 | FR | Story | What it covers |
@@ -3764,4 +3848,7 @@ when they happened, so that a reply does not appear before the thing it answers.
 | FR-21, FR-22 (amended) | 16.5 | in-room voices counted from retained audio |
 | FR-23 (amended) | 16.7 | the same sentence never appears twice |
 | FR-97 | 16.12 | the transcript is ordered by when things were said |
+| FR-98 | 16.13 | whether echo is possible is read, not inferred |
+| FR-99 | 16.14 | the far end is cancelled while recording |
+| FR-100 | 16.15 | in-room voices found by ruling out the call |
 

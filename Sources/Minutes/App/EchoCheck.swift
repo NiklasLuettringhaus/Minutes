@@ -16,7 +16,8 @@ import Foundation
 /// transcript line (PRD §9.1).
 enum EchoCheck {
 
-    static func run() {
+    static func run(diarize: Bool = false) {
+        Self.alsoDiarize = diarize
         let sem = DispatchSemaphore(value: 0)
         Task {
             await go()
@@ -29,6 +30,11 @@ enum EchoCheck {
         }
         exit(0)
     }
+
+    /// `--diarize` also re-clusters the affected recordings, which is the only
+    /// way to check the claim that mattered most: that excluding the Echo stops
+    /// the far end being counted as people in the room. Slow, so it is opt-in.
+    private nonisolated(unsafe) static var alsoDiarize = false
 
     /// Fixed-width columns without `String(format:)`.
     ///
@@ -114,6 +120,26 @@ enum EchoCheck {
                   + Self.pad(peak, 7, right: true)
                   + Self.pad(excluded, 11, right: true)
                   + Self.pad(bestShare, 13, right: true))
+
+            // The phantom-attendee claim, checked rather than asserted. Runs the
+            // real Diarizer twice — once on the recording as it is, once on the
+            // Echo-muted copy — and counts the voices each time.
+            if Self.alsoDiarize, analysis.verdict == .present, let mic {
+                let temp = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("echo-check-\(meeting.id).wav")
+                defer { try? FileManager.default.removeItem(at: temp) }
+                do {
+                    let diarizer = SpeakerKitDiarizerAdapter()
+                    let before = try await diarizer.diarizeFull(url: mic)
+                    try EchoDetector.writeRetained(micURL: mic, analysis: analysis, to: temp)
+                    let after = try await diarizer.diarizeFull(url: temp)
+                    let b = Set(before.spans.map(\.speakerIndex)).count
+                    let a = Set(after.spans.map(\.speakerIndex)).count
+                    print("           voices in the room: \(b) before, \(a) after")
+                } catch {
+                    print("           could not re-cluster: \(error.localizedDescription)")
+                }
+            }
 
             // What the Transcript rule would do to what is already on disk.
             // Read-only: this reports, it never rewrites a Meeting.
