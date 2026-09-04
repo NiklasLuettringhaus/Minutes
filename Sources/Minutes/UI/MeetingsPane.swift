@@ -614,8 +614,10 @@ struct MeetingDetail: View {
     private var speakerBlock: some View {
         VStack(alignment: .leading, spacing: 0) {
             SectionHeading(text: "Speakers", trailing: AnyView(
-                Text(meeting.speakers.count == 1 ? "1 voice"
-                                                 : "\(meeting.speakers.count) voices")
+                // People, not labels: two labels the user merged are one voice,
+                // and the sentence at the foot of this card says so.
+                Text(meeting.mergedSpeakers.count == 1 ? "1 voice"
+                                                       : "\(meeting.mergedSpeakers.count) voices")
                     .font(.caption).foregroundStyle(Tok.textSecondary)
             ))
             Card {
@@ -630,8 +632,8 @@ struct MeetingDetail: View {
                                     .foregroundStyle(Tok.textSecondary)
                                     .lineLimit(1).truncationMode(.middle)
                             }
-                            ForEach(group.speakers, id: \.raw) { s in
-                                speakerRow(s)
+                            ForEach(group.speakers) { person in
+                                speakerRow(person)
                             }
                         }
                     }
@@ -644,18 +646,24 @@ struct MeetingDetail: View {
     }
 
     /// In-room voices, then remote ones. Each group names the device once.
+    ///
+    /// Grouped over **people** rather than Speaker Labels, so a merged pair is
+    /// one row (FR-24). Place comes from the primary label; a merge across the
+    /// room/call boundary is not something the app produces, and if a user forces
+    /// one by renaming, the first appearance decides — which is at least stable.
     private var speakerGroups: [SpeakerGroup] {
-        let inRoom = meeting.speakers.filter { !$0.isRemote }
-        let remote = meeting.speakers.filter(\.isRemote)
+        let people = meeting.mergedSpeakers
+        let inRoom = people.filter { !$0.primary.isRemote }
+        let remote = people.filter { $0.primary.isRemote }
         var out: [SpeakerGroup] = []
         if let first = inRoom.first {
             out.append(SpeakerGroup(title: inRoom.count == 1 ? "In the room" : "In the room with you",
-                                    heardThrough: meeting.heardThrough(first),
+                                    heardThrough: meeting.heardThrough(first.primary),
                                     speakers: inRoom))
         }
         if let first = remote.first {
             out.append(SpeakerGroup(title: "On the call",
-                                    heardThrough: meeting.heardThrough(first),
+                                    heardThrough: meeting.heardThrough(first.primary),
                                     speakers: remote))
         }
         return out
@@ -664,19 +672,20 @@ struct MeetingDetail: View {
     struct SpeakerGroup {
         let title: String
         let heardThrough: String
-        let speakers: [SpeakerLabelID]
+        let speakers: [MergedSpeaker]
     }
 
     @ViewBuilder
-    private func speakerRow(_ s: SpeakerLabelID) -> some View {
+    private func speakerRow(_ person: MergedSpeaker) -> some View {
+        let s = person.primary
         VStack(alignment: .leading, spacing: 2) {
             if editingSpeaker == s {
                 HStack(spacing: Tok.s3) {
                     TextField("Name", text: $draftName)
                         .textFieldStyle(.roundedBorder)
                         .frame(maxWidth: 200)
-                        .onSubmit { commitSpeaker(s) }
-                    Button("Save") { commitSpeaker(s) }
+                        .onSubmit { commitSpeaker(person) }
+                    Button("Save") { commitSpeaker(person) }
                         .buttonStyle(.borderedProminent).tint(Tok.brand).controlSize(.small)
                     Button("Cancel") { editingSpeaker = nil }
                         .buttonStyle(.bordered).controlSize(.small)
@@ -691,19 +700,19 @@ struct MeetingDetail: View {
                 // degrade rather than break.
                 ViewThatFits(in: .horizontal) {
                     HStack(spacing: Tok.s3) {
-                        identity(s)
+                        identity(person)
                         Spacer(minLength: Tok.s3)
-                        controls(s)
+                        controls(person)
                     }
                     VStack(alignment: .leading, spacing: Tok.s2) {
-                        HStack(spacing: Tok.s3) { identity(s); Spacer(minLength: 0) }
-                        HStack(spacing: Tok.s3) { controls(s); Spacer(minLength: 0) }
+                        HStack(spacing: Tok.s3) { identity(person); Spacer(minLength: 0) }
+                        HStack(spacing: Tok.s3) { controls(person); Spacer(minLength: 0) }
                     }
                 }
                 // Only where the app is making a claim about identity (FR-65), not
                 // on every row. On the others this line said what the group heading
                 // above it already says.
-                if let note = claimNote(for: s) {
+                if let note = claimNote(for: person) {
                     Text(note)
                         .font(.caption2).foregroundStyle(Tok.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -712,14 +721,15 @@ struct MeetingDetail: View {
         }
     }
 
-    /// Who, and how much they said.
+    /// Who, and how much they said — summed over every label the row stands for.
     @ViewBuilder
-    private func identity(_ s: SpeakerLabelID) -> some View {
-        SpeakerChip(name: meeting.displayName(for: s),
+    private func identity(_ person: MergedSpeaker) -> some View {
+        let s = person.primary
+        SpeakerChip(name: person.name,
                     place: s.place,
-                    isInferred: meeting.isInferred(s),
+                    isInferred: person.labels.allSatisfy { meeting.isInferred($0) },
                     basis: meeting.basis(for: s))
-        Text(lineCount(s)).font(.caption).monospacedDigit()
+        Text(lineCount(person)).font(.caption).monospacedDigit()
             .foregroundStyle(meeting.isExcluded(s) ? Tok.textSecondary.opacity(0.6)
                                                    : Tok.textSecondary)
             .fixedSize()
@@ -729,9 +739,10 @@ struct MeetingDetail: View {
     /// two more words of grey text among four others, which is why the user could
     /// not tell what was clickable.
     @ViewBuilder
-    private func controls(_ s: SpeakerLabelID) -> some View {
+    private func controls(_ person: MergedSpeaker) -> some View {
+        let s = person.primary
         Button("Rename") {
-            draftName = meeting.displayName(for: s)
+            draftName = person.name
             editingSpeaker = s
         }
         .buttonStyle(.bordered).controlSize(.small).fixedSize()
@@ -739,10 +750,17 @@ struct MeetingDetail: View {
         // participants, so the app cannot tell a colleague beside you from a
         // stranger beside you — but you can, instantly.
         Button(meeting.isExcluded(s) ? "Include" : "Exclude") {
+            // Every label the row stands for. A row the user was told is one
+            // person has to behave as one person, or excluding a merged voice
+            // leaves half of it in the note.
+            let exclude = !meeting.isExcluded(s)
+            let labels = person.labels
+            let id = meeting.id
             Task {
-                await SessionCoordinator.shared
-                    .setSpeakerExcluded(!meeting.isExcluded(s),
-                                        speaker: s, meetingID: meeting.id)
+                for label in labels {
+                    await SessionCoordinator.shared
+                        .setSpeakerExcluded(exclude, speaker: label, meetingID: id)
+                }
             }
         }
         .buttonStyle(.bordered).controlSize(.small).fixedSize()
@@ -751,15 +769,19 @@ struct MeetingDetail: View {
               : "Leave this speaker out of the note — the speech is kept here")
     }
 
-    private func lineCount(_ s: SpeakerLabelID) -> String {
-        let n = count(of: s)
+    private func lineCount(_ person: MergedSpeaker) -> String {
+        let n = person.labels.reduce(0) { $0 + count(of: $1) }
         return n == 1 ? "1 line" : "\(n) lines"
     }
 
     /// The basis, but only when it is an identity *claim* or an explicit refusal —
     /// the two cases a reader cannot infer from the group heading.
-    private func claimNote(for s: SpeakerLabelID) -> String? {
+    private func claimNote(for person: MergedSpeaker) -> String? {
+        let s = person.primary
         var parts: [String] = []
+        if person.isMerged {
+            parts.append("\(person.labels.count) voices you merged into one person")
+        }
         switch meeting.basis(for: s) {
         case .structural:
             parts.append("your microphone held a single voice, so this is certain")
@@ -868,6 +890,7 @@ struct MeetingDetail: View {
     /// this stops it walking 600 of them to discover nothing changed.
     private var transcriptBlock: some View {
         TranscriptCard(blocks: blocks,
+                       gaps: meeting.gaps,
                        emptyReason: meeting.utterances.isEmpty
                            ? (meeting.stage < .transcribed
                               ? "Not transcribed yet — this recording was interrupted before it finished."
@@ -879,9 +902,18 @@ struct MeetingDetail: View {
                            renamingInTranscript = nil
                            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
                            guard !trimmed.isEmpty else { return }
+                           // Every label the line's speaker stands for, exactly as
+                           // the Speakers card does. Renaming only the primary
+                           // would split a merge the first time the user
+                           // corrected the spelling of the name they merged under.
+                           let labels = meeting.mergedSpeakers
+                               .first { $0.primary == label }?.labels ?? [label]
+                           let id = meeting.id
                            Task {
-                               await SessionCoordinator.shared.renameSpeaker(
-                                   meetingID: meeting.id, label: label, to: trimmed)
+                               for l in labels {
+                                   await SessionCoordinator.shared.renameSpeaker(
+                                       meetingID: id, label: l, to: trimmed)
+                               }
                            }
                        })
     }
@@ -957,10 +989,21 @@ struct MeetingDetail: View {
         return f.string(from: meeting.startedAt)
     }
 
-    private func commitSpeaker(_ s: SpeakerLabelID) {
+    /// Renames every label the row stands for.
+    ///
+    /// A merged row renaming only its primary would split the merge apart the
+    /// first time the user corrected the spelling of the name they merged it
+    /// under — which is worse than the defect this fixes.
+    private func commitSpeaker(_ person: MergedSpeaker) {
         let name = draftName
+        let labels = person.labels
+        let id = meeting.id
         editingSpeaker = nil
-        Task { await SessionCoordinator.shared.renameSpeaker(meetingID: meeting.id, label: s, to: name) }
+        Task {
+            for label in labels {
+                await SessionCoordinator.shared.renameSpeaker(meetingID: id, label: label, to: name)
+            }
+        }
     }
 
     private func commitTitle() {
@@ -979,6 +1022,10 @@ struct MeetingDetail: View {
 /// pass; on a 598-utterance meeting that is what "super slow and laggy" was.
 private struct TranscriptCard: View, Equatable {
     let blocks: [Meeting.TranscriptBlock]
+    /// Stretches the engine produced nothing usable for (FR-96), marked at the
+    /// position in the conversation where a reader would otherwise assume the
+    /// next line follows the last one.
+    let gaps: [TranscriptGap]
     let emptyReason: String?
     @Binding var renamingBlock: UUID?
     @Binding var draft: String
@@ -993,7 +1040,13 @@ private struct TranscriptCard: View, Equatable {
     /// pass, which is why the popover was slow to appear. Exclusivity does not
     /// need the parent to re-render: each row compares its own `isRenaming`.
     static func == (a: TranscriptCard, b: TranscriptCard) -> Bool {
-        a.blocks == b.blocks && a.emptyReason == b.emptyReason
+        a.blocks == b.blocks && a.gaps == b.gaps && a.emptyReason == b.emptyReason
+    }
+
+    private func gapsBefore(_ block: Meeting.TranscriptBlock,
+                            previous: Meeting.TranscriptBlock?) -> [TranscriptGap] {
+        let lower = previous?.start ?? -1
+        return gaps.filter { $0.start > lower && $0.start < block.start }
     }
 
     var body: some View {
@@ -1009,7 +1062,16 @@ private struct TranscriptCard: View, Equatable {
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
                     VStack(alignment: .leading, spacing: Tok.s4) {
-                        ForEach(blocks) { b in
+                        ForEach(Array(blocks.enumerated()), id: \.element.id) { index, b in
+                            // Any gap that fell before this block and after the
+                            // previous one. A banner at the top of the pane says
+                            // how much was lost; this says *where*, which is the
+                            // thing a reader scanning a conversation needs — a
+                            // missing turn is invisible without it.
+                            ForEach(gapsBefore(b, previous: index > 0 ? blocks[index - 1] : nil),
+                                    id: \.start) { gap in
+                                GapMarker(gap: gap)
+                            }
                             TranscriptBlockRow(
                                 block: b,
                                 isRenaming: renamingBlock == b.id,
@@ -1020,6 +1082,12 @@ private struct TranscriptCard: View, Equatable {
                                 },
                                 onCancel: { renamingBlock = nil },
                                 onCommit: { onCommit(b.speaker, draft) })
+                        }
+                        // Anything after the last thing anybody said.
+                        if let last = blocks.last {
+                            ForEach(gaps.filter { $0.start >= last.start }, id: \.start) { gap in
+                                GapMarker(gap: gap)
+                            }
                         }
                     }
                 }
@@ -1273,5 +1341,38 @@ struct UnclaimedNoteRow: View {
     private var subtitle: String {
         guard let d = note.startedAt else { return "Written by Minutes; its meeting is no longer in your library." }
         return "\(d.formatted(date: .abbreviated, time: .shortened)) — its meeting is no longer in your library."
+    }
+}
+
+/// `{components.transcript-gap}` — where a stretch of audio produced no usable
+/// text (PRD FR-96, DESIGN.md).
+///
+/// A hairline and a duration, in `{typography.metric}` and
+/// `{colors.text-secondary}`. Deliberately **not** a state banner and
+/// deliberately not in `{colors.state-recording}`: a red mark in a transcript
+/// reads as an error the user can act on, and there is nothing to act on — the
+/// audio is already recorded and already unreadable. What it has to do is
+/// interrupt the reading, at the moment a reader would otherwise assume the next
+/// line follows the last.
+private struct GapMarker: View {
+    let gap: TranscriptGap
+
+    var body: some View {
+        HStack(spacing: Tok.s3) {
+            Rectangle().fill(Tok.separator).frame(height: 1)
+            Text(label)
+                .font(.caption2).monospacedDigit()
+                .foregroundStyle(Tok.textSecondary)
+                .fixedSize()
+            Rectangle().fill(Tok.separator).frame(height: 1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+    }
+
+    private var label: String {
+        let seconds = Int(gap.duration.rounded())
+        let where_ = gap.stream == .mic ? "in the room" : "on the call"
+        return "\(seconds)s \(where_) could not be made out"
     }
 }

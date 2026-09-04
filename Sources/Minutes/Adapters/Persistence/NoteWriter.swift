@@ -270,9 +270,25 @@ struct NoteWriter: NoteWriting {
                 : "*Every speaker in this meeting has been excluded.*\n"
         }
         var out = ""
+        var previous: TimeInterval = -1
         for b in blocks {
+            // FR-96. A gap is marked where it happened, for the same reason the
+            // app marks it there: a missing turn is invisible in a transcript,
+            // and the summary sentence at the top says how much was lost without
+            // saying which part of the conversation is not there.
+            for gap in m.gaps where gap.start > previous && gap.start < b.start {
+                out += "*— \(Int(gap.duration.rounded()))s "
+                out += gap.stream == .mic ? "in the room" : "on the call"
+                out += " could not be made out —*\n\n"
+            }
+            previous = b.start
             let who = b.isInferred ? "~\(b.name)" : b.name
             out += "**\(Fmt.timestamp(b.start)) \(who)**\n\n\(b.text)\n\n"
+        }
+        for gap in m.gaps where gap.start > previous {
+            out += "*— \(Int(gap.duration.rounded()))s "
+            out += gap.stream == .mic ? "in the room" : "on the call"
+            out += " could not be made out —*\n\n"
         }
         return out
     }

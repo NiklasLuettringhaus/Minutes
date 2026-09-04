@@ -631,21 +631,32 @@ struct Meeting: Codable, Sendable, Identifiable {
         let source = honouringExclusions
             ? utterances.filter { !isExcluded($0.speaker) }
             : utterances
+        // Every label resolved to the person it belongs to (FR-24). Without this
+        // a merged pair rendered under one name and **two different chips** — the
+        // user's own teal one on some lines and an amber in-room one on others,
+        // for a person they had just told the app was one person. The card was
+        // fixed first and this is the same bug one surface along.
+        var person: [String: SpeakerLabelID] = [:]
+        for p in mergedSpeakers {
+            for label in p.labels { person[label.raw] = p.primary }
+        }
+
         var out: [TranscriptBlock] = []
         out.reserveCapacity(source.count)
         for u in source.sorted(by: { $0.start < $1.start }) {
             let text = u.text.trimmingCharacters(in: .whitespaces)
-            if var last = out.last, groups(last.speaker, with: u.speaker) {
+            let who = person[u.speaker.raw] ?? u.speaker
+            if var last = out.last, groups(last.speaker, with: who) {
                 last.text += " " + text
                 out[out.count - 1] = last
             } else {
                 out.append(TranscriptBlock(id: u.id,
                                            start: u.start,
-                                           speaker: u.speaker,
-                                           name: displayName(for: u.speaker),
-                                           place: u.speaker.place,
-                                           isInferred: isInferred(u.speaker),
-                                           basis: basis(for: u.speaker),
+                                           speaker: who,
+                                           name: displayName(for: who),
+                                           place: who.place,
+                                           isInferred: isInferred(who),
+                                           basis: basis(for: who),
                                            text: text))
             }
         }
@@ -665,7 +676,7 @@ struct Meeting: Codable, Sendable, Identifiable {
     /// paragraph under one label, presenting two people's alternating speech as
     /// one person's. Unreachable in a completed Meeting, because attribution gives
     /// every speaker a distinct name; reachable in one that failed before it.
-    private func groups(_ a: SpeakerLabelID, with b: SpeakerLabelID) -> Bool {
+    func groups(_ a: SpeakerLabelID, with b: SpeakerLabelID) -> Bool {
         if a == b { return true }
         guard let na = speakerNames[a.raw], let nb = speakerNames[b.raw] else { return false }
         return na == nb
@@ -689,10 +700,39 @@ struct Meeting: Codable, Sendable, Identifiable {
     }
 
     /// Distinct speakers in transcript order of first appearance.
+    ///
+    /// Distinct **Speaker Labels**, which is not the same as distinct *people*
+    /// once the user has merged two of them — see `mergedSpeakers`.
     var speakers: [SpeakerLabelID] {
         var seen = Set<String>(); var out: [SpeakerLabelID] = []
         for u in utterances where !seen.contains(u.speaker.raw) {
             seen.insert(u.speaker.raw); out.append(u.speaker)
+        }
+        return out
+    }
+
+    /// One person, as the user sees them (FR-24's merge).
+    ///
+    /// **Renaming two labels to the same name merges them**, which the Speakers
+    /// card has been promising in so many words since increment 4 and which the
+    /// *transcript* has done since then — `groups` runs consecutive Utterances
+    /// from two merged labels into one paragraph. The card itself listed Speaker
+    /// Labels, so a user who merged two voices saw them merge in the transcript
+    /// and stay separate in the list directly above it, under the sentence
+    /// telling them the merge had happened. Reported by the user.
+    ///
+    /// The rule is `groups`, unchanged and shared: one rule, every surface that
+    /// applies it. Nothing is rewritten on the record — AD-19 keeps Utterances
+    /// pointing at stable IDs so a merge stays reversible by renaming one of them
+    /// back, and this is a view of that data rather than an edit to it.
+    var mergedSpeakers: [MergedSpeaker] {
+        var out: [MergedSpeaker] = []
+        for s in speakers {
+            if let i = out.firstIndex(where: { groups($0.labels[0], with: s) }) {
+                out[i].labels.append(s)
+            } else {
+                out.append(MergedSpeaker(labels: [s], name: displayName(for: s)))
+            }
         }
         return out
     }
@@ -707,6 +747,21 @@ struct Meeting: Codable, Sendable, Identifiable {
         let suffix = String((0..<4).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
         return "\(f.string(from: date))-\(suffix)"
     }
+}
+
+/// One person in the Speakers card: one Speaker Label, or several the user has
+/// renamed to the same name (FR-24).
+struct MergedSpeaker: Identifiable, Sendable, Equatable {
+    /// In transcript order of first appearance. Never empty.
+    fileprivate(set) var labels: [SpeakerLabelID]
+    let name: String
+
+    /// The label everything acts on. Renaming or excluding a merged row applies
+    /// to **all** of `labels` — a row the user was told is one person has to
+    /// behave as one person.
+    var primary: SpeakerLabelID { labels[0] }
+    var id: String { primary.raw }
+    var isMerged: Bool { labels.count > 1 }
 }
 
 // MARK: - Formatting helpers
