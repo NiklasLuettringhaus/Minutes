@@ -29,6 +29,17 @@ struct CapturedStreams: Sendable {
     /// nothing", which is the condition worth telling the user about — including
     /// when it delivered no callbacks at all and so has zero duration.
     var systemTapEstablished: Bool = false
+    /// Whether each stream received everything its device produced (AD-51).
+    var micContinuity: StreamContinuity = .unknown
+    var systemContinuity: StreamContinuity = .unknown
+    /// Seconds to add to a System Stream time to place it on the Mic Stream's
+    /// timeline (FR-97, AD-53).
+    ///
+    /// The difference between the two Streams' first-sample host times, on one
+    /// system-wide clock. `nil` where either device supplied no timestamp — and
+    /// `nil` means unknown, never zero: a Meeting whose offset was never measured
+    /// must not be silently re-ordered by a guess.
+    var streamStartOffset: TimeInterval?
 }
 
 protocol Capturing: AnyObject {
@@ -172,4 +183,23 @@ struct UnclaimedNote: Equatable, Sendable, Identifiable {
 protocol NoteLocating: Sendable {
     func locate(meeting: Meeting, in folder: URL) throws -> NoteLocation
     func unclaimed(meetings: [Meeting], in folder: URL) throws -> [UnclaimedNote]
+}
+
+// MARK: - What one Stream's capture reports (AD-51)
+
+/// Everything a single Stream's capture can say about itself when it stops.
+///
+/// Introduced in increment 10 to replace a five-element tuple that was about to
+/// become a seven-element one. Both capture adapters return this; `CapturedStreams`
+/// is the pair of them plus what only the pair can say.
+struct StreamCaptureResult: Sendable {
+    var duration: TimeInterval = 0
+    var evidence: AudioEvidence = .none
+    /// Whether the samples are at the rate the stream claimed (AD-44, AD-51).
+    var rate: RateFidelity = .unknown
+    /// Whether the app received everything the device produced (AD-51).
+    var continuity: StreamContinuity = .unknown
+    /// Host time, in seconds, of the very first sample this Stream delivered.
+    /// The two Streams' offset is the difference of these (FR-97, AD-53).
+    var originHostSeconds: Double?
 }

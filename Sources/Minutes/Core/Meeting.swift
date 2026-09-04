@@ -225,6 +225,22 @@ struct Meeting: Codable, Sendable, Identifiable {
     /// checked" rather than as "passed" — see `untrustworthyStreams`.
     var micRate: RateFidelity?
     var systemRate: RateFidelity?
+    /// Whether the app received everything each device produced (AD-51, FR-94).
+    ///
+    /// Absent on every record written before increment 10, and absent reads as
+    /// **never checked** — the same rule as the rate and the Echo verdict.
+    var micContinuity: StreamContinuity?
+    var systemContinuity: StreamContinuity?
+
+    /// Seconds to add to a System Stream Utterance's time to place it on the Mic
+    /// Stream's timeline (FR-97, AD-53).
+    ///
+    /// Measured at capture from the two devices' host clocks, so it exists for
+    /// every Session that captured both — not only for the ones an echo makes
+    /// alignable. **Absent means unknown**, and an unknown offset is never
+    /// applied: a Meeting recorded before this existed keeps the order it has
+    /// rather than being re-shuffled by a guess.
+    var streamStartOffset: TimeInterval?
 
     // --- Echo (AD-47). One field, because the question is about the pair of
     // streams and not about either one alone. ---
@@ -317,6 +333,9 @@ struct Meeting: Codable, Sendable, Identifiable {
         self.noteDigest = nil
         self.micRate = nil
         self.systemRate = nil
+        self.micContinuity = nil
+        self.systemContinuity = nil
+        self.streamStartOffset = nil
         self.echo = nil
     }
 
@@ -355,6 +374,9 @@ struct Meeting: Codable, Sendable, Identifiable {
         noteDigest = try c.decodeIfPresent(String.self, forKey: .noteDigest)
         micRate = try c.decodeIfPresent(RateFidelity.self, forKey: .micRate)
         systemRate = try c.decodeIfPresent(RateFidelity.self, forKey: .systemRate)
+        micContinuity = try c.decodeIfPresent(StreamContinuity.self, forKey: .micContinuity)
+        systemContinuity = try c.decodeIfPresent(StreamContinuity.self, forKey: .systemContinuity)
+        streamStartOffset = try c.decodeIfPresent(TimeInterval.self, forKey: .streamStartOffset)
         echo = try c.decodeIfPresent(EchoAnalysis.self, forKey: .echo)
     }
 

@@ -81,9 +81,34 @@ final class StreamFileWriter {
     /// `Date` rather than the audio clock, deliberately: the whole failure was the
     /// audio clock not being what the app believed, so the check must come from
     /// outside it.
+    ///
+    /// *Qualified in increment 10.* The sentence above conflated two clocks that
+    /// live in the same device and are not the same thing. What the app believed
+    /// wrongly was the **format's declared rate** — a static number read from a
+    /// property. `mSampleTime` is a running counter of frames the device actually
+    /// produced, and on the seven affected recordings it advanced at 8000 or 5333
+    /// per host second exactly as the wall clock said. So the audio clock is not
+    /// the thing that lied; it is a second, independent witness that agrees, and
+    /// it agrees without the scheduling jitter this one carries (AD-51).
+
+    /// The device's own account of what it delivered (AD-51, FR-94).
+    ///
+    /// Absent for a device that supplies no valid timestamps, in which case
+    /// everything falls back to `now()` above. Absent is not a downgrade: the
+    /// wall-clock figures are what caught the original defect.
+    var clock: AudioClockTap?
     /// Set once when the rate check first fails, so the failure is reported once
     /// rather than on every drained chunk.
     private(set) var rateFailure: RateFidelity?
+    /// Whether `onRateDisagreement` has already fired.
+    ///
+    /// Separate from `rateFailure` because a *corrected* stream is not a failure
+    /// and must not be recorded as one — but it is still a disagreement, and it
+    /// is still reported exactly once. Without this the correction path fired the
+    /// callback and then left `checkRate` free to fire it again on the next
+    /// drain, which is a duplicate the wall clock's slower settling used to hide
+    /// by settling too late for a second drain to happen.
+    private var didReportDisagreement = false
     /// The rate this writer is actually converting *from*.
     ///
     /// Starts as the declared rate and becomes the observed one if the device
@@ -216,6 +241,23 @@ final class StreamFileWriter {
     /// the output rate, so it carries the same error it is meant to detect, and
     /// comparing it against input frames would always agree.
     var rateFidelity: RateFidelity {
+        // The device's own account first (AD-51). It needs two callbacks rather
+        // than three seconds, carries no scheduling jitter, and its tolerance is
+        // computed from the measurement rather than declared.
+        let audio = clock?.snapshot
+        // `isDecisive`, not merely `isUsable`: a two-callback reading has an
+        // answer and a tolerance of about 100%, and preferring it over the wall
+        // clock there would replace a coarse measurement with a useless one. The
+        // wall clock stays the fallback until the device's own account can
+        // actually decide something.
+        if let audio, audio.isDecisive {
+            return RateFidelity(declaredRate: format.sampleRate,
+                                framesObserved: audio.sampleAdvance,
+                                elapsedSeconds: audio.elapsedSeconds,
+                                correctedTo: correctedRate,
+                                source: .audioClock,
+                                callbackFrames: audio.largestTick)
+        }
         guard let b = measureBaseline, let last = lastDrainAt else {
             return RateFidelity(declaredRate: format.sampleRate, framesObserved: 0,
                                 elapsedSeconds: 0, correctedTo: correctedRate)
@@ -225,6 +267,26 @@ final class StreamFileWriter {
                             elapsedSeconds: last.timeIntervalSince(b.at),
                             correctedTo: correctedRate)
     }
+
+    /// What the device says about holes in what it handed over (AD-51, FR-94).
+    ///
+    /// Separate from the rate on purpose. A dropped buffer and a wrong rate are
+    /// different defects that the wall clock renders as one blurred number — the
+    /// missing frames lower the count and the elapsed time it is divided by
+    /// keeps running, so the two errors partly cancel and neither is visible.
+    var continuity: StreamContinuity {
+        guard let audio = clock?.snapshot, audio.isUsable else { return .unknown }
+        return StreamContinuity(missingFrames: audio.framesMissing,
+                                expectedFrames: audio.sampleAdvance,
+                                discontinuities: audio.discontinuities,
+                                rebases: audio.rebases)
+    }
+
+    /// Host time, in seconds, of the very first sample this stream delivered.
+    ///
+    /// FR-97's offset between the two Streams is the difference of two of these.
+    /// Absent where the device supplied no timestamps.
+    var originHostSeconds: Double? { clock?.snapshot.originHostSeconds }
 
     /// The input format conversions actually use, which may not be the one the
     /// device claimed.
@@ -246,7 +308,14 @@ final class StreamFileWriter {
         let f = rateFidelity
         guard case .wrong = f.verdict else { return }
         rateFailure = f
-        Log.audio.error("rate disagreement: declared \(f.declaredRate, privacy: .public) Hz, observed \(f.observedRate, privacy: .public) Hz, ratio \(f.ratio, privacy: .public)")
+        Log.audio.error("rate disagreement: declared \(f.declaredRate, privacy: .public) Hz, observed \(f.observedRate, privacy: .public) Hz, ratio \(f.ratio, privacy: .public), clock \(f.source.rawValue, privacy: .public)")
+        report(f)
+    }
+
+    /// One disagreement, one report.
+    private func report(_ f: RateFidelity) {
+        guard !didReportDisagreement else { return }
+        didReportDisagreement = true
         onRateDisagreement?(f)
     }
 
@@ -337,7 +406,7 @@ final class StreamFileWriter {
                 correctedRate = snapped
                 converter = c
                 Log.audio.error("corrected input rate: declared \(self.format.sampleRate, privacy: .public) Hz, observed \(f.observedRate, privacy: .public) Hz, converting from \(snapped, privacy: .public) Hz")
-                onRateDisagreement?(rateFidelity)
+                report(rateFidelity)
             } else {
                 Log.audio.error("could not build a converter at \(snapped, privacy: .public) Hz; keeping the declared rate")
                 checkRate()

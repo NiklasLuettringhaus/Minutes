@@ -22,6 +22,13 @@ enum Entry {
             // person who hits this next may have to do the same before there is
             // any UI to click.
             RateCheck.run(repair: CommandLine.arguments.contains("--repair"))
+        } else if CommandLine.arguments.contains("--check-clock") {
+            // FR-94, FR-97. Opens both streams for a few seconds and prints what
+            // the devices themselves say — the rate from their own counters, the
+            // tolerance that measurement earns, holes they counted and we never
+            // received, and the offset between the two streams' first samples.
+            // Creates no Meeting and keeps no audio.
+            ClockCheck.run()
         } else if CommandLine.arguments.contains("--check-echo") {
             // FR-89. Runs echo detection over every recording and prints the
             // verdict, which is also how the recording gate was calibrated.

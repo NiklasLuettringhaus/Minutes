@@ -7,6 +7,7 @@ final class MicCapture {
     private let engine = AVAudioEngine()
     private var writer: StreamFileWriter?
     private var ring: RingBuffer?
+    private var clock: AudioClockTap?
     private(set) var isRunning = false
     private(set) var format: AVAudioFormat?
 
@@ -33,13 +34,25 @@ final class MicCapture {
         let r = RingBuffer(capacity: Int(fmt.sampleRate) * Int(fmt.channelCount) * 10)
         ring = r
         let w = StreamFileWriter(url: url, format: fmt, ring: r)
+        let c = AudioClockTap()
+        clock = c
+        w.clock = c
         try w.start()
         writer = w
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: fmt) { buffer, _ in
+        input.installTap(onBus: 0, bufferSize: 4096, format: fmt) { buffer, when in
             guard let ch = buffer.floatChannelData else { return }
             let frames = Int(buffer.frameLength)
             let channels = Int(buffer.format.channelCount)
+            // AD-51. The second argument was bound to `_` since this file was
+            // written, and it is the device's own account of what it just
+            // delivered — the sample counter and a host stamp for the same
+            // instant. Both carry validity flags and an invalid one yields
+            // nothing rather than a zero, because absent is unknown.
+            if when.isSampleTimeValid, when.isHostTimeValid {
+                c.record(sampleTime: Double(when.sampleTime),
+                         hostTime: when.hostTime, frames: frames)
+            }
             if buffer.format.isInterleaved {
                 r.write(ch[0], count: frames * channels)
             } else if channels == 1 {
@@ -82,27 +95,35 @@ final class MicCapture {
     /// under-reports, which for `duration` was a long-standing inaccuracy and for
     /// evidence would be a wrong verdict: on a five-second Test Playground where
     /// the speech lands late, the unflushed tail could hold all of the signal.
-    func stop() -> (duration: TimeInterval, evidence: AudioEvidence, rate: RateFidelity) {
-        guard isRunning else { return (0, .none, .unknown) }
+    func stop() -> StreamCaptureResult {
+        guard isRunning else { return StreamCaptureResult() }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         // Hold the writer past the teardown so its counters can be read once it
         // has finished flushing.
         let w = writer
         // Before the flush, for the same reason as the system stream: the rate's
-        // denominator is wall time and keeps running.
+        // denominator is wall time and keeps running. (With the audio clock it
+        // no longer does — both halves are frozen at the last callback — but the
+        // wall-clock fallback is still live and the ordering must suit both.)
         let r = w?.rateFidelity ?? .unknown
+        let cont = w?.continuity ?? .unknown
+        let origin = w?.originHostSeconds
         w?.stop()
         ring?.reset()
-        writer = nil; ring = nil
+        writer = nil; ring = nil; clock = nil
         isRunning = false
         let d = w?.duration ?? 0
         let e = w?.evidence ?? .none
-        Log.audio.info("mic capture stopped duration=\(d) peak=\(e.peak) nonSilent=\(e.nonSilentSeconds) declaredRate=\(r.declaredRate) observedRate=\(r.observedRate)")
+        Log.audio.info("mic capture stopped duration=\(d) peak=\(e.peak) nonSilent=\(e.nonSilentSeconds) declaredRate=\(r.declaredRate) observedRate=\(r.observedRate) clock=\(r.source.rawValue, privacy: .public)")
         if let why = r.explanation {
             Log.audio.error("mic stream rate: \(why, privacy: .public)")
         }
-        return (d, e, r)
+        if let why = cont.explanation {
+            Log.audio.error("mic stream continuity: \(why, privacy: .public)")
+        }
+        return StreamCaptureResult(duration: d, evidence: e, rate: r,
+                                   continuity: cont, originHostSeconds: origin)
     }
 
     var level: Float { writer?.peak ?? 0 }

@@ -188,7 +188,19 @@ actor Pipeline {
         // length differences across the real library run from -364 ms to
         // +3,278 ms — so comparing raw offsets would misalign the very
         // recordings this is for.
-        let shift = echo.verdict == .present ? (echo.delaySeconds ?? 0) : 0
+        //
+        // **Two different shifts, and increment 10 separated them (FR-97, AD-53).**
+        // The *capture* offset is when each file started, measured from the two
+        // devices' host clocks; it applies to every Session that captured both
+        // Streams and it is what puts the merged Transcript in the order things
+        // were said. The *echo delay* is the acoustic path from the loudspeaker
+        // back to the microphone; it applies only where there is an echo, and
+        // only to the comparison that decides whether a mic Utterance repeats
+        // one on the other Stream. Adding them is right for the echo comparison
+        // and adding only the first is right for the merge.
+        let captureOffset = try await store.load(id: id).streamStartOffset
+        let echoDelay = echo.verdict == .present ? (echo.delaySeconds ?? 0) : 0
+        let shift = (captureOffset ?? 0) + echoDelay
         let outcome = EchoDeduplication.apply(
             mic: micSegments.map { .init(start: $0.start, end: $0.end, text: $0.text) },
             system: systemSegments.map {
@@ -212,10 +224,19 @@ actor Pipeline {
                                         speaker: .local, origin: .mic))
         }
         // System Stream segments start unassigned; diarization names them next.
+        //
+        // FR-97: their times are positions in *their own file*, and the two files
+        // did not start together. `captureOffset` puts them on the Mic Stream's
+        // clock, which is the one AD-4 calls the session clock. Where it was
+        // never measured it is zero, which is the behaviour every Meeting before
+        // increment 10 had — an unknown offset is not applied, and a stored
+        // Meeting is never re-ordered by a guess.
         for segment in systemSegments {
             guard let text = clean(segment.text) else { continue }
-            utterances.append(Utterance(start: segment.start, end: segment.end, text: text,
-                                        speaker: SpeakerLabelID.remote(0), origin: .system))
+            utterances.append(Utterance(
+                start: StreamAlignment.micTime(ofSystemTime: segment.start, offset: captureOffset),
+                end: StreamAlignment.micTime(ofSystemTime: segment.end, offset: captureOffset),
+                text: text, speaker: SpeakerLabelID.remote(0), origin: .system))
         }
         guard !utterances.isEmpty else {
             throw MinutesError.transcriptionFailed("No speech was found in the recording.")
@@ -320,7 +341,17 @@ actor Pipeline {
         if let sys = await store.audioURL(id: id, stream: .system) {
             do {
                 let (spans, c) = try await diarizer.diarizeFull(url: sys)
-                systemSpans = spans
+                // FR-97 / AD-53. These spans are positions in system.wav; the
+                // Utterances they will be matched against were moved onto the Mic
+                // Stream's clock at transcription. Both sides of the comparison
+                // have to be on the same clock or `assign` matches an Utterance
+                // against whoever was speaking seconds earlier — which on the
+                // worst measured offset is 3.3 seconds of the wrong speaker.
+                let offset = (try? await store.load(id: id).streamStartOffset) ?? 0
+                systemSpans = offset == 0 ? spans : spans.map {
+                    DiarizedSpan(start: $0.start + offset, end: $0.end + offset,
+                                 speakerIndex: $0.speakerIndex)
+                }
                 for (idx, vec) in c { centroids[SpeakerLabelID.remote(idx).raw] = vec }
                 if !spans.isEmpty { anySucceeded = true }
             } catch {

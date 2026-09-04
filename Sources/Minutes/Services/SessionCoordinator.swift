@@ -122,6 +122,13 @@ final class SessionCoordinator: ObservableObject {
             // AD-45: a fact about a recording that happened, stored per stream.
             m.micRate = streams.micRate
             m.systemRate = streams.systemRate
+            // AD-51: holes the device counted and the app never received. A
+            // different fact from the rate, kept separately so it cannot be
+            // read as one.
+            m.micContinuity = streams.micContinuity
+            m.systemContinuity = streams.systemContinuity
+            // AD-53: measured, not estimated, and absent when it could not be.
+            m.streamStartOffset = streams.streamStartOffset
         }
 
         // The only evidence available about system-audio permission (FR-42),

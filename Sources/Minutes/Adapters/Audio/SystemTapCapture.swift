@@ -19,6 +19,7 @@ final class SystemTapCapture {
     private var ioProcID: AudioDeviceIOProcID?
     private var writer: StreamFileWriter?
     private var ring: RingBuffer?
+    private var clock: AudioClockTap?
     private(set) var isRunning = false
     private(set) var format: AVAudioFormat?
 
@@ -36,7 +37,10 @@ final class SystemTapCapture {
         let channels = max(1, Int(asbd.mChannelsPerFrame))
         let r = RingBuffer(capacity: Int(asbd.mSampleRate) * channels * 10)
         ring = r
+        let c = AudioClockTap()
+        clock = c
         let w = StreamFileWriter(url: url, format: fmt, ring: r)
+        w.clock = c
         // FR-84: the user finds out during the meeting, not at the end.
         //
         // This was claimed in the requirement and left unwired in the first pass:
@@ -224,7 +228,7 @@ final class SystemTapCapture {
     /// that system-audio capture worked, because macOS exposes no API to query
     /// the permission (FR-42) — so it is derived from the samples and never from
     /// elapsed time (AD-36).
-    func stop() -> (duration: TimeInterval, evidence: AudioEvidence, rate: RateFidelity) {
+    func stop() -> StreamCaptureResult {
         // Hold the writer past teardown: teardown calls writer.stop(), which is
         // what flushes the remainder of the ring. Reading the counters before it
         // under-reports the tail.
@@ -234,6 +238,8 @@ final class SystemTapCapture {
         // would divide the same frames by a longer elapsed and invent a
         // disagreement on every recording.
         let r = w?.rateFidelity ?? .unknown
+        let cont = w?.continuity ?? .unknown
+        let origin = w?.originHostSeconds
         teardown()
         let e = w?.evidence ?? .none
         Log.audio.info("system capture stopped duration=\(e.duration) peak=\(e.peak) nonSilent=\(e.nonSilentSeconds) producedAudio=\(e.producedAudio) declaredRate=\(r.declaredRate) observedRate=\(r.observedRate)")
@@ -243,7 +249,11 @@ final class SystemTapCapture {
         if let why = r.explanation {
             Log.audio.error("system stream rate: \(why, privacy: .public)")
         }
-        return (e.duration, e, r)
+        if let why = cont.explanation {
+            Log.audio.error("system stream continuity: \(why, privacy: .public)")
+        }
+        return StreamCaptureResult(duration: e.duration, evidence: e, rate: r,
+                                   continuity: cont, originHostSeconds: origin)
     }
 
     var level: Float { writer?.peak ?? 0 }
@@ -269,6 +279,7 @@ final class SystemTapCapture {
         destroyDeviceChain()
         writer?.stop(); writer = nil
         ring?.reset(); ring = nil
+        clock = nil
         isRunning = false
     }
 
@@ -319,7 +330,7 @@ final class SystemTapCapture {
     /// No allocation, no locks beyond the ring's index guard, no logging
     /// (architecture convention). Context arrives via refCon because a C function
     /// pointer cannot capture Swift state.
-    private static let ioProc: AudioDeviceIOProc = { _, _, inInputData, _, _, _, clientData in
+    private static let ioProc: AudioDeviceIOProc = { _, _, inInputData, inInputTime, _, _, clientData in
         guard let clientData else { return noErr }
         let me = Unmanaged<SystemTapCapture>.fromOpaque(clientData).takeUnretainedValue()
         guard let ring = me.ring else { return noErr }
@@ -328,19 +339,34 @@ final class SystemTapCapture {
             UnsafeMutablePointer(mutating: inInputData))
         // Handle interleaved, non-interleaved and mono by inspecting the list —
         // never by indexing past mBuffers.0 (AD-3).
+        var samples = 0
         if list.count == 1 {
             let b = list[0]
             if let md = b.mData {
-                ring.write(md.assumingMemoryBound(to: Float.self),
-                           count: Int(b.mDataByteSize) / 4)
+                samples = Int(b.mDataByteSize) / 4
+                ring.write(md.assumingMemoryBound(to: Float.self), count: samples)
             }
         } else {
             for b in list {
                 if let md = b.mData {
-                    ring.write(md.assumingMemoryBound(to: Float.self),
-                               count: Int(b.mDataByteSize) / 4)
+                    let n = Int(b.mDataByteSize) / 4
+                    samples += n
+                    ring.write(md.assumingMemoryBound(to: Float.self), count: n)
                 }
             }
+        }
+
+        // AD-51. `inInputTime` was bound to `_` since this file was written. It
+        // is the device's own account of the buffer just delivered — the sample
+        // counter and a host stamp for the same instant — and it is the only
+        // authority on the rate that does not go through a wall clock. The flags
+        // decide: a timestamp the device did not mark valid is absent, not zero.
+        let t = inInputTime.pointee
+        if t.mFlags.contains(.sampleTimeValid), t.mFlags.contains(.hostTimeValid),
+           let clock = me.clock, samples > 0 {
+            let channels = max(1, Int(me.format?.channelCount ?? 1))
+            clock.record(sampleTime: t.mSampleTime, hostTime: t.mHostTime,
+                         frames: samples / channels)
         }
         return noErr
     }

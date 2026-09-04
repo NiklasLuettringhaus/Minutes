@@ -55,15 +55,28 @@ final class DualStreamCapture: Capturing {
         let micDuration = micResult.duration
         let micEvidence = micResult.evidence
         let micRate = micResult.rate
-        var systemDuration: TimeInterval = 0
-        var systemEvidence = AudioEvidence.none
-        var systemRate = RateFidelity.unknown
+        var systemResult = StreamCaptureResult()
         let tapEstablished = (system != nil)
-        if let s = system {
-            let r = s.stop()
-            systemDuration = r.duration
-            systemEvidence = r.evidence
-            systemRate = r.rate
+        if let s = system { systemResult = s.stop() }
+        let systemDuration = systemResult.duration
+        let systemEvidence = systemResult.evidence
+        let systemRate = systemResult.rate
+
+        // FR-97 / AD-53. The two Streams do not start at the same instant — the
+        // microphone opens first and the tap chain takes as long as it takes —
+        // and until now nothing recorded by how much. Measured across the real
+        // library the two files differ in length by −364 ms to +3,278 ms, and
+        // FR-6's claim that a sound "appears at the same offset (±100 ms) in
+        // both" was an assertion nobody had checked.
+        //
+        // This is a subtraction of two numbers the devices handed us, not an
+        // estimate. It is available on every dual-stream Session, including the
+        // clean ones a correlation search has nothing to align on.
+        var offset: TimeInterval?
+        if let micOrigin = micResult.originHostSeconds,
+           let sysOrigin = systemResult.originHostSeconds {
+            offset = sysOrigin - micOrigin
+            Log.audio.info("stream start offset \(Int((offset ?? 0) * 1000)) ms (system later than mic)")
         }
         let produced = systemEvidence.producedAudio
         system = nil
@@ -90,7 +103,10 @@ final class DualStreamCapture: Capturing {
             systemEvidence: systemEvidence,
             micRate: micRate,
             systemRate: systemRate,
-            systemTapEstablished: tapEstablished)
+            systemTapEstablished: tapEstablished,
+            micContinuity: micResult.continuity,
+            systemContinuity: systemResult.continuity,
+            streamStartOffset: offset)
     }
 
     /// Mutes only the Mic Stream. The System Stream — the far end of the meeting —
