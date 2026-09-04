@@ -48,6 +48,19 @@ struct EchoAnalysis: Equatable, Sendable, Codable {
     }
 
     var verdict: Verdict
+    /// What the output device said about whether Echo was possible at all
+    /// (FR-98, AD-54).
+    ///
+    /// Copied onto the analysis rather than only onto the Meeting, because AD-49
+    /// requires the *inputs to the decision* to be recorded — and since increment
+    /// 10 this is one of them. Absent on every analysis made before that, which
+    /// reads as "the device was not consulted".
+    ///
+    /// It never overwrites `verdict`. The signal measurement and the device fact
+    /// are two independent statements and both are kept; what the device decides
+    /// is whether the *exclusion* runs, and a disagreement is reported rather
+    /// than resolved (`deviceContradictsSignal`).
+    var deviceKind: OutputDeviceKind?
     /// The measured speaker-to-microphone delay. 39 ms on the worst real recording.
     var delaySeconds: TimeInterval?
     /// Peak normalised cross-correlation between the streams, for the record.
@@ -65,6 +78,29 @@ struct EchoAnalysis: Equatable, Sendable, Codable {
     }
 
     var excludedAnything: Bool { !excludedIntervals.isEmpty }
+
+    /// Whether Echo exclusion may act on this recording (FR-98).
+    ///
+    /// **The device can veto; it cannot vote.** Where it says Echo was physically
+    /// impossible — sound was going into someone's ears — nothing is excluded
+    /// whatever the correlation says, because the correlation is then measuring
+    /// something else and acting on it would remove speech for a reason that
+    /// cannot be true. Where it says loudspeakers, or says nothing, the signal
+    /// decides exactly as it did before this existed.
+    var mayExclude: Bool {
+        verdict == .present && deviceKind?.echoPossible != false
+    }
+
+    /// The signal found an echo on a device that cannot produce one.
+    ///
+    /// Neither answer is preferred silently: the exclusion follows the device,
+    /// and this says so out loud. A disagreement is information — most likely
+    /// about the detector, since there is no acoustic path out of a headphone
+    /// jack — and discarding either half would destroy the only evidence of which
+    /// one is wrong.
+    var deviceContradictsSignal: Bool {
+        verdict == .present && deviceKind?.echoPossible == false
+    }
 
     static let notApplicable = EchoAnalysis(
         verdict: .notApplicable, delaySeconds: nil, peakCorrelation: nil,
@@ -250,11 +286,45 @@ struct EchoAnalysis: Equatable, Sendable, Codable {
             return "Minutes could not tell whether your microphone also picked up "
                  + "the other side of this call, so nothing was excluded."
         case .present:
+            guard mayExclude else {
+                return "Minutes measured something in your microphone that looks like "
+                     + "the other side of this call, but the audio was playing through "
+                     + "headphones, where that cannot happen. Nothing was excluded, and "
+                     + "both readings are on the record."
+            }
             return String(format:
                 "Your microphone also picked up the other side of this call, so about "
                 + "%.0f%% of it was the call coming back through your speakers. That "
                 + "audio is counted once, from the call itself, not twice. Headphones "
                 + "prevent it.", excludedProportion * 100)
         }
+    }
+
+    /// Hand-written per the spine's Decodable-evolution convention.
+    ///
+    /// `EchoAnalysis` shipped in increment 9 with the synthesised `Codable`,
+    /// which was already one added field away from throwing `keyNotFound` on
+    /// every Meeting recorded since. `deviceKind` is that field.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        verdict = try c.decodeIfPresent(Verdict.self, forKey: .verdict) ?? .undetermined
+        deviceKind = try c.decodeIfPresent(OutputDeviceKind.self, forKey: .deviceKind)
+        delaySeconds = try c.decodeIfPresent(TimeInterval.self, forKey: .delaySeconds)
+        peakCorrelation = try c.decodeIfPresent(Double.self, forKey: .peakCorrelation)
+        excludedIntervals = try c.decodeIfPresent([Interval].self, forKey: .excludedIntervals) ?? []
+        micActiveSeconds = try c.decodeIfPresent(TimeInterval.self, forKey: .micActiveSeconds) ?? 0
+        excludedSeconds = try c.decodeIfPresent(TimeInterval.self, forKey: .excludedSeconds) ?? 0
+    }
+
+    init(verdict: Verdict, delaySeconds: TimeInterval?, peakCorrelation: Double?,
+         excludedIntervals: [Interval], micActiveSeconds: TimeInterval,
+         excludedSeconds: TimeInterval, deviceKind: OutputDeviceKind? = nil) {
+        self.verdict = verdict
+        self.delaySeconds = delaySeconds
+        self.peakCorrelation = peakCorrelation
+        self.excludedIntervals = excludedIntervals
+        self.micActiveSeconds = micActiveSeconds
+        self.excludedSeconds = excludedSeconds
+        self.deviceKind = deviceKind
     }
 }

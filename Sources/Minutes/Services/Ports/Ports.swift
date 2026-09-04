@@ -40,6 +40,12 @@ struct CapturedStreams: Sendable {
     /// `nil` means unknown, never zero: a Meeting whose offset was never measured
     /// must not be silently re-ordered by a guess.
     var streamStartOffset: TimeInterval?
+    /// What the audio was playing through, and therefore whether Echo was even
+    /// possible (FR-98, AD-54). `nil` where nothing could be read.
+    var outputDevice: OutputDevice?
+    /// Whether the output changed kind mid-Session. Recorded because the union
+    /// in `outputDevice.kind` deliberately hides *when* it was possible.
+    var outputDeviceChanged: Bool = false
 }
 
 protocol Capturing: AnyObject {

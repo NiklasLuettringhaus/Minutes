@@ -252,6 +252,14 @@ struct Meeting: Codable, Sendable, Identifiable {
     /// settled on, and for the same reason.
     var echo: EchoAnalysis?
 
+    /// What the audio was playing through during the Session (FR-98, AD-54).
+    ///
+    /// Absent on every record written before increment 10, and absent means the
+    /// app never looked — never "headphones", and never "speakers".
+    var outputDevice: OutputDevice?
+    /// Whether the output device changed kind while recording.
+    var outputDeviceChanged: Bool = false
+
     /// The streams whose transcript cannot be relied on (FR-85).
     ///
     /// Only a *failed* check counts. A record with no check is not evidence of a
@@ -337,6 +345,8 @@ struct Meeting: Codable, Sendable, Identifiable {
         self.systemContinuity = nil
         self.streamStartOffset = nil
         self.echo = nil
+        self.outputDevice = nil
+        self.outputDeviceChanged = false
     }
 
     /// Hand-written because the synthesised `Codable` was **not** tolerant of an
@@ -378,6 +388,8 @@ struct Meeting: Codable, Sendable, Identifiable {
         systemContinuity = try c.decodeIfPresent(StreamContinuity.self, forKey: .systemContinuity)
         streamStartOffset = try c.decodeIfPresent(TimeInterval.self, forKey: .streamStartOffset)
         echo = try c.decodeIfPresent(EchoAnalysis.self, forKey: .echo)
+        outputDevice = try c.decodeIfPresent(OutputDevice.self, forKey: .outputDevice)
+        outputDeviceChanged = try c.decodeIfPresent(Bool.self, forKey: .outputDeviceChanged) ?? false
     }
 
     func displayName(for id: SpeakerLabelID) -> String {

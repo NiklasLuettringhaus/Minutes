@@ -129,6 +129,9 @@ final class SessionCoordinator: ObservableObject {
             m.systemContinuity = streams.systemContinuity
             // AD-53: measured, not estimated, and absent when it could not be.
             m.streamStartOffset = streams.streamStartOffset
+            // AD-54: a fact about the capture, read rather than inferred.
+            m.outputDevice = streams.outputDevice
+            m.outputDeviceChanged = streams.outputDeviceChanged
         }
 
         // The only evidence available about system-audio permission (FR-42),

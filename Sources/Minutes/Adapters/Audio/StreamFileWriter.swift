@@ -245,12 +245,18 @@ final class StreamFileWriter {
         // than three seconds, carries no scheduling jitter, and its tolerance is
         // computed from the measurement rather than declared.
         let audio = clock?.snapshot
-        // `isDecisive`, not merely `isUsable`: a two-callback reading has an
-        // answer and a tolerance of about 100%, and preferring it over the wall
-        // clock there would replace a coarse measurement with a useless one. The
-        // wall clock stays the fallback until the device's own account can
-        // actually decide something.
-        if let audio, audio.isDecisive {
+        // **Where the device speaks at all, it is the only authority** (AD-51).
+        // Two ticks is the threshold, not `isDecisive`: between the second
+        // callback and the point the tolerance narrows enough to decide, the
+        // honest answer is `settling`, and falling back to the wall clock for
+        // that window puts its jitter back in exactly where the measurement is
+        // still forming. It cost a test — under full-suite load the wall clock
+        // read a 16 kHz stream as ~48 kHz for one drain, settled `correct`, and
+        // the file came out three times too fast.
+        //
+        // A device that supplies no valid timestamp records no tick, and there
+        // the wall clock is not a fallback but the whole check.
+        if let audio, audio.ticks >= 2 {
             return RateFidelity(declaredRate: format.sampleRate,
                                 framesObserved: audio.sampleAdvance,
                                 elapsedSeconds: audio.elapsedSeconds,

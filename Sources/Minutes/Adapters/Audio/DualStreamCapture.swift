@@ -13,6 +13,10 @@ import AVFoundation
 final class DualStreamCapture: Capturing {
     private let mic = MicCapture()
     private var system: SystemTapCapture?
+    /// FR-98 / AD-54. Owned here rather than by the tap, because the question
+    /// must be answerable on a mic-only Session — which is the degraded case
+    /// where the far end reaches the microphone and nothing else records it.
+    private let outputDevice = OutputDeviceMonitor()
     private var directory: URL?
     private var startedAt: Date?
     private(set) var isRunning = false
@@ -27,6 +31,7 @@ final class DualStreamCapture: Capturing {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         directory = dir
         systemFailure = nil
+        outputDevice.start()
 
         // Mic first: it is the stream we cannot do without, and it is the one with
         // a real permission API.
@@ -51,6 +56,7 @@ final class DualStreamCapture: Capturing {
         guard isRunning, let dir = directory else {
             return CapturedStreams(micURL: nil, systemURL: nil, duration: 0, systemCaptured: false)
         }
+        outputDevice.stop()
         let micResult = mic.stop()
         let micDuration = micResult.duration
         let micEvidence = micResult.evidence
@@ -106,7 +112,9 @@ final class DualStreamCapture: Capturing {
             systemTapEstablished: tapEstablished,
             micContinuity: micResult.continuity,
             systemContinuity: systemResult.continuity,
-            streamStartOffset: offset)
+            streamStartOffset: offset,
+            outputDevice: outputDevice.result,
+            outputDeviceChanged: outputDevice.changedDuringSession)
     }
 
     /// Mutes only the Mic Stream. The System Stream — the far end of the meeting —

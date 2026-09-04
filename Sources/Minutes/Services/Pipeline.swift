@@ -157,6 +157,13 @@ actor Pipeline {
 
         // FR-89. Measured before anything is transcribed, because the result
         // decides what the Transcript keeps and what Diarization clusters.
+        //
+        // **The detector runs even where the device says Echo was impossible**
+        // (FR-98). It costs a fraction of a second against a transcription, and
+        // it is the only way a disagreement between the two can exist to be
+        // recorded — a measurement not taken cannot contradict anything. What
+        // the device decides is whether the *exclusion* acts, not whether the
+        // measurement happens.
         var echo = EchoAnalysis.notApplicable
         do {
             echo = try EchoDetector.analyse(micURL: micURL, systemURL: systemURL)
@@ -164,6 +171,10 @@ actor Pipeline {
             // A failure to measure is `undetermined`, never `clean` (AD-49).
             echo = .undetermined
             Log.audio.info("echo: \(error.localizedDescription, privacy: .public) — undetermined")
+        }
+        echo.deviceKind = try await store.load(id: id).outputDevice?.kind
+        if echo.deviceContradictsSignal {
+            Log.audio.error("echo: the signal says present and the output device says headphones — nothing excluded, both recorded")
         }
 
         // The Mic Stream is the room; the System Stream is the far end. That
@@ -199,7 +210,7 @@ actor Pipeline {
         // one on the other Stream. Adding them is right for the echo comparison
         // and adding only the first is right for the merge.
         let captureOffset = try await store.load(id: id).streamStartOffset
-        let echoDelay = echo.verdict == .present ? (echo.delaySeconds ?? 0) : 0
+        let echoDelay = echo.mayExclude ? (echo.delaySeconds ?? 0) : 0
         let shift = (captureOffset ?? 0) + echoDelay
         let outcome = EchoDeduplication.apply(
             mic: micSegments.map { .init(start: $0.start, end: $0.end, text: $0.text) },
@@ -207,7 +218,7 @@ actor Pipeline {
                 .init(start: $0.start + shift, end: $0.end + shift, text: $0.text)
             },
             echoFlagged: { span in
-                echo.verdict == .present && echo.isMostlyEcho(from: span.start, to: span.end)
+                echo.mayExclude && echo.isMostlyEcho(from: span.start, to: span.end)
             })
         let dropped = Set(outcome.droppedIndices)
         if !dropped.isEmpty {
