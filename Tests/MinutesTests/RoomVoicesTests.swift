@@ -145,6 +145,45 @@ final class RoomVoicesTests: XCTestCase {
         XCTAssertTrue(lost.isEmpty, "a clean recording must pass through untouched, lost \(lost)")
     }
 
+    // MARK: - What the label does downstream
+
+    /// **The phantom attendee must not come back under another name.** The far
+    /// end reaching the microphone is the call, and if it takes a Speaker number
+    /// it renders as a participant on the call instead of a participant in the
+    /// room — the same defect one side over.
+    func testTheFarEndEchoNeverTakesASpeakerNumber() {
+        var m = Meeting(id: "20260904-160000-echo", startedAt: Date())
+        m.utterances = [
+            Utterance(start: 0, end: 2, text: "in the room", speaker: .local, origin: .mic),
+            Utterance(start: 2, end: 4, text: "the call coming back",
+                      speaker: .farEndEcho, origin: .mic),
+            Utterance(start: 4, end: 6, text: "the call itself",
+                      speaker: SpeakerLabelID.remote(0), origin: .system),
+        ]
+        let names = m.assignedSpeakerNames(localName: "Me")
+        XCTAssertEqual(names[SpeakerLabelID.remote(0).raw], "Speaker 1",
+                       "the real remote speaker keeps the first number")
+        XCTAssertEqual(names[SpeakerLabelID.farEndEcho.raw], "The call, through your microphone")
+        XCTAssertFalse(names.values.contains("Speaker 2"),
+                       "and the echo did not consume one")
+    }
+
+    /// It is on the call's side of the record and it was heard through the
+    /// microphone — the one label where place and device disagree.
+    func testTheFarEndEchoIsNotCountedAsAnInRoomVoice() {
+        var m = Meeting(id: "20260904-160100-echo", startedAt: Date())
+        m.micDevice = "MacBook Pro Microphone"
+        m.systemSource = "system audio — Microsoft Teams"
+        m.utterances = [
+            Utterance(start: 0, end: 2, text: "a", speaker: .local, origin: .mic),
+            Utterance(start: 2, end: 4, text: "b", speaker: .farEndEcho, origin: .mic),
+        ]
+        XCTAssertFalse(SpeakerLabelID.farEndEcho.isInRoom)
+        XCTAssertTrue(SpeakerLabelID.farEndEcho.isRemote)
+        XCTAssertEqual(m.inRoomSpeakers, [.local])
+        XCTAssertEqual(m.heardThrough(.farEndEcho), "MacBook Pro Microphone")
+    }
+
     /// The reporting shape AD-56 requires: distances come out even when nothing
     /// is excluded, because that is what a threshold has to be set from.
     func testDistancesAreReportedWhateverTheThreshold() {

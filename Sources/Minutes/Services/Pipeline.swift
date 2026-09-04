@@ -154,6 +154,12 @@ actor Pipeline {
 
         let micURL = await store.audioURL(id: id, stream: .mic)
         let systemURL = await store.audioURL(id: id, stream: .system)
+        // What capture recorded about this Session, read once. Two of these were
+        // separate loads a few lines apart, which is a `meeting.json` parse each
+        // and — worse — two chances to read a record that a concurrent update
+        // had moved underneath them.
+        let captured = try await store.load(id: id)
+        let captureOffset = captured.streamStartOffset
 
         // FR-89. Measured before anything is transcribed, because the result
         // decides what the Transcript keeps and what Diarization clusters.
@@ -172,7 +178,7 @@ actor Pipeline {
             echo = .undetermined
             Log.audio.info("echo: \(error.localizedDescription, privacy: .public) — undetermined")
         }
-        echo.deviceKind = try await store.load(id: id).outputDevice?.kind
+        echo.deviceKind = captured.outputDevice?.kind
         if echo.deviceContradictsSignal {
             Log.audio.error("echo: the signal says present and the output device says headphones — nothing excluded, both recorded")
         }
@@ -209,7 +215,6 @@ actor Pipeline {
         // only to the comparison that decides whether a mic Utterance repeats
         // one on the other Stream. Adding them is right for the echo comparison
         // and adding only the first is right for the merge.
-        let captureOffset = try await store.load(id: id).streamStartOffset
         let echoDelay = echo.mayExclude ? (echo.delaySeconds ?? 0) : 0
         let shift = (captureOffset ?? 0) + echoDelay
         let outcome = EchoDeduplication.apply(

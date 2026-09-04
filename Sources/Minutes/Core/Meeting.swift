@@ -605,6 +605,15 @@ struct Meeting: Codable, Sendable, Identifiable {
         // never confused for one another.
         var roomN = 1, remoteN = 1
         for s in speakers {
+            // The far end coming back through the loudspeakers is the call, not
+            // a participant on it. Without this it took a Speaker number and
+            // rendered as "Speaker 3" beside the real remote speakers — the
+            // phantom attendee back under a different name, on the other side of
+            // the room this time (FR-100).
+            if s == .farEndEcho {
+                if names[s.raw] == nil { names[s.raw] = displayName(for: s) }
+                continue
+            }
             guard names[s.raw] == nil else {
                 // A named colleague still occupies a number — "In-room 1" is taken
                 // by Mikkel, so the next anonymous voice is 2. The Local Speaker

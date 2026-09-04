@@ -223,6 +223,46 @@ final class StreamFileWriterRateTests: XCTestCase {
         return f
     }
 
+    /// **The device is the authority on the rate and not on whether the recording
+    /// gets written.** A device delivering very large buffers takes proportionally
+    /// longer to narrow its tolerance; if it never narrows it, AD-44's "nothing
+    /// reaches the file until the rate has settled" turns into "nothing reaches
+    /// the file", and two hours of held audio is about four gigabytes that a
+    /// crash loses entirely — which is what FR-9's incremental commit exists to
+    /// prevent.
+    func testAnUndecidableDeviceClockDoesNotHoldTheRecordingForEver() throws {
+        let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000,
+                                channels: 1, interleaved: false)!
+        let ring = RingBuffer(capacity: 16_000 * 20)
+        let url = dir.appendingPathComponent("patience.wav")
+        let w = StreamFileWriter(url: url, format: fmt, ring: ring)
+        let clock = AudioClockTap()
+        w.clock = clock
+        try w.start()
+
+        // One enormous callback per second: two ticks make the clock *usable*
+        // and its tolerance stays around 100%, so it can never decide.
+        var block = [Float](repeating: 0, count: 16_000)
+        for i in 0..<block.count { block[i] = sinf(Float(i) * 0.05) * 0.4 }
+        for c in 0..<9 {
+            clock.record(sampleTime: Double(c * 16_000),
+                         hostTime: AudioClockTap.hostTime(fromSeconds: 9_000 + Double(c)),
+                         frames: 16_000)
+            block.withUnsafeBufferPointer { ring.write($0.baseAddress!, count: block.count) }
+            var spun = 0
+            while ring.count > 0, spun < 4000 { usleep(200); spun += 1 }
+            // The wall clock has to actually pass for the patience bound to fire.
+            usleep(900_000)
+        }
+        XCTAssertFalse(clock.snapshot.isDecisive, "the fixture must be undecidable")
+        w.stop()
+
+        let file = try AVAudioFile(forReading: url)
+        let seconds = Double(file.length) / file.fileFormat.sampleRate
+        XCTAssertGreaterThan(seconds, 5,
+                             "the held opening reached the file, \(seconds)s of it")
+    }
+
     /// With no timestamps from the device, the wall clock is still there and
     /// still the thing that caught the original defect. Absent is a fallback,
     /// not a downgrade (AD-51).

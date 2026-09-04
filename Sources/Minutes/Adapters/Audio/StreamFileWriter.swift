@@ -264,6 +264,11 @@ final class StreamFileWriter {
                                 source: .audioClock,
                                 callbackFrames: audio.largestTick)
         }
+        return wallClockFidelity
+    }
+
+    /// The wall-clock measurement, always available and always the fallback.
+    var wallClockFidelity: RateFidelity {
         guard let b = measureBaseline, let last = lastDrainAt else {
             return RateFidelity(declaredRate: format.sampleRate, framesObserved: 0,
                                 elapsedSeconds: 0, correctedTo: correctedRate)
@@ -273,6 +278,24 @@ final class StreamFileWriter {
                             elapsedSeconds: last.timeIntervalSince(b.at),
                             correctedTo: correctedRate)
     }
+
+    /// How long the opening may be held waiting for the device's own clock to
+    /// become decisive before the wall clock is asked instead.
+    ///
+    /// **Six seconds, and it is a safety bound rather than a measurement.**
+    /// AD-44's rule is that nothing reaches the file until the rate has settled,
+    /// and AD-51 made the device the authority on when that is. Together those
+    /// two have a failure mode neither has alone: a device delivering very large
+    /// buffers takes proportionally longer to narrow its tolerance, and if it
+    /// never narrows it, `pending` grows for the whole meeting and the file stays
+    /// empty until stop. Two hours of held audio is about four gigabytes, and a
+    /// crash loses all of it — which is exactly what FR-9's incremental commit
+    /// exists to prevent.
+    ///
+    /// Twice the wall clock's own settling period, so a device that supplies no
+    /// timestamps at all is unaffected and one that supplies slow ones is
+    /// judged by the check that caught the original defect.
+    static let audioClockPatience: TimeInterval = RateFidelity.settlingSeconds * 2
 
     /// What the device says about holes in what it handed over (AD-51, FR-94).
     ///
@@ -387,7 +410,16 @@ final class StreamFileWriter {
     /// point of measuring the rate is to be able to use the right one.
     private func settleRateIfPossible(final: Bool) {
         guard !rateSettled else { return }
-        let f = rateFidelity
+        var f = rateFidelity
+        // The device is the authority on the rate (AD-51) and it is not allowed
+        // to be the authority on *whether the recording gets written*. If its
+        // own clock has not narrowed enough to decide within `audioClockPatience`,
+        // the wall clock decides and the held opening reaches the file.
+        if f.source == .audioClock, !f.isDecisive,
+           wallClockFidelity.elapsedSeconds > Self.audioClockPatience {
+            Log.audio.info("rate: the device's clock has not become decisive in \(Int(Self.audioClockPatience), privacy: .public)s; using the wall clock")
+            f = wallClockFidelity
+        }
         let verdict = final ? f.finalVerdict : f.verdict
         switch verdict {
         case .settling:
