@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-31-2026 11:23
-last_updated: '2026-09-04'
+last_updated: '09-04-2026 13:55'
 project: Minutes
 project_key: NOKEY
 tracking_system: file-system
@@ -193,4 +193,5 @@ development_status:
   16-13-minutes-knows-whether-the-echo-is-even-possible: backlog
   16-14-the-far-end-is-cancelled-while-recording-not-reasoned-about: backlog
   16-15-the-people-in-the-room-are-found-by-ruling-out-the-call: backlog
+  16-16-a-pooled-figure-is-something-the-harness-prints: backlog
   epic-16-retrospective: optional

@@ -1,6 +1,12 @@
 ---
 stepsCompleted: [1, 2, 3, 4]
 revisions:
+  - 2026-09-04 increment 10 — Epic 16 is re-affirmed rather than rewritten. Stories
+    16.9 to 16.15 were written in increment 9 and are unchanged in scope; their
+    architecture references are updated because AD-53 to AD-56 now exist and AD-44,
+    AD-49, AD-50 and AD-51 were amended by implementation. One story is added,
+    16.16, for the new FR-101. No epic, story or requirement is renumbered, and no
+    new epic was needed — FR-101 is about the same instrument Story 16.1 built.
   - 2026-09-03 increment 9 — added Epic 16 (15 stories, FR-89 to FR-100 plus the FR-17,
     FR-21, FR-22 and FR-23 amendments) after a measurement harness was built first and
     found that three of twelve dual-stream recordings had the microphone recording the
@@ -49,7 +55,7 @@ inputDocuments:
 
 ## Overview
 
-This document decomposes the 100 functional requirements, 8 cross-cutting NFRs, the 52 architecture decisions and the two UX spines into 112 implementable stories across 16 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build; Epic 9 is increment 3; Epic 10 is increment 4; Epics 11-13 are increment 5, the first aimed at a machine other than the author's; Epic 14 is increment 7, the first written from something the product had already destroyed; Epic 15 is increment 8, written from a defect the user found and documented before the product did; Epic 16 is increment 9, the first written from a defect nobody had noticed, because the affected notes merely read as verbose until accuracy became measurable. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
+This document decomposes the 101 functional requirements, 8 cross-cutting NFRs, the 56 architecture decisions and the two UX spines into 113 implementable stories across 16 epics (the count read 41 before increment 2; the real figure for epics 1-7 is 43, corrected then rather than left stale). Epics 1-7 (FR-1 to FR-48) are built; Epic 8 is increment 2, added after the user operated that build; Epic 9 is increment 3; Epic 10 is increment 4; Epics 11-13 are increment 5, the first aimed at a machine other than the author's; Epic 14 is increment 7, the first written from something the product had already destroyed; Epic 15 is increment 8, written from a defect the user found and documented before the product did; Epic 16 is increment 9, the first written from a defect nobody had noticed, because the affected notes merely read as verbose until accuracy became measurable, and it is carried into increment 10, which builds the half of it that increment 9 wrote and left. Epics are capability-shaped; the PRD's build-order tier is recorded per story so sprint planning can sequence a walking skeleton first.
 
 Every FR is covered by exactly one story — verified programmatically, see the FR Coverage Map for increment 1 and each later epic's own coverage table.
 
@@ -3387,6 +3393,26 @@ the text. FR-90, FR-91, AD-47 and Stories 16.3, 16.4 and 16.7 were amended
 before implementation, and the Transcript's cost in unique content went from 13%
 to nil. See `spikes/calibration-echo-threshold-2026-09-03.md`.
 
+**Increment 10 builds 16.9 to 16.15, and re-affirms them rather than rewriting
+them.** All seven were written in increment 9 against measurements that still
+stand, so nothing in their scope moves. What moved is underneath them: the
+architecture gained AD-53 to AD-56 and amended four existing decisions, because
+building the first two stories found that the fact both were reasoning about
+indirectly — the device's own sample-time and host-time counters — is handed to
+the app in every audio callback and thrown away in both capture adapters. That
+single fact makes 16.9 exact, turns 16.12 from a correlation search into a
+subtraction, and gives 16.14 the aligned reference it needs. One story is added,
+**16.16**, and it comes from a figure in this epic failing its own rule.
+
+**The order they are built in is not the order the evidence ranks them, and the
+reason is dependency rather than preference.** By value the ranking is 16.14,
+16.13, 16.15, 16.12, 16.9, 16.10, 16.11. But 16.14 needs the aligned reference
+16.9 provides and the device gate 16.13 provides, so building it first means
+building both of them badly inside it. The build order is therefore 16.9, 16.12,
+16.13, 16.15, 16.10, 16.11, 16.16, 16.14 — foundations, then the two stories
+with a number to move, then the port contract, then the largest and least
+certain last, where its measurement can be reported without holding up the rest.
+
 **Ordering.** The instrument first, because every story after it is validated
 with it. Then the safety floor *before* the exclusion it constrains — the same
 discipline as Epic 14, where what has already been lost outranks dependency
@@ -3648,7 +3674,7 @@ that I am not steered by a number somebody invented.
 
 ### Story 16.9: The rate is checked against the audio clock
 
-*(tier T6 · FR-94 · AD-51, amends AD-3, AD-44)*
+*(tier T6 · FR-94 · AD-51 as amended, amends AD-3, AD-44)*
 
 As someone recording on a device that lies about its rate, I want the check to
 use the device's own clock, so that it is exact rather than tolerant.
@@ -3725,7 +3751,7 @@ complete one.
 
 ### Story 16.12: The transcript is ordered by when things were said
 
-*(tier T2 · FR-97 · AD-4 amended, AD-47)*
+*(tier T2 · FR-97 as amended · AD-53, AD-4, AD-47, AD-51)*
 
 As someone reading a transcript, I want the two sides of the call interleaved by
 when they happened, so that a reply does not appear before the thing it answers.
@@ -3752,7 +3778,7 @@ when they happened, so that a reply does not appear before the thing it answers.
 
 ### Story 16.13: Minutes knows whether the echo is even possible
 
-*(tier T2 · FR-98 · AD-47)*
+*(tier T2 · FR-98 · AD-54, AD-47)*
 
 As someone who sometimes wears headphones and sometimes does not, I want the app
 to know which, so that it is not guessing at something it can simply look up.
@@ -3776,7 +3802,7 @@ to know which, so that it is not guessing at something it can simply look up.
 
 ### Story 16.14: The far end is cancelled while recording, not reasoned about later
 
-*(tier T1 · FR-99 · AD-48 amended)*
+*(tier T1 · FR-99 · AD-48 as amended, AD-55)*
 
 As someone who takes calls on speakers, I want the other side kept out of my
 microphone track in the first place, so that nothing downstream has to guess.
@@ -3806,7 +3832,7 @@ microphone track in the first place, so that nothing downstream has to guess.
 
 ### Story 16.15: The people in the room are found by ruling out the call
 
-*(tier T1 · FR-100 · AD-47 amended, AD-30, AD-31)*
+*(tier T1 · FR-100 · AD-56, AD-47 as amended, AD-30, AD-31)*
 
 As someone recording in a room, I want the app to work out who was with me by
 ruling out who was on the call, so that the far end never becomes an attendee.
@@ -3832,6 +3858,43 @@ ruling out who was on the call, so that the far end never becomes an attendee.
 - `local` identification is re-evaluated afterwards, since the user's own voice
   was competing with the far end for a cluster.
 
+### Story 16.16: A pooled figure is something the harness prints
+
+*(tier T6 · FR-101 · AD-50 as amended)*
+
+As someone reading an accuracy claim, I want the number to have come out of a
+command, so that the rule about how to aggregate it is enforced rather than
+remembered.
+
+**Acceptance Criteria:**
+
+**Given** results for a set of sessions
+**When** the harness is asked to pool them
+**Then** it prints total errors over total reference words, and the per-session
+rows beside them
+
+**And** each of the following holds:
+
+- The pooled figure is **produced**, not assembled. Story 16.1 built a harness
+  that prints per-session rows, and every pooled figure in every document since
+  was added up by hand from those rows. One of them was added up the way AD-50
+  forbids: **82% proper-noun recall on close mics is the mean of 90, 78 and 77.**
+  Pooled over pooled reference words it is **81%**.
+- Content word error and proper-noun recall pool the same way — total content
+  errors over total content reference words, total names found over total names
+  present. A recall that averages three session percentages is the same mistake
+  wearing a different metric.
+- A set with a session missing is **refused**, not silently pooled over what is
+  there. Two sessions and three sessions are not comparable figures, and the
+  per-session swing is ±8 points — larger than any difference the pooled number
+  is used to argue about.
+- The per-session rows stay. The pooled figure hides the swing that makes a
+  single session untrustworthy, and a reader needs both to trust either.
+- The corrected figure is **published as a correction**, not quietly restated.
+  Nothing rested on 82 against 81, and that is exactly why it survived: a rule
+  is only tested when following it is inconvenient, and this one never was.
+- Neither corpus audio nor results enter the repository (§9.1, unchanged).
+
 ### Epic 16 FR Coverage
 
 | FR | Story | What it covers |
@@ -3851,4 +3914,5 @@ ruling out who was on the call, so that the far end never becomes an attendee.
 | FR-98 | 16.13 | whether echo is possible is read, not inferred |
 | FR-99 | 16.14 | the far end is cancelled while recording |
 | FR-100 | 16.15 | in-room voices found by ruling out the call |
+| FR-101 | 16.16 | the pooled figure is produced by the harness |
 

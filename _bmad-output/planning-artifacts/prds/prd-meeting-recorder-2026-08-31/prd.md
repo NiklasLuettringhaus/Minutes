@@ -2,7 +2,7 @@
 title: Minutes — local-first meeting recorder for macOS
 status: final
 created: 2026-08-31
-updated: 2026-09-03
+updated: 2026-09-04
 owner: Niklas
 mode: headless (-A); increment 2 applied headless (-H update)
 revisions:
@@ -27,6 +27,22 @@ revisions:
     planning-artifacts/spikes/calibration-speaker-threshold-2026-09-01.md. This is the
     first increment whose central number — the matching threshold — was measured rather
     than chosen.
+  - 2026-09-03 increment 9 — transcription the app can measure. Adds §4.14 (FR-89
+    through FR-100) and amends FR-6, FR-16, FR-17, FR-21, FR-22, FR-23 and the
+    Glossary. The first increment whose scope was set by a measurement harness
+    built before any change: three of twelve dual-stream recordings had the
+    microphone recording the far end, and the model ratings the product had been
+    showing for fourteen models had never been measured at all. Recorded here
+    late — the increment shipped without a frontmatter line, which is the sort of
+    omission this list exists to prevent.
+  - 2026-09-04 increment 10 — the rest of §4.14, built rather than described.
+    Implements FR-94 through FR-100, adds FR-101, and amends FR-94 and FR-97 with
+    the answers implementation found: the device's own sample and host clocks are
+    available in every callback, which makes the rate check exact, makes the two
+    Streams' start offset a measured fact rather than a search, and gives a
+    capture-time canceller the aligned reference AD-48 requires. Driven by
+    `spikes/research-multisource-transcription-2026-09-04.md` and by re-measuring
+    every figure in §4.14 before and after.
 inputs:
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/brief.md
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/addendum.md
@@ -1219,10 +1235,30 @@ depending on which meeting was used**, and the model most likely to be adopted
 on reputation (Canary-1B-v2) came 8.5 points *behind* the current default at 22×
 the cost. Reputation and estimates both failed; only the harness didn't.
 
-**What this section deliberately does not do:** cancel the echo (measured
-impossible — see the addendum), change the default model (the per-session swing
-is larger than the difference between models), or normalise far-field audio
-(a real 2-point gain with no reliable gate).
+**What this section deliberately does not do:** cancel the echo *after the
+fact, with a linear filter* (measured impossible — see the addendum and AD-48 as
+amended), change the default model (the per-session swing is larger than the
+difference between models), or normalise far-field audio (a real 2-point gain
+with no reliable gate).
+
+**Increment 10 built the rest of it, and implementation answered three of its
+open questions.** FR-89 to FR-93 shipped in increment 9; FR-94 to FR-100 were
+written and left for this one. Building them found that the two things the
+section had been reasoning about indirectly are both *available directly in
+every audio callback*: the device's own sample-time counter, and a host-time
+stamp on the same instant. That single fact makes the rate check exact rather
+than tolerant (FR-94), turns the two Streams' start offset from a correlation
+search into a subtraction (FR-97 as amended), and supplies the aligned reference
+a capture-time canceller needs (FR-99). Both counters were being discarded at
+the callback boundary — bound to `_` — which is the same shape of defect as
+FR-95's discarded confidence.
+
+One requirement is added, FR-101, and it comes from finding a published figure
+that did not survive its own rule: §4.14 quoted 82% proper-noun recall for the
+default model on close mics, which is the **mean of three session percentages**.
+Pooled the way FR-93 requires it is **81%**. Nothing rested on the difference,
+which is exactly why it went unnoticed — the rule existed and no command
+enforced it.
 
 #### FR-89: Detect that the microphone recorded the System Stream
 Minutes determines, per Session, whether and where the Mic Stream contains a delayed copy of the System Stream.
@@ -1303,7 +1339,8 @@ The Transcript is ordered by when things were said, not by each Stream's own fil
 - FR-23's merge applies it, so an Utterance's position in the Transcript reflects when it was said rather than where it sits in its own file.
 - The ±100 ms tolerance FR-6 claims becomes a **test**, not an assertion. It currently fails by up to 3.3 seconds.
 - A Meeting recorded before this existed keeps an unknown offset and is not silently re-ordered by a guess.
-- Capture is the better place to fix this than the merge, and this requirement does not decide which: measuring the offset makes the error visible, and closing it at the source is `[NOTE FOR PM]` for the increment that owns capture.
+- ~~Capture is the better place to fix this than the merge, and this requirement does not decide which: measuring the offset makes the error visible, and closing it at the source is `[NOTE FOR PM]` for the increment that owns capture.~~ **Answered in increment 10, and it is capture.** Every audio callback on both Streams carries a host-time stamp for the samples it delivers, on one system-wide clock. The offset is therefore the difference between the two Streams' *first* host times — a subtraction of two numbers the app is already handed and was throwing away — not a correlation search, not an estimate, and not something only an affected recording can supply. It is measured for every Session holding both Streams, including the clean ones the echo detector has nothing to align on.
+- The offset is recorded with its **source**. A Session that captured host times has a measured offset; a Meeting from before this existed has none, and none reads as unknown rather than as zero (the same rule as the Echo verdict and the rate check).
 
 #### FR-93: Transcription accuracy is measurable, repeatably, from a terminal
 Minutes ships a way to measure transcription accuracy against a reference corpus, and its results are what accuracy claims cite.
@@ -1325,6 +1362,24 @@ The rate check of FR-84 uses the timestamps the audio device supplies rather tha
 - The 12% tolerance and 3-second settling window of FR-84 shrink or disappear, and the value that replaces them is derived rather than tuned.
 - The check still refuses to act on a rate that is not one a real device uses (FR-85 unchanged).
 
+**Amended by implementation, increment 10.** Two things this requirement asked
+for turned out to be one measurement and one different measurement, and keeping
+them apart is what makes the tolerance derivable:
+
+- **Rate** is the device's sample time over the device's host time. Both come
+  from the same clock domain in the same callback, so scheduling jitter is not
+  in the quotient at all and the settling window is *two callbacks* rather than
+  three seconds — a property of the clock, not a number chosen against
+  recordings.
+- **Continuity** is the device's sample time against the frames the app actually
+  received. A shortfall is audio the device produced and this app never got,
+  which is the class the wall-clock check cannot see. It is not a rate error and
+  must not be reported as one.
+- The tolerance that survives is computed per measurement rather than declared:
+  one callback of frames over the frames measured, plus an allowance for the two
+  oscillators' drift. It shrinks as the window grows, which a fixed percentage
+  cannot do.
+
 #### FR-95: An Utterance carries the engine's confidence
 Where the Transcription Model reports a confidence, it is carried through to the Meeting record.
 
@@ -1341,6 +1396,23 @@ Audio the Transcription Model returned nothing usable for is recorded as a gap r
 - The Transcript can state that a span of audio produced no usable text, with its start and end.
 - A gap is distinguishable from silence: one is speech the app failed on, the other is nothing to transcribe.
 - A Note derived from a Transcript with substantial gaps says so, so a summary is not read as complete when it is not.
+
+#### FR-101: The pooled figure is produced by the harness, not by hand
+Every accuracy number the project quotes comes out of one command, aggregated the one way FR-93 permits.
+
+**Why this exists.** FR-93 already forbids averaging per-session percentages, and
+§4.14 then quoted a figure that was one. The harness reported per-session rows;
+the pooled figures in every document were assembled by hand from those rows, and
+in one place the hand did it the forbidden way — 82% proper-noun recall for the
+default model on close mics is the mean of 90%, 78% and 77%. Pooled over pooled
+reference words it is **81%**. A rule with no command behind it is a rule that is
+followed until somebody is in a hurry.
+
+**Consequences (testable):**
+- One command prints the pooled result across sessions: total errors over total reference words, total content errors over total content reference words, and total proper nouns found over total proper nouns present.
+- The command refuses to pool a set with a missing session rather than silently pooling what it has — a figure quoted over two sessions and one over three are not comparable, and the swing between sessions is ±8 points.
+- The per-session rows stay, because the pooled figure hides the swing that makes a single session untrustworthy, and both facts are needed to read either.
+- Where a previously published figure disagrees with the pooled one, the pooled one is correct and the change is recorded rather than quietly applied.
 
 ## 5. Non-Goals (Explicit)
 
@@ -1635,6 +1707,37 @@ The hardest session for every engine measured (27–35% WER against 15–19% on 
 easiest) is AMI's non-native-speaker set. If accent is the driver it bears
 directly on this product, whose meetings are not held in first-language English.
 *Revisit when* a non-native-heavy session set can be scored separately.
+
+**Q22 (increment 10): can a repaired recording be checked for Echo at all?**
+Eight of twenty-one recordings on the author's machine hold a System Stream
+whose header reads 8000 or 5333 Hz against the microphone's 16000, because
+FR-88's repair rewrote the header rather than resampling the samples. The
+detector refuses to compare mismatched indices, which is correct — but it means
+a third of the library cannot be checked for Echo, and an affected recording
+among them would read as a failure to measure rather than as an affected
+recording. *Revisit when* somebody decides whether the detector should resample
+to a common rate for comparison only. Owner: whoever next touches
+`EchoDetector.read`.
+
+**Q23 (increment 10): does a Bluetooth output device mean headphones?**
+FR-98 reads the output device's transport type, which separates built-in
+speakers from the headphone jack cleanly and does not separate AirPods from a
+Bluetooth loudspeaker at all — Core Audio reports both as `bluetooth`. That is
+the case that matters most here: every clean recording in the library was on
+AirPods. So the device fact answers the question it was introduced for on the
+built-in speakers and returns *unknown* on the hardware the user actually
+wears, and FR-89's correlation detector stays in charge there. *Revisit when* a
+signal that separates them is found, or when the unknown case is measured to
+matter.
+
+**Q24 (increment 10): does the far end embed the same through a loudspeaker as
+it does electrically?** FR-100 rules a Mic Stream cluster out by matching it
+against a System Stream centroid at AD-31's 0.35, and that threshold was
+calibrated on voices captured the *same* way. A voice that has been through a
+loudspeaker, a room and a microphone may land far from its own electrical copy,
+in which case nothing matches and the count does not fall. *This is measurable
+now* and is measured in increment 10 rather than assumed — the failure of the
+previous attempt was assuming the direction of the change.
 
 ## 14. Assumptions Index
 

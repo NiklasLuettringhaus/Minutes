@@ -7,8 +7,8 @@ paradigm: 'layered ports-and-adapters with a staged, resumable pipeline'
 scope: 'The whole Minutes application: menu bar control, dual-stream capture, detection, transcription, diarization, metadata, Markdown output, library, settings.'
 status: final
 created: '2026-08-31'
-updated: 2026-09-03
-binds: [FR-1..FR-83, NFR-1..NFR-8]
+updated: 2026-09-04
+binds: [FR-1..FR-101, NFR-1..NFR-8]
 sources:
   - ../../prds/prd-meeting-recorder-2026-08-31/prd.md
   - ../../prds/prd-meeting-recorder-2026-08-31/addendum.md
@@ -390,6 +390,8 @@ So capture evidence has two independent parts, and a stream must satisfy both to
 2. **If the observed rate is one a real device uses, the converter is rebuilt from it** and the recording comes out correct. The record still carries the declared rate, the observed rate and the correction, because a record that hid its own correction would make this defect invisible again one layer down.
 3. **If it is not**, the declared rate stands, the file comes out wrong, and AD-45 refuses to build anything on it. Guessing a rate that no device uses is how a *different* defect would get silently resampled into this one.
 
+**Superseded in part, 2026-09-04.** The tolerance and the settling period below are the wall clock's, and the wall clock is now the fallback rather than the authority — AD-51 governs where the device supplies its own counters. What survives unchanged is everything this rule decided about *what to do*: hold the opening in memory until the rate has settled, rebuild the converter from an observed rate that a real device uses, and refuse to guess one that no device uses. Those are policy, and the clock only changed how the input to them is obtained.
+
 **Both halves of the rate are sampled at the same instant.** Frames counted at the last chunk divided by elapsed measured *now* is biased low by up to half a chunk period — measured at 13% on a correct 16 kHz stream with 375 ms chunks — and a wider tolerance would hide that rather than fix it. The measurement also starts at the *second* chunk: the first arrives almost immediately after the stream opens, and dividing a full chunk by a near-zero elapsed reads 76 kHz on a 16 kHz stream.
 
 ### AD-45 — A stream is trusted only if its sample count agrees with the clock
@@ -438,23 +440,58 @@ So capture evidence has two independent parts, and a stream must satisfy both to
 - **Prevents:** the app editing the user's recording to fix the app's own problem — and, with it, the situation where a threshold change cannot be re-evaluated because the audio it would run on is gone.
 - **Rule:** Echo exclusion never modifies audio on disk. It applies in the processing path and its inputs — verdict, estimated delay, excluded proportion — are recorded on the Meeting so the decision can be re-derived, re-run after a threshold change, and shown to the user. A recording processed before exclusion existed carries an **unknown** verdict, which reads as unknown and never as clean.
 
+  *Scope stated explicitly, 2026-09-04, because it is about to be misread.* This rule governs **exclusion** — a decision taken about audio that already exists. It is not a prohibition on FR-99's capture-time cancellation, which is part of *producing* the samples and has no earlier version to preserve. AD-55 draws that line; without it a reader arrives at "never modifies audio" and concludes the requirement is forbidden by the architecture.
+
 ### AD-50 — An accuracy claim requires a measurement, taken through the shipping path
 
 - **Binds:** FR-17, FR-93, AD-12
 - **Prevents:** what the product had been doing since the model list existed: asserting a five-point accuracy rating for fourteen models on the basis of nothing. It also prevents the near-miss version — a harness that measures a *copy* of the transcription code and slowly diverges from what users get.
 - **Rule:** Accuracy is stated only where it has been measured, and is **absent** rather than estimated everywhere else. The measurement runs the shipping `Transcribing` port through a command-line entry point, so the harness cannot drift from the product. It reports word error rate **and** a content-word rate **and** proper-noun recall, because the baseline's most-deleted words were `yeah`, `ok` and `right` — a quarter of all errors, and words FR-31 strips deliberately. Results pool errors over pooled reference words; averaging per-session percentages is not permitted. Corpus and results live outside the repository (§9.1). A single session is not a measurement: the observed per-session swing is ±8 points, larger than any difference between the models compared.
 
+  *Amended 2026-09-04, by the rule failing against itself.* "Not permitted" was enforced by nobody: the harness printed per-session rows and every pooled figure in every document was assembled by hand from them. One of those figures — 82% proper-noun recall for the default model on close mics — is the **mean of 90, 78 and 77**, which this rule forbids; pooled it is 81%. So the pooled figure is now **produced by the harness** (FR-101) and hand-assembly is not a step anybody has to get right. A rule stated in a document and enforced in no code is an intention.
+
 ### AD-51 — The audio clock is the time base for rate verification; the wall clock is never a rate's denominator
 
 - **Binds:** FR-84, FR-94, AD-3, AD-4, AD-44, AD-45
 - **Prevents:** the tolerance-tuning that AD-44 needed — a 12% window and a three-second settling period, both absorbing scheduling jitter rather than measuring audio — and the whole class of defect it still cannot see: samples the device produced and the app never received.
-- **Rule:** Every IOProc callback carries the device's own `mSampleTime` and `mHostTime`. They are passed through to whatever judges the rate, and the frame count is compared against the device's sample time taken **at the same instant**. A gap between successive callbacks' sample times that exceeds the frames delivered is a **discontinuity** — a hole in the audio — and is recorded as one rather than averaged away. AD-4's single session clock is unchanged and remains the time base for Utterances; this AD governs only the *verification* of rate, where the audio clock is the only authority. AD-45's refusal to guess a non-standard rate stands.
+- **Rule:** Every audio callback on **both** Streams carries the device's own sample-time and host-time counters — `mSampleTime`/`mHostTime` in the tap's IOProc, `sampleTime`/`hostTime` on the `AVAudioTime` handed to the microphone tap block. They are passed through to whatever judges the rate, and the frame count is compared against the device's sample time taken **at the same instant**. A gap between successive callbacks' sample times that exceeds the frames delivered is a **discontinuity** — a hole in the audio — and is recorded as one rather than averaged away. AD-4's single session clock is unchanged and remains the time base for Utterances; this AD governs only the *verification* of rate, where the audio clock is the only authority. AD-45's refusal to guess a non-standard rate stands.
+
+  *Amended 2026-09-04, on implementation.* The requirement asked for one thing and the clock supplies two, and conflating them is how a dropped buffer would get reported as a wrong rate:
+
+  - **Rate** is Δ sample-time over Δ host-time. Both halves come from the device, so scheduling jitter is not in the quotient and the settling period is **two callbacks**, not three seconds — a property of the clock rather than a number chosen against recordings.
+  - **Continuity** is Δ sample-time against the frames the app actually *received*. A shortfall is audio the device produced and this process never got. It is not a rate error and is recorded as its own fact.
+  - **The tolerance is computed per measurement, never declared**: one callback of frames over the frames measured, plus an allowance for two oscillators' drift. It narrows as the window grows, which AD-44's fixed 12% cannot do. A number that shrinks with evidence is not a tuned number.
+  - Both counters carry validity flags, and an invalid one yields **unknown** rather than zero (AD-52's rule, applied to a different absent value). The wall-clock check stays as the fallback for a device that supplies neither.
 
 ### AD-52 — Confidence and gaps are part of the transcription contract; absent means unknown
 
 - **Binds:** FR-95, FR-96, AD-12, AD-46
 - **Prevents:** the adapter throwing away the only signal that would have caught the fabrication of §4.13 by its symptom rather than its cause. Both engines report per-segment confidence and the port discarded it at the boundary, so nothing downstream could weigh a transcript's reliability.
 - **Rule:** The `Transcribing` port carries confidence and gaps alongside text. An engine that reports no confidence yields **absent**, never zero — absent means unknown and must not be readable as "no confidence". An interval the engine returned nothing usable for is a recorded **gap** with a start and an end, distinguishable from silence: one is speech the app failed on, the other is nothing to transcribe. AD-46's gate may consult confidence, which turns a binary trust decision into an evidenced one, but may never treat absent as failing.
+
+### AD-53 — The two Streams' offset in time is a subtraction of host times, never a search
+
+- **Binds:** FR-6, FR-23, FR-97, AD-4, AD-47, AD-51
+- **Prevents:** the merged Transcript being ordered by each file's own position — a reply appearing before the thing it answers — and, just as importantly, the *next* attempt to fix it by correlating the two waveforms. That estimator only works on a recording that already contains an echo, which is a third of the affected recordings and none of the clean ones, and it is exactly the search that returned a "physically impossible" 920 ms and was twice dismissed.
+- **Rule:** Each Stream records the host time of the first sample it was handed. The offset between the Streams is the difference of those two numbers, measured for **every** Session holding both — clean recordings included, where no signal-domain method has anything to align on. It is recorded on the Meeting alongside how it was obtained, and FR-23's merge applies it. A Session that captured no host time has **no** offset, and none reads as unknown rather than as zero: a Meeting recorded before this existed is not silently re-ordered by a guess. AD-4's single session clock is unchanged — this is the measurement that makes its ±100 ms claim testable instead of asserted, and today that claim fails by up to 3,278 ms.
+
+### AD-54 — Whether Echo is possible is read from the output device, and the answer has three values
+
+- **Binds:** FR-8, FR-89, FR-98, FR-99, AD-47
+- **Prevents:** a two-valued device fact. "Not the built-in speakers" is not "headphones": Core Audio reports AirPods and a Bluetooth loudspeaker with the same transport type, and a boolean forces one of them to be wrong. Read as "headphones" it disables echo handling on a loudspeaker; read as "speakers" it runs a canceller into a headset. Both are worse than admitting the device cannot say.
+- **Rule:** The output device's transport type and data source classify it as **loudspeakers**, **headphones**, or **unknown**. Only `headphones` turns Echo handling off. `unknown` changes nothing and leaves FR-89's correlation detector in charge, which is what it was already doing. The classification is read at Session start and on every default-output-device change — the property listener already exists for FR-8 — and is recorded on the Meeting. Where the device fact and the signal measurement disagree, **both are recorded and neither is preferred**; a disagreement is information about one of the two, and silently resolving it destroys the only evidence of which.
+
+### AD-55 — Cancellation happens on the way to the file, or not at all
+
+- **Binds:** FR-99, AD-2, AD-47, AD-48, AD-49
+- **Prevents:** two opposite misreadings. One is that AD-49's "exclusion never modifies audio on disk" forbids FR-99 — it does not; that rule is about a decision taken over audio that already exists, and cancellation is part of producing the samples, where there is no earlier version because none was ever written. The other is a canceller that reaches back and rewrites a recording on disk, which would destroy the only copy of the user's meeting to fix the app's problem.
+- **Rule:** Cancellation runs **inside the Session**, on samples in flight to the file, with the System Stream as the reference, and never on a file. Nothing may cancel a Meeting already on disk; the post-hoc route is exclusion (AD-47) and it stays regardless. The Meeting records whether cancellation was applied and what it was applied with, so a recording processed one way is never indistinguishable from one processed the other. AD-48's three conditions gate it: at capture, with a non-linear residual stage, and **measured on our own recordings before it is relied on** — until that measurement exists the component may be built and exercised offline, and may not be wired into the path that writes the user's audio.
+
+### AD-56 — A voice is ruled out of the room by comparison, at a threshold measured across the boundary it is used on
+
+- **Binds:** FR-63, FR-100, AD-11, AD-30, AD-31, AD-47
+- **Prevents:** re-using AD-31's 0.35 across a boundary it was never calibrated across, and doing it invisibly. That number was measured between voices captured *the same way*. A far-end voice reaching the microphone has been through a loudspeaker, a room and a different microphone, and if the two populations do not separate there the rule either excludes nothing or excludes a real attendee. It also prevents the previous failure returning in a new form: no audio is removed to change a count.
+- **Rule:** The Mic Stream is diarized **unmodified**. An in-room cluster is excluded only by embedding distance to a System Stream centroid. Any threshold applied across the two Streams is stated with a measurement taken **on cross-stream pairs**; until such a measurement exists the mechanism reports its distances and changes nothing. A test asserts the **direction** of the change in the in-room count on the affected recordings, because assuming the direction is precisely what went wrong the first time.
 
 ## Consistency Conventions
 
@@ -616,6 +653,21 @@ Minutes/
 | Voice enrolment (FR-62…65) | `Core/VoiceMatch`, `Services/VoiceEnrolment`, `Services/SpeakerDirectory`, `Adapters/Diarize/SpeakerKitVoiceEmbedder`, `UI/GettingStartedPane` + `UI/GeneralPane` | AD-11 (amended), AD-28, AD-29, AD-30, AD-31, AD-32 |
 | Note file management (FR-77…83) | `Core/NoteIdentity`, `Services/Ports` (`NoteLocating`), `Adapters/Persistence/NoteLocator` + `NoteWriter`, `Adapters/Persistence/MeetingStore`, `UI/MeetingsPane` | AD-9 (amended), AD-18 (amended), AD-39, AD-40, AD-41, AD-42, AD-43 |
 | Rate fidelity (FR-84…88) | `Core/AudioEvidence`, `Adapters/Audio/StreamFileWriter`, `Adapters/Audio/SystemTapCapture`, `Services/Pipeline`, `Adapters/Persistence/NoteWriter`, `UI/MeetingsPane` | AD-3 (amended), AD-36 (amended), AD-44, AD-45, AD-46 |
+| Echo detection and exclusion (FR-89…92) | `Core/EchoAnalysis`, `Core/EchoDeduplication`, `Adapters/Audio/EchoDetector`, `Services/Pipeline`, `App/EchoCheck`, `UI/MeetingsPane` | AD-47, AD-48, AD-49 |
+| Measured accuracy (FR-93, FR-101) | `App/AsrEval`, `Scripts/eval/asr_eval.py`, `Services/ModelCatalog` | AD-50 |
+| The audio clock (FR-94, FR-97) | `Core/AudioClock`, `Adapters/Audio/StreamFileWriter`, `Adapters/Audio/MicCapture`, `Adapters/Audio/SystemTapCapture`, `Adapters/Audio/DualStreamCapture` | AD-44 (amended), AD-51 (amended), AD-53 |
+| Transcription contract (FR-95, FR-96) | `Services/Ports`, `Adapters/Transcribe/*`, `Core/Meeting`, `Adapters/Persistence/NoteWriter` | AD-52 |
+| Echo at capture (FR-98, FR-99) | `Core/OutputDeviceKind`, `Core/EchoCancellation`, `Adapters/Audio/EchoCanceller`, `Adapters/Audio/DualStreamCapture` | AD-48 (amended), AD-54, AD-55 |
+| The room, by ruling out the call (FR-100) | `Core/VoiceMatch`, `Core/RoomVoices`, `Services/Pipeline` | AD-31, AD-56 |
+
+## Build and Delivery Envelope, Increment 10
+
+Stated because a silent dimension is a finding, and because this increment touches the real-time capture path, which is the one place where "no envelope change" is a claim worth making explicitly.
+
+- **No new dependency, no new entitlement, no new model.** The sample-time and host-time counters are already parameters of callbacks the app receives; the output device's transport type is a CoreAudio property on a device it already queries; the cross-stream voice comparison is arithmetic on centroids `SpeakerKit` already returns. Everything added is computed from values the process is already handed.
+- **The real-time constraint is unchanged and now binds one more component.** AD-1's IOProc rule stands: no allocation, no locks, no logging inside the callback. A timestamp is two integers written to a fixed slot, which is why the clock work is admissible there at all. Cancellation is **not** admissible there and does not run there — it runs on the writer's own thread, on samples already out of the callback (AD-55).
+- **One new persisted shape, additively.** `Meeting` gains the stream offset, the output-device kind and the cancellation record; `Utterance` gains a confidence. The hand-written `init(from:)` convention covers all of them, so an older record still loads and the new fields read as absent, which means unknown.
+- **The eval harness gains a subcommand, not a second harness.** FR-101's pooling runs in `Scripts/eval/asr_eval.py` over results the shipping `--asr` path produced (AD-50). No corpus, no result and no figure enters the repository.
 
 ## Build and Delivery Envelope, Increment 5
 

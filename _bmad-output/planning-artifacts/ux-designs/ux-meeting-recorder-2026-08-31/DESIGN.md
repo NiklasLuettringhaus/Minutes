@@ -3,7 +3,7 @@ name: Minutes
 description: A native macOS menu bar utility that inherits Apple's visual system and adds only what recording state and setup progress genuinely require.
 status: final
 created: 2026-08-31
-updated: 2026-09-03
+updated: 2026-09-04
 sources:
   - ../../prds/prd-meeting-recorder-2026-08-31/prd.md
   - ../../prds/prd-meeting-recorder-2026-08-31/addendum.md
@@ -292,6 +292,10 @@ The de-emphasis is the whole point: a user opening Setup should see what is left
 **`{components.pill-done}`** — deliberately not a button. Tinted background at low opacity, no border, no hover state, not focusable, fully round. If a user tries to click it, the design has failed.
 
 **`{components.state-banner}`** — how Recording, Transcribing and degraded capture are announced inside the window. Tinted background at 12% opacity with matching foreground. The degraded variant carries a warning glyph because PRD FR-7 forbids silent degradation.
+
+**`{components.transcript-gap}`** — the mark where a stretch of audio produced no usable text (PRD FR-96). A hairline rule with a centred `{typography.metric}` label naming the duration, in `{colors.text-secondary}`. Deliberately **not** a state banner, not `{colors.state-blocked}`, and not repeated per gap at the top of the pane: it belongs at the position in the conversation where a reader would otherwise assume the next line follows the last one. Declared as its own component in increment 10 rather than reused from `{components.state-banner}`, because the two answer different questions — the banner says *this recording has a problem*, and this says *the missing turn was here*.
+
+**A gap is never rendered in the recording tint.** `{colors.state-recording}` means one thing in this product and a red mark in a transcript would read as an error the user can act on. There is nothing to act on; the audio is already recorded and already unreadable.
 
 **`{components.speaker-chip}`** — three places, three treatments, and a fourth for when the row underneath is selected. The Local Speaker is brand-tinted; an in-room voice beside the user is amber with a two-person glyph; a Remote Speaker is neutral grey. The chip encodes **place**, which is the structural fact (PRD §3), and never identity, which may be inferred on top of it. An auto-applied name from a Speaker Profile is `~`-prefixed to mark it inferred (PRD FR-25).
 
