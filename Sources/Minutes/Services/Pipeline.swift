@@ -182,11 +182,11 @@ actor Pipeline {
         // far end did not arrive in (AD-47).
         var micSegments: [TranscribedSegment] = []
         if let micURL {
-            micSegments = try await transcriber(for: model).transcribe(url: micURL, model: model)
+            micSegments = try await transcriber(for: model).transcribe(url: micURL, model: model).segments
         }
         var systemSegments: [TranscribedSegment] = []
         if let systemURL {
-            systemSegments = try await transcriber(for: model).transcribe(url: systemURL, model: model)
+            systemSegments = try await transcriber(for: model).transcribe(url: systemURL, model: model).segments
         }
 
         // FR-90. A Mic Stream segment is dropped only where the audio *and* the
@@ -232,7 +232,8 @@ actor Pipeline {
         for (index, segment) in micSegments.enumerated() where !dropped.contains(index) {
             guard let text = clean(segment.text) else { continue }
             utterances.append(Utterance(start: segment.start, end: segment.end, text: text,
-                                        speaker: .local, origin: .mic))
+                                        speaker: .local, origin: .mic,
+                                        confidence: segment.confidence))
         }
         // System Stream segments start unassigned; diarization names them next.
         //
@@ -247,15 +248,52 @@ actor Pipeline {
             utterances.append(Utterance(
                 start: StreamAlignment.micTime(ofSystemTime: segment.start, offset: captureOffset),
                 end: StreamAlignment.micTime(ofSystemTime: segment.end, offset: captureOffset),
-                text: text, speaker: SpeakerLabelID.remote(0), origin: .system))
+                text: text, speaker: SpeakerLabelID.remote(0), origin: .system,
+                confidence: segment.confidence))
         }
         guard !utterances.isEmpty else {
             throw MinutesError.transcriptionFailed("No speech was found in the recording.")
         }
+
+        // FR-96. Speech the app had and produced nothing for.
+        //
+        // Measured against the audio rather than asked of the engine, because
+        // everything an engine reports about an interval it produced nothing for
+        // describes *silence*, which is the opposite question. Echo-excluded
+        // audio is subtracted: it is speech Minutes has, once, on the other
+        // Stream, and reporting it as unreadable would present a working feature
+        // as a failure — on the worst real recording, as having lost 45% of the
+        // microphone.
+        var gaps: [TranscriptGap] = []
+        for (stream, url) in [(StreamKind.mic, micURL), (StreamKind.system, systemURL)] {
+            guard let url else { continue }
+            do {
+                let (active, frameSeconds) = try AudioActivity.mask(of: url)
+                let covered = utterances.filter { $0.origin == stream }
+                    .map { $0.start...max($0.start, $0.end) }
+                let excluded = stream == .mic && echo.mayExclude
+                    ? echo.excludedIntervals.map { $0.start...max($0.start, $0.end) }
+                    : []
+                gaps += TranscriptGaps.find(active: active, frameSeconds: frameSeconds,
+                                            covered: covered, excluded: excluded,
+                                            stream: stream)
+            } catch {
+                // A stream that cannot be scanned yields no gaps, which reads as
+                // "not looked for" rather than "none" — the same rule as every
+                // other absent measurement in this increment.
+                Log.audio.info("gaps: could not scan \(stream.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        if !gaps.isEmpty {
+            Log.pipeline.info("gaps: \(gaps.count, privacy: .public) interval(s), \(Int(TranscriptGaps.total(gaps)), privacy: .public)s unreadable")
+        }
+
+        let foundGaps = gaps
         _ = try await store.update(id: id) {
             $0.utterances = utterances.sorted { $0.start < $1.start }
             $0.transcriptionModel = model
             $0.echo = echo
+            $0.gaps = foundGaps
         }
     }
 

@@ -419,6 +419,15 @@ struct MeetingDetail: View {
                     StateBanner(kind: .degraded,
                                 text: "Only your microphone was captured, so remote participants are not in this transcript.")
                 }
+                // FR-96. Before the echo notice and after the mic-only one.
+                // EXPERIENCE.md fixes the order and the rule behind it: worst
+                // misleading first. A gap is speech Minutes had and lost, which
+                // is invisible without being told because a gap looks exactly
+                // like a pause; the echo notice below describes something it
+                // handled.
+                if let why = TranscriptGaps.explanation(meeting.gaps) {
+                    StateBanner(kind: .degraded, text: why)
+                }
                 // FR-92. After the unreliable-recording notice, because this one
                 // describes something Minutes *handled* rather than something it
                 // could not vouch for.
@@ -896,6 +905,16 @@ struct MeetingDetail: View {
                     if meeting.localIdentifiedByEnrolment {
                         FactChip(text: "You identified by voice", good: true)
                     }
+                }
+                // FR-98. How the recording was made is provenance, not a
+                // degradation: it is a fact about the capture and not a problem
+                // with it. Absent where the device could not say, because
+                // "output device: unknown" is a line that tells a reader nothing
+                // and trains them to skip the ones that do.
+                if let how = meeting.outputDevice?.provenance {
+                    Text("The call was \(how).")
+                        .font(.caption2).foregroundStyle(Tok.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Text("Everything above was produced on this Mac.")
                     .font(.caption2).foregroundStyle(Tok.textSecondary)

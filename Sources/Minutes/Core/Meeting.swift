@@ -58,8 +58,39 @@ struct Utterance: Codable, Sendable, Identifiable {
     var speaker: SpeakerLabelID
     /// Which Stream this came from — keeps the structural/inferred distinction in the data (AD-11).
     var origin: StreamKind
+    /// How sure the engine was, or **absent** where it does not say (FR-95, AD-52).
+    ///
+    /// Absent means unknown. It must never be read as low confidence, and no
+    /// surface may render it as a number to a reader: the two engines report
+    /// different quantities on different scales, and neither is calibrated.
+    var confidence: Double?
 
     var duration: TimeInterval { max(0, end - start) }
+
+    /// Hand-written per the spine's Decodable-evolution convention — `Utterance`
+    /// is persisted inside every `Meeting`, and `confidence` is the first field
+    /// added to it since it shipped.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        start = try c.decodeIfPresent(TimeInterval.self, forKey: .start) ?? 0
+        end = try c.decodeIfPresent(TimeInterval.self, forKey: .end) ?? 0
+        text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        speaker = try c.decodeIfPresent(SpeakerLabelID.self, forKey: .speaker) ?? .local
+        origin = try c.decodeIfPresent(StreamKind.self, forKey: .origin) ?? .mic
+        confidence = try c.decodeIfPresent(Double.self, forKey: .confidence)
+    }
+
+    init(id: UUID = UUID(), start: TimeInterval, end: TimeInterval, text: String,
+         speaker: SpeakerLabelID, origin: StreamKind, confidence: Double? = nil) {
+        self.id = id
+        self.start = start
+        self.end = end
+        self.text = text
+        self.speaker = speaker
+        self.origin = origin
+        self.confidence = confidence
+    }
 }
 
 // MARK: - Metadata
@@ -260,6 +291,38 @@ struct Meeting: Codable, Sendable, Identifiable {
     /// Whether the output device changed kind while recording.
     var outputDeviceChanged: Bool = false
 
+    /// Stretches of audio that produced no usable text (FR-96, AD-52).
+    ///
+    /// Empty means either "none found" or "never looked", and the two are told
+    /// apart by whether the Meeting has reached `.transcribed` — a record from
+    /// before this existed has no gaps because nobody looked for them, and it
+    /// must not read as a recording with none.
+    var gaps: [TranscriptGap] = []
+
+    /// What the engine said about its own certainty, over the whole Transcript
+    /// (FR-95, AD-52).
+    ///
+    /// `nil` where **no** Utterance carries a confidence, which is the honest
+    /// reading for every Meeting recorded before increment 10 and for any engine
+    /// that reports none. Absent is unknown and is never rendered where a low
+    /// figure would go.
+    var transcriptConfidence: TranscriptConfidence? {
+        let scored = utterances.compactMap { u -> (Double, Int)? in
+            guard let c = u.confidence else { return nil }
+            return (c, max(1, u.text.split(separator: " ").count))
+        }
+        guard !scored.isEmpty else { return nil }
+        let words = scored.reduce(0) { $0 + $1.1 }
+        // Weighted by words rather than by Utterance: a two-word interjection and
+        // a ninety-second explanation are not equal evidence about a transcript,
+        // and averaging them as if they were is the same error AD-50 forbids in
+        // the accuracy harness.
+        let weighted = scored.reduce(0.0) { $0 + $1.0 * Double($1.1) }
+        let total = utterances.reduce(0) { $0 + max(1, $1.text.split(separator: " ").count) }
+        return TranscriptConfidence(mean: weighted / Double(words),
+                                    wordsScored: words, wordsTotal: total)
+    }
+
     /// The streams whose transcript cannot be relied on (FR-85).
     ///
     /// Only a *failed* check counts. A record with no check is not evidence of a
@@ -347,6 +410,7 @@ struct Meeting: Codable, Sendable, Identifiable {
         self.echo = nil
         self.outputDevice = nil
         self.outputDeviceChanged = false
+        self.gaps = []
     }
 
     /// Hand-written because the synthesised `Codable` was **not** tolerant of an
@@ -390,6 +454,7 @@ struct Meeting: Codable, Sendable, Identifiable {
         echo = try c.decodeIfPresent(EchoAnalysis.self, forKey: .echo)
         outputDevice = try c.decodeIfPresent(OutputDevice.self, forKey: .outputDevice)
         outputDeviceChanged = try c.decodeIfPresent(Bool.self, forKey: .outputDeviceChanged) ?? false
+        gaps = try c.decodeIfPresent([TranscriptGap].self, forKey: .gaps) ?? []
     }
 
     func displayName(for id: SpeakerLabelID) -> String {

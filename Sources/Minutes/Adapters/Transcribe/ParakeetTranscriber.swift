@@ -14,17 +14,20 @@ import FluidAudio
 /// from token timings here.
 struct ParakeetTranscriber: Transcribing {
 
-    func transcribe(url: URL, model: String) async throws -> [TranscribedSegment] {
+    func transcribe(url: URL, model: String) async throws -> Transcription {
         let manager = try await MLEngine.shared.parakeet(version: ParakeetModel.version(for: model))
         do {
             let result = try await manager.transcribe(url)
             guard let timings = result.tokenTimings, !timings.isEmpty else {
                 // No timings: still return the text as one span rather than lose it.
                 let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else { return [] }
-                return [TranscribedSegment(start: 0, end: result.duration, text: text)]
+                guard !text.isEmpty else { return Transcription(segments: []) }
+                return Transcription(segments: [
+                    TranscribedSegment(start: 0, end: result.duration, text: text,
+                                       confidence: Double(result.confidence))
+                ])
             }
-            return Self.segments(from: timings)
+            return Transcription(segments: Self.segments(from: timings))
         } catch {
             throw MinutesError.transcriptionFailed(error.localizedDescription)
         }
@@ -45,9 +48,15 @@ struct ParakeetTranscriber: Transcribing {
                 .replacingOccurrences(of: "▁", with: " ")   // SentencePiece word boundary
                 .replacingOccurrences(of: "  ", with: " ")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+            // FR-95. Parakeet reports a confidence per token; a segment's is the
+            // mean over the tokens it was built from. The port carried none until
+            // increment 10, so the adapter was computing this and dropping it.
+            let scores = buffer.map { Double($0.confidence) }.filter { $0.isFinite }
+            let confidence = scores.isEmpty ? nil : scores.reduce(0, +) / Double(scores.count)
             buffer = []
             guard !text.isEmpty else { return }
-            out.append(TranscribedSegment(start: first.startTime, end: last.endTime, text: text))
+            out.append(TranscribedSegment(start: first.startTime, end: last.endTime,
+                                          text: text, confidence: confidence))
         }
 
         for t in timings {

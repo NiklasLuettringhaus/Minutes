@@ -64,11 +64,43 @@ struct TranscribedSegment: Sendable {
     var start: TimeInterval
     var end: TimeInterval
     var text: String
+    /// How sure the engine was, 0...1, or **absent** where it does not say
+    /// (FR-95, AD-52).
+    ///
+    /// Absent is not zero and must never be readable as low confidence. Both
+    /// engines report something and this field discarded it at the adapter
+    /// boundary until increment 10, which is why nothing downstream could weigh
+    /// a transcript's reliability — the one signal that would have caught §4.13's
+    /// fabrication by its symptom rather than by its cause.
+    ///
+    /// **It is not calibrated against anything.** Whisper reports a mean token
+    /// log-probability and Parakeet a per-token score, and the two are not the
+    /// same quantity. Treat it as an ordering within one engine's output, never
+    /// as a probability and never as a number to show a reader.
+    var confidence: Double?
+}
+
+/// What one transcription produced, including what it could not (AD-52).
+///
+/// A bare `[TranscribedSegment]` cannot say "there was speech here and I have
+/// nothing for it", and an interval that produces no segment is silently
+/// indistinguishable from an interval that was silent. That is the failure
+/// FR-96 exists to stop, so the port returns both halves.
+struct Transcription: Sendable {
+    var segments: [TranscribedSegment]
+    /// Intervals the engine returned nothing usable for. Filled by whoever can
+    /// tell a failure from silence, which needs the audio (see `TranscriptGaps`).
+    var gaps: [TranscriptGap] = []
+
+    init(segments: [TranscribedSegment], gaps: [TranscriptGap] = []) {
+        self.segments = segments
+        self.gaps = gaps
+    }
 }
 
 protocol Transcribing: Sendable {
     /// Transcribes one audio file. Entirely on-device (NFR-1).
-    func transcribe(url: URL, model: String) async throws -> [TranscribedSegment]
+    func transcribe(url: URL, model: String) async throws -> Transcription
 }
 
 // MARK: - Diarization

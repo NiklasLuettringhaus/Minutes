@@ -189,6 +189,12 @@ struct NoteWriter: NoteWriting {
         if !m.systemStreamCaptured {
             out += "> Only the microphone was captured for this meeting, so remote participants do not appear in the transcript.\n\n"
         }
+        // FR-96. Before the echo notice, in the order EXPERIENCE.md fixes:
+        // worst misleading first. A summary built on a transcript with holes in
+        // it is incomplete, and a reader who is not told reads it as complete.
+        if let why = TranscriptGaps.explanation(m.gaps) {
+            out += "> \(why)\n\n"
+        }
         // FR-92. The Note carries what the app knows, because a reader months
         // later has only this file — and a transcript with the far end counted
         // once reads differently from one where it was counted twice.

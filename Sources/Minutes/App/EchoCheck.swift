@@ -121,10 +121,19 @@ enum EchoCheck {
                   + Self.pad(excluded, 11, right: true)
                   + Self.pad(bestShare, 13, right: true))
 
-            // The phantom-attendee claim, checked rather than asserted. Runs the
-            // real Diarizer twice — once on the recording as it is, once on the
-            // Echo-muted copy — and counts the voices each time.
-            if Self.alsoDiarize, analysis.verdict == .present, let mic {
+            // The phantom-attendee claim, checked rather than asserted.
+            //
+            // Three counts, not two, and the third is the one that matters
+            // (FR-100, AD-56). `before` is the recording as it is. `muted` is the
+            // approach that was measured *worse* and withdrawn — kept here so the
+            // refutation stays reproducible rather than becoming a story someone
+            // tells. `ruled out` is the cluster filter: the microphone diarized
+            // unmodified, with any cluster matching a far-end voice removed.
+            //
+            // The distances are printed because AD-56 forbids using AD-31's
+            // threshold across the two Streams without a measurement taken across
+            // them. This is that measurement.
+            if Self.alsoDiarize, analysis.verdict == .present, let mic, let system {
                 let temp = FileManager.default.temporaryDirectory
                     .appendingPathComponent("echo-check-\(meeting.id).wav")
                 defer { try? FileManager.default.removeItem(at: temp) }
@@ -132,10 +141,26 @@ enum EchoCheck {
                     let diarizer = SpeakerKitDiarizerAdapter()
                     let before = try await diarizer.diarizeFull(url: mic)
                     try EchoDetector.writeRetained(micURL: mic, analysis: analysis, to: temp)
-                    let after = try await diarizer.diarizeFull(url: temp)
+                    let muted = try await diarizer.diarizeFull(url: temp)
+                    let far = try await diarizer.diarizeFull(url: system)
+
                     let b = Set(before.spans.map(\.speakerIndex)).count
-                    let a = Set(after.spans.map(\.speakerIndex)).count
-                    print("           voices in the room: \(b) before, \(a) after")
+                    let m = Set(muted.spans.map(\.speakerIndex)).count
+                    let outcome = RoomVoices.classify(
+                        mic: before.centroids, system: far.centroids,
+                        producer: SpeakerKitVoiceEmbedder.producerID,
+                        threshold: VoiceMatch.sameSpeakerThreshold)
+                    print("           voices in the room: \(b) before, "
+                          + "\(m) after muting (withdrawn), "
+                          + "\(outcome.inRoomCount) after ruling out the call")
+                    print("           far-end clusters: \(far.centroids.count)")
+                    for match in outcome.matches {
+                        let d = match.distance.map { Self.rounded(Double($0), places: 3) } ?? "-"
+                        let verdict = outcome.excluded.contains(match.micCluster)
+                            ? "ruled out" : "in the room"
+                        print("             mic cluster \(match.micCluster): "
+                              + "nearest far-end \(d) -> \(verdict)")
+                    }
                 } catch {
                     print("           could not re-cluster: \(error.localizedDescription)")
                 }

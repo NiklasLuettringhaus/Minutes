@@ -18,17 +18,21 @@ import FluidAudio
 private struct CanaryEvalTranscriber: Transcribing {
     static let id = "canary-1b-v2"
 
-    func transcribe(url: URL, model: String) async throws -> [TranscribedSegment] {
+    func transcribe(url: URL, model: String) async throws -> Transcription {
         let manager = try await CanaryManager.load()
         let text = try await manager.transcribe(audioURL: url)
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
+        guard !trimmed.isEmpty else { return Transcription(segments: []) }
         // One span for the whole file: honest about what the engine returned.
         // Faking segment boundaries here would make a timing-less engine look
         // like it had timings.
         let seconds = (try? AVAudioFile(forReading: url))
             .map { Double($0.length) / $0.fileFormat.sampleRate } ?? 0
-        return [TranscribedSegment(start: 0, end: seconds, text: trimmed)]
+        // Canary reports no confidence either, which is `nil` and not zero
+        // (AD-52) — a third reason it could not simply replace the two engines.
+        return Transcription(segments: [
+            TranscribedSegment(start: 0, end: seconds, text: trimmed, confidence: nil)
+        ])
     }
 }
 
@@ -115,7 +119,7 @@ enum AsrEval {
         let started = Date()
         let segments: [TranscribedSegment]
         do {
-            segments = try await engine.transcribe(url: url, model: model)
+            segments = try await engine.transcribe(url: url, model: model).segments
         } catch {
             FileHandle.standardError.write(Data("transcribe failed: \(error.localizedDescription)\n".utf8))
             return 1

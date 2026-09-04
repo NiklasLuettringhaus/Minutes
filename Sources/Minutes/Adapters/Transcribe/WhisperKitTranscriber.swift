@@ -134,7 +134,17 @@ struct WhisperKitTranscriber: Transcribing {
         return s
     }
 
-    func transcribe(url: URL, model: String) async throws -> [TranscribedSegment] {
+    /// A mean token log-probability on 0...1, or absent where the engine gave
+    /// none. Absent is unknown and must never be read as zero (AD-52).
+    ///
+    /// Zero is a real value here and it means "the engine was certain this is
+    /// wrong", which is a very different statement from "the engine did not say".
+    static func confidence(_ avgLogprob: Float) -> Double? {
+        guard avgLogprob.isFinite, avgLogprob <= 0 else { return nil }
+        return min(1, max(0, Double(exp(avgLogprob))))
+    }
+
+    func transcribe(url: URL, model: String) async throws -> Transcription {
         let whisper = try await MLEngine.shared.whisperKit(model: model)
 
         // Load as 16 kHz mono float — the format both WhisperKit and SpeakerKit want.
@@ -144,7 +154,7 @@ struct WhisperKitTranscriber: Transcribing {
         } catch {
             throw MinutesError.transcriptionFailed("Could not read the recording: \(error.localizedDescription)")
         }
-        guard samples.count > 1600 else { return [] }  // under ~0.1 s of audio
+        guard samples.count > 1600 else { return Transcription(segments: []) }  // under ~0.1 s
 
         let options = DecodingOptions(
             verbose: false,
@@ -163,12 +173,18 @@ struct WhisperKitTranscriber: Transcribing {
                     // no-speech probability is the principled filter, and a real
                     // run showed "[BLANK_AUDIO]" and a trailing "you" without it.
                     if s.noSpeechProb > 0.6 && text.count < 25 { continue }
+                    // FR-95. `avgLogprob` is the mean token log-probability, so
+                    // `exp` puts it on 0...1. It is **not** a calibrated
+                    // probability and nothing may render it as one — it is an
+                    // ordering within this engine's own output, and until
+                    // increment 10 it was discarded here.
                     out.append(TranscribedSegment(start: TimeInterval(s.start),
                                                   end: TimeInterval(s.end),
-                                                  text: text))
+                                                  text: text,
+                                                  confidence: Self.confidence(s.avgLogprob)))
                 }
             }
-            return out.sorted { $0.start < $1.start }
+            return Transcription(segments: out.sorted { $0.start < $1.start })
         } catch {
             throw MinutesError.transcriptionFailed(error.localizedDescription)
         }
