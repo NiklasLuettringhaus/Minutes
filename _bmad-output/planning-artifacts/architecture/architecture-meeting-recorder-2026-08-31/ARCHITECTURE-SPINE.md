@@ -7,8 +7,8 @@ paradigm: 'layered ports-and-adapters with a staged, resumable pipeline'
 scope: 'The whole Minutes application: menu bar control, dual-stream capture, detection, transcription, diarization, metadata, Markdown output, library, settings.'
 status: final
 created: '2026-08-31'
-updated: 2026-09-04
-binds: [FR-1..FR-101, NFR-1..NFR-8]
+updated: 2026-09-07
+binds: [FR-1..FR-105, NFR-1..NFR-8]
 sources:
   - ../../prds/prd-meeting-recorder-2026-08-31/prd.md
   - ../../prds/prd-meeting-recorder-2026-08-31/addendum.md
@@ -492,6 +492,30 @@ So capture evidence has two independent parts, and a stream must satisfy both to
 - **Binds:** FR-63, FR-100, AD-11, AD-30, AD-31, AD-47
 - **Prevents:** re-using AD-31's 0.35 across a boundary it was never calibrated across, and doing it invisibly. That number was measured between voices captured *the same way*. A far-end voice reaching the microphone has been through a loudspeaker, a room and a different microphone, and if the two populations do not separate there the rule either excludes nothing or excludes a real attendee. It also prevents the previous failure returning in a new form: no audio is removed to change a count.
 - **Rule:** The Mic Stream is diarized **unmodified**. An in-room cluster is excluded only by embedding distance to a System Stream centroid. Any threshold applied across the two Streams is stated with a measurement taken **on cross-stream pairs**; until such a measurement exists the mechanism reports its distances and changes nothing. A test asserts the **direction** of the change in the in-room count on the affected recordings, because assuming the direction is precisely what went wrong the first time.
+
+### AD-57 — What reached the file is an accounting identity, not a comparison of two file lengths
+
+- **Binds:** FR-9, FR-94, FR-102, FR-103, AD-36, AD-44, AD-45, AD-51
+- **Prevents:** the gap AD-51 opened and did not close. AD-51 made the device's own counters the authority on the *rate*, and its continuity term answers "did the device hand us everything it counted". It says nothing about what happened to those samples afterwards, and on a 42.4-minute recording the answer was that 8.37 seconds of the System Stream — 0.33% — was received by this process and never written, with the audio clock reporting **zero** missing frames and **zero** discontinuities throughout. This AD prevents that residual being invisible again, and prevents the next occurrence being discovered the way this one was: by subtracting two file lengths months later, on a defect that had already been present in eight recordings.
+- **Rule:** A Stream's capture record carries the terms of one identity, each as a count and none as a flag: **frames the device counted** (AD-51's sample-time advance), **frames dropped before the writer could consume them**, **frames the writer consumed from the ring**, and **frames written to the file**. The identity is stated where the counts are declared and its remainder is recorded **as a remainder** — a residual nobody can attribute is information about a mechanism nobody has named, and folding it into a tolerance is how this defect survived fourteen recordings. Zero is a measurement and is recorded as one; **absent** is reserved for a device that supplied no counters, as it is for the rate (AD-51) and the Echo verdict (AD-54). **No file is ever padded, trimmed or resampled to make the terms agree**: the lengths on disk are the evidence, and rewriting a header to make a recording look right is what left eight recordings in increment 8 permanently incomparable.
+
+  *Why this is an addition to AD-51 and not a weakening of it.* AD-51 is correct about what it claims — the device is the authority on the rate, and on this recording it was right to four decimal places on both Streams. It is simply not the authority on what reached the file, because nothing between the callback and the file reports to it. Widening AD-51's tolerance to cover a 0.33% shortfall would have absorbed exactly the class of fault AD-51's derived tolerance was introduced to stop absorbing.
+
+### AD-58 — The producer counts what it drops; the consumer measures its own lateness
+
+- **Binds:** FR-102, FR-103, AD-1, AD-4, AD-57
+- **Prevents:** two opposite mistakes about where a measurement may live. One is putting the diagnostic in the IOProc, where AD-1 forbids allocation, locks and logging and where a measurement that costs anything becomes a measurement somebody eventually makes optional. The other is the mistake already in the code: `RingBuffer.didOverflow` is a `Bool`, set on the line where samples are dropped and **read by nobody**. A Bool cannot say 353 where the other Stream says 133,944, and that asymmetry — 380× — is the only real clue the measurement carries. It is the same shape of defect AD-51 found twice, where the device's sample-time and host-time counters were parameters of every callback and bound to `_`.
+- **Rule:** The producer counts, in the IOProc, only what a counter increment costs: samples dropped and the number of separate occasions it had to drop any. Nothing else is added to that thread. Everything derived — the ring's high-water fill, the longest interval between successive drains, the identity of AD-57 and its remainder — is computed on the **writer's** thread from counters it already holds, because that is the thread that fell behind and the only one where taking the measurement is free. These are diagnostics and **never gates**: no capture is refused, degraded, delayed or altered on the strength of any of them, and none may be gated on a preference (AD-45's rule, same reason).
+
+  *The existing AD-1 violations are recorded rather than excused.* `RingBuffer` takes an `NSLock` on the audio thread for the duration of an index update, and `AudioClockTap` now takes one too. Both predate this AD and neither is licence for a third. If the measurement this AD introduces shows the lock to be the cause of the drops, that is a **finding about the lock** and the fix is a lock-free ring — not a reason to relax the rule anywhere else.
+
+### AD-59 — Both Streams' devices are started adjacently; no setup runs between two starts
+
+- **Binds:** FR-6, FR-7, FR-97, FR-104, FR-105, AD-2, AD-4, AD-53
+- **Prevents:** capture paying for the second Stream's setup with the first Stream's recording time, and — because FR-97 now measures the result — the temptation to leave it there because the merge compensates. `DualStreamCapture.start` opens the microphone and *then* builds the tap chain serially: process tap, default-output UID, private aggregate device, IOProc, device start. Each Stream begins at its own first callback, so every millisecond of that construction lands in the offset. Measured: **+1,006 ms** on a real 42.4-minute meeting. Everything downstream that compares the two Streams — AD-47's exclusion, AD-56's cross-stream comparison, any future canceller — then has to search for an offset that capture could simply not have introduced.
+- **Rule:** Capture setup is ordered so that every step that can complete before either device is running does complete before either device is running, and the two device starts are **adjacent**, with nothing between them that could have been done earlier. AD-2's construction and teardown order is unchanged and still absolute — this AD constrains only *where the start lands within it*. FR-7's degradation is unchanged and takes precedence: a tap that cannot be built must neither delay nor prevent the microphone, so a failure in the tap chain still leaves a Mic-only Session starting no later than it does today. The offset FR-97 measures is **not** removed by this rule and is still recorded and still applied at the merge (AD-53), because a Meeting recorded before this exists still needs it and an offset that has genuinely fallen to zero costs nothing to apply.
+
+  *What this AD does not claim.* It cannot close the whole +1,006 ms, and it is not written as though it can. A five-second `--check-clock` probe over the same code path reads **+35 to +54 ms**, so most of the second is spent on something a cold open does not exercise, and FR-104's per-stage stamps exist to find out what. Removing the serialisation is the term this AD owns; the residual is a measurement, not an assumption.
 
 ## Consistency Conventions
 

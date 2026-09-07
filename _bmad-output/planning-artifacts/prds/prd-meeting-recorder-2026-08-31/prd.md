@@ -2,7 +2,7 @@
 title: Minutes — local-first meeting recorder for macOS
 status: final
 created: 2026-08-31
-updated: 2026-09-04
+updated: 2026-09-07
 owner: Niklas
 mode: headless (-A); increment 2 applied headless (-H update)
 revisions:
@@ -35,6 +35,16 @@ revisions:
     showing for fourteen models had never been measured at all. Recorded here
     late — the increment shipped without a frontmatter line, which is the sort of
     omission this list exists to prevent.
+  - 2026-09-07 increment 11 — the two Streams actually line up. Adds §4.15
+    (FR-102 through FR-105) and amends FR-6, whose ±100 ms tolerance has been
+    wrong by a factor of ten since increment 1. Driven entirely by measurement
+    rather than by a report: increment 10's continuity check made visible that a
+    42.4-minute recording received 8.37 s of System Stream it never wrote, and
+    that the 9.17 s difference between the two files is two faults, not one.
+    Neither fault is a regression — the second-worst case predates increment 10.
+    The tier in §6.3 is ordered so the instrument precedes the fix, because three
+    plausible mechanisms fit the evidence and only one accounting identity
+    separates them.
   - 2026-09-04 increment 10 — the rest of §4.14, built rather than described.
     Implements FR-94 through FR-100, adds FR-101, and amends FR-94 and FR-97 with
     the answers implementation found: the device's own sample and host clocks are
@@ -243,6 +253,7 @@ A Session captures the Mic Stream and the System Stream concurrently, as separat
 - Both carry timestamps on a shared time base; a sound occurring at a known wall-clock moment appears at the same offset (±100 ms) in both.
 - Audio is captured at a sample rate and format suitable for the Transcription Model without a lossy intermediate step.
 - **Amended in increment 9.** The two Streams are separately addressable but not acoustically independent: on speakers, the Mic Stream contains the System Stream delayed by the speaker-to-microphone path. Measured at cross-correlation 0.771 with a 39 ms lag on one real recording. Nothing downstream may assume that a voice in the Mic Stream was in the room.
+- **Amended in increment 11, and this line is the one that was wrong.** The ±100 ms above was asserted in increment 1 and first measured in increment 10, on the same real recording both ways: **+1,006 ms**. It is out by an order of magnitude, and it has been out for eleven increments. Two separate mechanisms produce it and they were being read as one — the two Streams are *started* serially (FR-105), and samples the process received are *not written* (FR-102). The tolerance stated here is therefore not a specification capture has ever met; §4.15 replaces it with a measurement, and FR-105 decides whether the figure quoted here becomes true or becomes honest. `[NOTE FOR PM]` this line is retained rather than deleted so that the claim and its refutation sit together.
 
 #### FR-7: Graceful degradation to Mic-only
 If the System Stream cannot be captured, the Session proceeds with the Mic Stream alone rather than failing. `[ASSUMPTION: degrading rather than refusing to record is inferred; a user who declined a permission still wants their own side of the call captured.]`
@@ -1414,6 +1425,95 @@ followed until somebody is in a hurry.
 - The per-session rows stay, because the pooled figure hides the swing that makes a single session untrustworthy, and both facts are needed to read either.
 - Where a previously published figure disagrees with the pooled one, the pooled one is correct and the change is recorded rather than quietly applied.
 
+### 4.15 Capture the App Can Account For
+
+§4.13 made a recording the app cannot vouch for into a disclosed fact, and §4.14
+made the *rate* exact by reading the device's own counters instead of a wall
+clock. Both of those close the gap between what the device produced and what the
+app was handed. Neither closes the gap between what the app was handed and what
+reached the file — and that gap is where this increment's defect lives.
+
+**Measured on 2026-09-07, on a 42.4-minute recording.** Both devices ran at 48 kHz
+and within 0.84 s of each other. Both report **zero missing frames and zero
+discontinuities** on the audio clock, so the device handed this process
+everything it counted. And yet:
+
+| | frames the device counted | frames in the file (16 kHz) | unaccounted for |
+|---|---|---|---|
+| Mic Stream | 121,987,200 | 40,662,047 | ~1,953 (122 ms, 0.005%) |
+| System Stream | 121,947,136 | 40,515,272 | **133,944 (8.37 s, 0.33%)** |
+
+The two files then differ in length by **+9.17 s**, and that number decomposes
+exactly: **0.84 s** because the System Stream started later and stopped later,
+and **8.37 s** because a third of a per cent of it was received by this process
+and never written. The two terms add to 9.19 s against a measured 9.17 s. They
+are two different defects and they had been read as one.
+
+The loss is **380× worse on the System Stream than on the Mic Stream**, and it is
+not proportional to duration: a 50.3-minute recording lost nothing measurable and
+a 31.6-minute one lost 6.95 s. Whatever it is conditional on, it is not time.
+
+#### FR-102: Every sample the device delivered is accounted for
+The distance between what the audio device says it handed over and what reached the file is a quantity Minutes computes and records, not a discrepancy somebody finds later by subtracting two file lengths.
+
+**Why this exists.** `RingBuffer.didOverflow` has been set since the ring was
+written, on the line where the producer drops samples because the consumer fell
+behind. **It is read by nobody** — no caller, no record, no log line. It is the
+same shape of defect §4.14 found twice: the quantity that would have named the
+mechanism was being computed and thrown away. And a Bool is the wrong shape for
+it regardless, because a Bool cannot say 353 where the other stream says
+133,944, and that asymmetry is the only real clue the measurement carries.
+
+**Consequences (testable):**
+- A Stream's record carries the counts of one accounting identity: frames the device counted (§4.14's sample-time advance), frames the writer consumed from the ring, frames dropped before the writer could consume them, and frames written to the file. Each is a number; none is a flag.
+- Samples the producer had to drop are **counted**, along with how many separate times it had to drop any. One overflow of eight seconds and eight hundred overflows of ten milliseconds are different faults and a Bool renders them identically.
+- A Stream that dropped nothing records **zero**, and zero is a measurement worth having: it is what makes a non-zero count on the other Stream mean something. Absent means the device supplied no counters, exactly as it does for the rate and the Echo verdict.
+- The identity either closes or its remainder is recorded **as a remainder**. A residual nobody can attribute is information about a mechanism nobody has named yet; folding it into a tolerance is how this defect survived fourteen recordings.
+- The counts are readable from a terminal for a capture that creates no Meeting, so the figure can be taken without spending a real meeting to get it.
+- **No file is padded, trimmed or resampled to make the counts agree.** The lengths on disk are evidence, and rewriting them is what made eight recordings in increment 8 permanently incomparable.
+
+#### FR-103: A consumer that fell behind says so, and by how much
+Where samples are lost between the callback and the file, the reason is a consumer that did not keep up, and the two numbers that establish it are free to take on the thread that fell behind.
+
+**Consequences (testable):**
+- Each Stream records the **longest interval between successive drains** and the ring's **high-water fill** as a share of capacity.
+- Both are measured on the writer's own thread. Nothing new is measured inside the IOProc, which stays as AD-1 requires.
+- A Stream that never came within a wide margin of its ring's capacity records that, which is what makes a Stream that filled it interpretable. Both rings hold ten seconds; a fault that needs the consumer to be ten seconds late is a different fault from one that needs it to be fifty milliseconds late, and only the high-water mark separates them.
+- These are diagnostics and never gates: no capture is refused, degraded or altered on the strength of them.
+
+#### FR-104: What it costs to start each Stream is stamped, not inferred
+The offset between the two Streams' first samples is decomposed into the part spent setting the second Stream up and the part spent waiting for it to deliver.
+
+**Why this exists.** FR-97 records the offset and the merge applies it, which is
+correct and is a symptom fix. The number itself is not actionable: **+1,006 ms**
+on a real 42.4-minute meeting against **+35 to +54 ms** on a five-second
+`--check-clock` probe across six runs. The short probe understates the real
+session twentyfold, so whatever costs the extra second is not exercised by a cold
+open, and one number cannot say which stage it was spent in.
+
+**Consequences (testable):**
+- Each stage of capture start records the host time it completed on, on the same clock the callbacks stamp: the microphone's open, the process tap's creation, the aggregate device's creation, the IOProc's creation, and the device start.
+- The offset FR-97 records is reported alongside its decomposition — setup serialisation on one side, first-callback latency on the other — so a change can be aimed at the term that is actually large.
+- The decomposition is printable from a terminal without recording a Meeting.
+- A Session that captured no host times records no decomposition, and none reads as unknown rather than as zero.
+
+#### FR-105: Both Streams are started together
+Capture stops paying for the second Stream's setup with the first Stream's recording time.
+
+**Why this exists.** `DualStreamCapture.start` opens the microphone and *then*
+builds the tap chain — tap, default-output UID, private aggregate device, IOProc,
+start — serially, and each Stream begins whenever its own first callback lands.
+Everything downstream that wants to compare the two Streams (the Echo detector,
+the cross-stream voice comparison of FR-100, any future canceller) has to search
+for an offset that capture could simply not have introduced.
+
+**Consequences (testable):**
+- Every part of capture setup that can complete before either device is running does. The two device starts are adjacent, with nothing between them that could have been done earlier.
+- The measured offset on a **new** real recording falls. The existing library was captured by the unfixed path and cannot demonstrate an offset it never recorded, so the evidence for this requirement is a recording made after it.
+- FR-6's ±100 ms claim is either met on that recording or **restated as what capture can deliver, with the measurement beside it**. A tolerance that has been out by ten times since increment 1 is not repaired by being repeated.
+- FR-7 is unaffected: a tap that cannot be built must still neither delay nor prevent the microphone, and a Mic-only Session must start no later than it does today.
+- FR-97's measured offset and its application at the merge **stay**, whatever the offset becomes. A Meeting recorded before this still needs it, and an offset that has genuinely fallen to zero costs nothing to apply.
+
 ## 5. Non-Goals (Explicit)
 
 These exist to stop the "let me also add the nearby thing" failure mode at epic, story and code level.
@@ -1495,6 +1595,34 @@ A Tier-0 build that works beats a Tier-2 build that half-works, and the tiers ar
 2. `FR-62` (record a sample, store a fingerprint) — standalone, opt-in, and useful the moment it exists because the fingerprint is what everything else reads.
 3. `FR-63` (identify the user among in-room voices) — the point of the tier. Depends on 1 and 2 and on nothing else.
 4. `FR-64` and `FR-65`'s surface (visible, deletable, disclosed) — the honesty half. Small, and the increment is not shippable without it: a stored fingerprint the user cannot see or delete would breach §9.1.
+
+**Tier 7 — Increment 11, the two Streams actually line up.** The previous
+increment measured the misalignment and corrected for it at the merge, which was
+right and is a symptom fix. This tier is ordered so that **no fix is attempted
+before the mechanism that causes it has been named by a measurement** — because
+three of the mechanisms that fit the evidence are visible from reading the code,
+and reading the code is what increment 10 learned not to trust on its own.
+
+1. `FR-102` (every sample is accounted for) — the instrument, and nothing else in
+   this tier may be built first. Three mechanisms fit the measured 0.33% loss and
+   the accounting identity is what distinguishes them: a ring that dropped
+   samples, a resampler that ate them, or a producer that was never called with
+   them. **Build the instrument, take the reading, then choose.**
+2. `FR-103` (a consumer that fell behind says so) — the second half of the same
+   instrument. The identity says *where* the samples went; this says *why*, and
+   without it a non-zero drop count is a fact with no cause attached.
+3. `FR-104` (what starting each Stream costs is stamped) — independent of 1 and 2,
+   and the same discipline applied to the other fault. +1,006 ms on a real
+   meeting against +54 ms on a five-second probe is not one number to act on; it
+   is a decomposition nobody has taken.
+4. **The fix the measurement names**, for whichever of the two faults it names it
+   for. `FR-105` (both Streams start together) is the one already known to be
+   needed for the start offset; the drift's fix is deliberately not specified
+   here, because specifying it before step 1 has reported is the mistake this
+   ordering exists to prevent.
+5. `FR-6`'s tolerance settled — met on a new recording, or restated as what
+   capture can deliver with the number beside it. Last, because it is the one
+   line that cannot honestly be written until every measurement above is in.
 
 ## 7. Success Metrics
 
@@ -1738,6 +1866,25 @@ loudspeaker, a room and a microphone may land far from its own electrical copy,
 in which case nothing matches and the count does not fall. *This is measurable
 now* and is measured in increment 10 rather than assumed — the failure of the
 previous attempt was assuming the direction of the change.
+
+**Q25 (increment 11): what is the 0.33% loss conditional on, if not duration?**
+Across fourteen comparable dual-stream recordings the System Stream's shortfall
+is bimodal: six show under 0.03% and eight show 0.08% to 0.37%, and the two worst
+are 31.6 and 42.4 minutes while a 50.3-minute recording shows nothing. It is not
+duration and it is not a constant per-call cost. Load, callback size, and what
+else held the audio devices all fit. *Revisit when* FR-102 and FR-103 have
+reported on enough new recordings to correlate the drop count against something.
+One recording will not answer it: 0.00% and 0.37% both already exist in the
+library.
+
+**Q26 (increment 11): why does a five-second probe understate a real session
+twentyfold?** `--check-clock` reads +35 to +54 ms of start offset over six runs
+and a real meeting read +1,006 ms, through the same `DualStreamCapture.start`.
+The candidate nobody has measured is that a real meeting has another application
+already holding the microphone and the output device, so creating an aggregate
+device over a busy output forces a reconfiguration that a cold open never pays
+for. *Revisit when* FR-104's decomposition has been taken both ways — cold, and
+with a meeting application live.
 
 ## 14. Assumptions Index
 

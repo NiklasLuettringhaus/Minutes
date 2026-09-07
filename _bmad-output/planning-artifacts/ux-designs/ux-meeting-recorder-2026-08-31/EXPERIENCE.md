@@ -3,7 +3,7 @@ name: Minutes — Experience
 description: Information architecture, states, interactions and flows for a macOS menu bar meeting recorder. Peer contract to DESIGN.md; visual identity lives there.
 status: final
 created: 2026-08-31
-updated: 2026-09-04
+updated: 2026-09-07
 design_reference: ./DESIGN.md
 sources:
   - ../../prds/prd-meeting-recorder-2026-08-31/prd.md
@@ -343,9 +343,39 @@ severity, not by chronology, not by which requirement is newest:
 | # | Notice | Why it sits here | PRD |
 |---|---|---|---|
 | 1 | **This stream is not reliable** | The transcript below is fluent invented dialogue. It is the only notice that makes what follows *actively false* rather than incomplete. | FR-87 |
-| 2 | **Only your microphone was captured** | The far end is missing entirely; what is there is true. | FR-7 |
-| 3 | **Minutes could not read part of this recording** | Speech the app had and failed on. Incomplete, and — unlike the row above — invisible without being told, because a gap looks exactly like a pause. | FR-96 |
-| 4 | **Your microphone also picked up the call** | Something the app *handled*. The far end is counted once. Last because it describes a correction, not a loss. | FR-92 |
+| 2 | **Part of this recording was lost while it was being made** | *New in increment 11, and it goes second rather than third.* Audio the app received and never wrote. It ranks above the two rows below it for the same reason row 1 outranks everything: what is there may not be true. A gap (row 4) is a hole with a known position that can be marked in place; a lost stretch leaves the file **continuous across the join**, so the words either side become adjacent when they never were, and two half-sentences can read as one sentence nobody said. Small in extent and misleading in kind, which is exactly the axis this table is ordered on. | FR-102 |
+| 3 | **Only your microphone was captured** | The far end is missing entirely; what is there is true. | FR-7 |
+| 4 | **Minutes could not read part of this recording** | Speech the app had and failed on. Incomplete, and — unlike the row above — invisible without being told, because a gap looks exactly like a pause. | FR-96 |
+| 5 | **Your microphone also picked up the call** | Something the app *handled*. The far end is counted once. Last because it describes a correction, not a loss. | FR-92 |
+
+*Rows 2 through 5 were rows 1 through 4 plus one insertion; the numbers are
+positions in this ordering and nothing outside this table refers to them.*
+
+**A lost stretch is disclosed above a floor, and the floor is derived rather
+than picked.** The count itself is always on the record, whether it is zero or
+not (PRD FR-102) — that is the measurement and it has no threshold. This is a
+separate question: whether it is worth telling the reader. Say it when the
+unaccounted-for audio exceeds **0.4 seconds**, which is one word at a
+conversational 150 words a minute. Below that no word can have been lost whole,
+so the worst available outcome is a clipped one; above it, a word the reader will
+never see is gone from a transcript that does not look interrupted. Measured, the
+two cases this separates are **22 ms on the Mic Stream and 8.37 s on the System
+Stream of the same recording** — a factor of 380, with the floor three orders of
+magnitude clear of the noise and one order clear of the smallest real fault. It
+is a disclosure floor and never a detection tolerance: nothing is absorbed by it,
+because the number it hides from the banner is still recorded, still printable,
+and still what a regression would be caught by.
+
+**It names the amount and which stream, and it does not pretend to a position.**
+*"About 8 seconds of the call's own audio was lost while this was being recorded,
+in 3 separate stretches. The transcript below runs straight across those joins,
+so a sentence there may be two halves of different ones."* Naming the stream
+matters: on the Mic Stream the loss is the user's own voice and on the System
+Stream it is everyone else's, and a reader deciding whether to trust a decision
+attributed to a colleague needs to know which. Unlike a gap (row 4) it is **not**
+marked in place, because the app does not know where in the file the samples were
+dropped — only how many. Claiming a position would be the more useful answer and
+the app does not have it.
 
 **A gap is not silence, and the wording must not let the two be read as one.**
 "Nothing was said here" and "we could not read what was said here" are different
@@ -379,6 +409,25 @@ ran, are facts about the capture and not problems with it. They sit with the
 model name and the backend name at the foot of the detail pane and the Note.
 They appear only where they are known: a Meeting recorded before the app looked
 says nothing, rather than saying "unknown".
+
+*Extended in increment 11.* The same rule takes three more capture facts, and it
+takes them for the same reason — they describe how the recording was made and a
+reader cannot act on any of them. **How far apart the two Streams started**
+(PRD FR-97, FR-104), **the closest the recording came to outrunning its own
+buffer** (FR-103), and **the accounting of what reached the file** (FR-102) all
+belong at the foot beside the model name, not in a banner. A start offset the
+merge has already applied is not a problem with the recording; a buffer that
+peaked at 4% of capacity is a reassurance rather than a notice; and a
+fully-accounted-for capture has, by definition, nothing to disclose. Only the
+banner above crosses into the reader's way, and only above its floor.
+
+**Zero is printed, and absent is not.** A capture that accounted for every
+sample says so — *"every sample the devices reported reached the file"* — because
+that sentence is what makes its absence on some future recording legible. A
+Meeting recorded before increment 11 has no counts and says nothing at all,
+which is the same rule the rate check, the Echo verdict and the output device
+already follow: absent is unknown, and unknown is never rendered where a
+measurement would go.
 
 ### Voice enrolment state machine (PRD FR-62)
 
