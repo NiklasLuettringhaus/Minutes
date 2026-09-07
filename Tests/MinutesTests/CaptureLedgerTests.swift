@@ -37,7 +37,8 @@ final class CaptureLedgerTests: XCTestCase {
         // 48 kHz in, 16 kHz out: 30,000 input frames become 10,000 output frames.
         let l = CaptureLedger(deviceFrames: 30_000, droppedFrames: 0, overflows: 0,
                               consumedFrames: 30_000, residentFrames: 0,
-                              writtenFrames: 10_000, inputRate: 48_000, outputRate: 16_000)
+                              writtenFrames: 10_000, producedFrames: 10_000,
+                              inputRate: 48_000, outputRate: 16_000)
         XCTAssertTrue(l.isMeasured)
         XCTAssertEqual(l.unaccountedFrames, 0)
         XCTAssertEqual(l.conversionRemainder, 0)
@@ -54,6 +55,7 @@ final class CaptureLedgerTests: XCTestCase {
         let l = CaptureLedger(deviceFrames: device, droppedFrames: dropped, overflows: 3,
                               consumedFrames: device - dropped, residentFrames: 0,
                               writtenFrames: (device - dropped) / 3,
+                              producedFrames: (device - dropped) / 3,
                               inputRate: 48_000, outputRate: 16_000)
         XCTAssertEqual(l.unaccountedFrames, 0, "the identity closes: the ring has it all")
         XCTAssertEqual(l.conversionRemainder, 0, accuracy: 1,
@@ -69,7 +71,8 @@ final class CaptureLedgerTests: XCTestCase {
     func testALossTheRingCannotExplainIsReportedAsUnaccountedFor() {
         let l = CaptureLedger(deviceFrames: 300_000, droppedFrames: 0, overflows: 0,
                               consumedFrames: 240_000, residentFrames: 0,
-                              writtenFrames: 80_000, inputRate: 48_000, outputRate: 16_000)
+                              writtenFrames: 80_000, producedFrames: 80_000,
+                              inputRate: 48_000, outputRate: 16_000)
         XCTAssertEqual(l.unaccountedFrames, 60_000,
                        "the writer never saw 60,000 frames the device counted")
         XCTAssertEqual(l.conversionRemainder, 0, "and the conversion is not at fault")
@@ -116,7 +119,8 @@ final class CaptureLedgerTests: XCTestCase {
 
         let clean = CaptureLedger(deviceFrames: 30_000, droppedFrames: 0, overflows: 0,
                                   consumedFrames: 30_000, residentFrames: 0,
-                                  writtenFrames: 10_000, inputRate: 48_000, outputRate: 16_000)
+                                  writtenFrames: 10_000, producedFrames: 10_000,
+                                  inputRate: 48_000, outputRate: 16_000)
         XCTAssertTrue(clean.isMeasured, "a clean capture is measured, not absent")
         XCTAssertEqual(clean.lostProportion, 0, "and its loss is zero, which is a number")
     }
@@ -148,6 +152,7 @@ final class CaptureLedgerTests: XCTestCase {
                                  overflows: 1, consumedFrames: device - droppedInput,
                                  residentFrames: 0,
                                  writtenFrames: (device - droppedInput) / 3,
+                                 producedFrames: (device - droppedInput) / 3,
                                  inputRate: 48_000, outputRate: 16_000)
         }
         let mic = ledger(lostOutputFrames: 353)        // 22 ms
@@ -163,7 +168,8 @@ final class CaptureLedgerTests: XCTestCase {
     func testTheFloorHidesTheSentenceAndNeverTheCount() {
         let l = CaptureLedger(deviceFrames: 4_800_000, droppedFrames: 300, overflows: 2,
                               consumedFrames: 4_799_700, residentFrames: 0,
-                              writtenFrames: 1_599_900, inputRate: 48_000, outputRate: 16_000)
+                              writtenFrames: 1_599_900, producedFrames: 1_599_900,
+                              inputRate: 48_000, outputRate: 16_000)
         XCTAssertFalse(l.isWorthDisclosing, "under the floor")
         XCTAssertEqual(l.droppedFrames, 300, "and the count is still exactly on the record")
         XCTAssertEqual(l.overflows, 2)
@@ -178,6 +184,7 @@ final class CaptureLedgerTests: XCTestCase {
         let l = CaptureLedger(deviceFrames: device, droppedFrames: dropped, overflows: 4,
                               consumedFrames: device - dropped, residentFrames: 0,
                               writtenFrames: (device - dropped) / 3,
+                              producedFrames: (device - dropped) / 3,
                               inputRate: 48_000, outputRate: 16_000)
         let system = try XCTUnwrap(l.explanation(streamIsSystem: true))
         let mic = try XCTUnwrap(l.explanation(streamIsSystem: false))
@@ -228,6 +235,36 @@ final class CaptureLedgerTests: XCTestCase {
         block.withUnsafeBufferPointer { ring.write($0.baseAddress!, count: 1000) }
         _ = ring.read(max: 1)
         XCTAssertEqual(ring.highWaterFill, 2000)
+    }
+
+    /// **Samples are not frames, and every non-zero drop test was mono.**
+    /// `droppedSamples` and `ring.count` are interleaved *samples*; the ledger
+    /// divides both by the channel count to get frames. Nothing covered that
+    /// divisor: the only stereo case asserted a drop count of zero, so removing
+    /// the division would have kept the whole suite green while doubling every
+    /// stereo recording's reported loss.
+    func testTheStereoLedgerReportsFramesRatherThanSamples() throws {
+        let fmt = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                              sampleRate: 48_000, channels: 2,
+                                              interleaved: true))
+        // 1,024 frames of capacity, so the fixture can overrun it deliberately.
+        let ring = RingBuffer(capacity: 2048)
+        let w = StreamFileWriter(url: tmp.appendingPathComponent("stereo.wav"),
+                                 format: fmt, ring: ring)
+        // Never started: the consumer is starved by construction, not by a sleep.
+        let block = [Float](repeating: 0.4, count: 4096)   // 2,048 stereo frames
+        block.withUnsafeBufferPointer { ring.write($0.baseAddress!, count: 4096) }
+
+        let droppedSamples = ring.droppedSamples
+        XCTAssertGreaterThan(droppedSamples, 0, "the fixture must overrun the ring")
+        let l = w.ledger
+        XCTAssertEqual(l.droppedFrames, Double(droppedSamples) / 2,
+                       "dropped frames are dropped samples over the channel count")
+        XCTAssertEqual(l.residentFrames, Double(ring.count) / 2,
+                       "and so are resident frames")
+        // The whole offering, in frames, must still be accounted for.
+        XCTAssertEqual(l.droppedFrames + l.residentFrames, 2048, accuracy: 0.5,
+                       "2,048 stereo frames offered, all of them placed")
     }
 
     func testResetClearsTheCountsSoTheNextRecordingStartsClean() {

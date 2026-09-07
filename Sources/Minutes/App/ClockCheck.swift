@@ -139,8 +139,8 @@ enum ClockCheck {
             print(String(format: "  system first callback after  %+7.1f ms", sy * 1000))
         }
         if let d = t.decomposition, let total = t.streamOffsetSeconds {
-            print(String(format: "  offset %+.1f ms = %+.1f ms serialisation %+.1f ms device latency",
-                         total * 1000, d.serialisation * 1000, d.deviceLatency * 1000))
+            print(String(format: "  offset %+.1f ms = %+.1f ms serialisation %+.1f ms device warm-up difference",
+                         total * 1000, d.serialisation * 1000, d.deviceLatencyGap * 1000))
         }
     }
 

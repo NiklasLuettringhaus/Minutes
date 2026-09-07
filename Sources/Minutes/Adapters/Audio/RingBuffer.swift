@@ -113,6 +113,19 @@ final class RingBuffer {
         return fillCountLocked()
     }
 
+    /// Every counter, read together under the lock.
+    ///
+    /// The individual `private(set)` properties are written under the lock and
+    /// were being read without it, which is benign in practice — the producer is
+    /// always stopped before the writer reads them — and is a race by the
+    /// memory model for no benefit. Reading them as one tuple also means the
+    /// four numbers describe the same instant, which is the property the
+    /// accounting identity rests on.
+    var counters: (dropped: Int, overflows: Int, highWater: Int, resident: Int) {
+        lock.lock(); defer { lock.unlock() }
+        return (droppedSamples, overflowEvents, highWaterFill, fillCountLocked())
+    }
+
     /// Zeroed on stop, or stale samples bleed into the next recording.
     func reset() {
         lock.lock()

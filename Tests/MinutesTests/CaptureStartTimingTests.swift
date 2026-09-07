@@ -30,7 +30,7 @@ final class CaptureStartTimingTests: XCTestCase {
         let d = t.decomposition
         XCTAssertEqual(d?.serialisation ?? 0, 0.950, accuracy: 0.001,
                        "almost all of it is the build, and none of it is the devices")
-        XCTAssertEqual(d?.deviceLatency ?? 0, 0.016, accuracy: 0.001)
+        XCTAssertEqual(d?.deviceLatencyGap ?? 0, 0.016, accuracy: 0.001)
     }
 
     /// AD-59's order: the chain is built before either device runs, so the two
@@ -62,7 +62,7 @@ final class CaptureStartTimingTests: XCTestCase {
                     tapChainBuiltAt: 0.1, systemStartedAt: 0.5 + serial,
                     micFirstSampleAt: 0.5, systemFirstSampleAt: 0.5 + serial + latency)
                 let d = try? XCTUnwrap(t.decomposition)
-                XCTAssertEqual((d?.serialisation ?? 0) + (d?.deviceLatency ?? 0),
+                XCTAssertEqual((d?.serialisation ?? 0) + (d?.deviceLatencyGap ?? 0),
                                t.streamOffsetSeconds ?? .nan, accuracy: 1e-9)
             }
         }
@@ -156,5 +156,79 @@ final class CaptureStartTimingTests: XCTestCase {
                           "the tap chain must be built before either device is started")
         XCTAssertGreaterThan(t.tapChainBuildSeconds ?? -1, 0,
                              "and the build must have happened before the starts")
+    }
+}
+
+/// AD-2 under AD-59 — the teardown paths the prepare/begin split created.
+///
+/// **Found by review, not by a test, and this is the test that was missing.**
+/// `SystemTapCapture.createIOProc` does `Unmanaged.passRetained(self)`, so a
+/// prepared tap holds a reference to itself and `deinit` can never fire.
+/// Dropping one without tearing it down leaks the private aggregate device and
+/// the global process tap for the life of the process — AD-2 names that harm
+/// exactly, "a leaked aggregate device is visible system-wide" — and leaves the
+/// writer's drain thread spinning on a file it never closes.
+///
+/// Before AD-59 the path did not exist: the chain was built *after* the
+/// microphone had started, so a microphone failure happened before there was
+/// anything to leak. Moving the build earlier created it.
+final class CaptureTeardownTests: XCTestCase {
+
+    /// A prepared-but-never-begun tap must be releasable, and releasing it must
+    /// leave nothing behind that a second Session would collide with.
+    ///
+    /// The assertion is that two full prepare/discard cycles both succeed. A
+    /// leaked aggregate device is not directly observable from inside the
+    /// process, but a leak of the *tap* makes the next `prepare` fail or the
+    /// device count grow without bound — so a loop that keeps succeeding is the
+    /// available evidence, and it fails if `discard` stops tearing down.
+    func testAPreparedTapCanBeDiscardedWithoutLeaking() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("minutes-discard-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        for i in 0..<3 {
+            let tap = SystemTapCapture()
+            do {
+                try tap.prepare(url: dir.appendingPathComponent("s\(i).wav"))
+            } catch {
+                throw XCTSkip("no system tap on this machine: \(error.localizedDescription)")
+            }
+            XCTAssertFalse(tap.isRunning, "prepared is not running")
+            tap.discard()
+            XCTAssertFalse(tap.isRunning)
+        }
+    }
+
+    /// A Session starts and stops cleanly, leaving nothing running.
+    ///
+    /// **One cycle, not three, and the reason is a measurement.** The first
+    /// version cycled three Sessions in a rapid loop to make an accumulated leak
+    /// visible, and it failed inside the full suite with
+    /// `-10868` (`kAudioUnitErr_FormatNotSupported`) while passing in
+    /// isolation — because several tests in the suite open the input device in
+    /// quick succession and it will not always reopen. That is test isolation,
+    /// not the product: `StartOrderRegressionTests` runs **fifteen** full cycles
+    /// of each start order with the devices to itself and measures **0/15**
+    /// microphone failures for both.
+    ///
+    /// Loosening the assertion would have been the wrong fix — the resolution is
+    /// that the cycling belonged in a gated measurement rather than in the
+    /// suite, which is the same conclusion four attempts at a rate harness
+    /// reached in `WavRateRepairTests`.
+    func testASessionStartsAndStopsLeavingNothingRunning() throws {
+        try XCTSkipUnless(MicCapture.authorizationStatus() == .authorized,
+                          "needs microphone permission")
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("minutes-failstart-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let capture = DualStreamCapture()
+        try capture.start(into: dir)
+        XCTAssertTrue(capture.isRunning)
+        _ = capture.stop()
+        XCTAssertFalse(capture.isRunning, "stop leaves nothing running")
     }
 }

@@ -81,6 +81,16 @@ final class StreamFileWriter {
     ///
     /// Sweepable so the two halves can be measured apart rather than shipped as
     /// one change nobody can attribute. Production never sets it.
+    ///
+    /// **Both overrides are unsynchronised `static var`s, and that is a stated
+    /// compromise rather than an oversight.** They are written from the main
+    /// thread before `Thread.start()` and cleared after the join, so the current
+    /// ordering is safe — but it is safe by convention, they compile only because
+    /// the target pins Swift 5 language mode, and they would be errors under
+    /// Swift 6. `DrainCheck` carries a hand-rolled lock box whose own comment
+    /// condemns exactly this shape. They are here because a measurement seam
+    /// that costs a lock on the drain thread is worse, and they are named
+    /// `Override` so that nothing mistakes them for configuration.
     static var pullUntilDryOverride: Bool?
     static let pullUntilDry = true
     private static let outputFormat = AVAudioFormat(
@@ -324,9 +334,19 @@ final class StreamFileWriter {
         while !(thread?.isFinished ?? true), Date() < deadline {
             usleep(5_000)
         }
+        // Whether the drain thread actually stopped decides what may be done
+        // next. Everything below this line assumes sole ownership of the file
+        // and the converter, and `flushConverter` in particular tells the
+        // converter the stream has ended — which, running beside a live
+        // `drainOnce`, would make that thread's conversions return end-of-stream
+        // and discard audio silently.
+        let joined = thread?.isFinished ?? true
+        if !joined {
+            Log.audio.error("the drain thread did not stop within 3 s; skipping the flush rather than racing it")
+        }
         // Now sole owner: flush everything left, not just one chunk. The previous
         // single drainOnce() call truncated the tail of every recording.
-        while ring.count > 0 {
+        while joined, ring.count > 0 {
             let before = ring.count
             drainOnce()
             if ring.count >= before { break }  // no progress; avoid spinning
@@ -335,12 +355,16 @@ final class StreamFileWriter {
         // so the decision is forced here and the held opening is written. Without
         // this a five-second Test Playground recording (FR-47) would produce an
         // empty file.
-        settleRateIfPossible(final: true)
-        flushConverter()
+        if joined {
+            settleRateIfPossible(final: true)
+            flushConverter()
+        }
         // After the flush, so `resident` is what the flush could not move rather
         // than what it had not moved yet, and before any caller resets the ring.
-        frozen = (dropped: ring.droppedSamples, overflows: ring.overflowEvents,
-                  highWater: ring.highWaterFill, resident: ring.count)
+        // **Once.** A second `stop()` taken after the ring was reset would
+        // otherwise replace the real counters with zeros — reinstating exactly
+        // the failure this snapshot exists to prevent.
+        if frozen == nil { frozen = ring.counters }
         file = nil
         thread = nil
     }
@@ -455,19 +479,31 @@ final class StreamFileWriter {
     /// which is the difference between naming this defect's mechanism and
     /// guessing it.
     var ledger: CaptureLedger {
-        let channels = Double(max(1, format.channelCount))
-        let r = frozen ?? (dropped: ring.droppedSamples, overflows: ring.overflowEvents,
-                           highWater: ring.highWaterFill, resident: ring.count)
+        // Every term is bound to an explicit `Double` first. Chaining twelve
+        // inferred conversions into one initialiser call is how three functions
+        // in the heuristic backend came to need rewriting for type-checker
+        // timeouts, and this one hit the same wall.
+        let channels: Double = Double(max(1, format.channelCount))
+        let r = frozen ?? ring.counters
+        let device: Double = clock?.snapshot.framesProduced ?? 0
+        let dropped: Double = Double(r.dropped) / channels
+        let consumed: Double = Double(inputFramesConsumed)
+        let resident: Double = Double(r.resident) / channels
+        let written: Double = Double(framesWritten)
+        let produced: Double = Double(convertProducedFrames)
+        let failedFrames: Double = Double(writeFailureFrames)
+        let held: Double = Double(pending.count) / channels
         return CaptureLedger(
-            deviceFrames: clock?.snapshot.framesProduced ?? 0,
-            droppedFrames: Double(r.dropped) / channels,
+            deviceFrames: device,
+            droppedFrames: dropped,
             overflows: r.overflows,
-            consumedFrames: Double(inputFramesConsumed),
-            residentFrames: Double(r.resident) / channels + Double(pending.count) / channels,
-            writtenFrames: Double(framesWritten),
-            producedFrames: Double(convertProducedFrames),
+            consumedFrames: consumed,
+            residentFrames: resident,
+            writtenFrames: written,
+            producedFrames: produced,
             writeFailures: writeFailures,
-            writeFailureFrames: Double(writeFailureFrames),
+            writeFailureFrames: failedFrames,
+            heldFrames: held,
             inputRate: effectiveRate,
             outputRate: Self.outputSampleRate)
     }
@@ -479,8 +515,7 @@ final class StreamFileWriter {
     /// How close this Stream came to outrunning this thread (AD-58, FR-103).
     var drainPressure: DrainPressure {
         let channels = Double(max(1, format.channelCount))
-        let r = frozen ?? (dropped: ring.droppedSamples, overflows: ring.overflowEvents,
-                           highWater: ring.highWaterFill, resident: ring.count)
+        let r = frozen ?? ring.counters
         return DrainPressure(
             highWaterFrames: Double(r.highWater) / channels,
             capacityFrames: Double(ring.capacity) / channels,
@@ -529,7 +564,7 @@ final class StreamFileWriter {
 
     private func drainOnce() {
         let channels = Int(format.channelCount)
-        let wanted = 8192 * channels
+        let wanted = Int(StreamRingSizing.readFrames) * channels
         let samples = ring.read(max: wanted)
         guard !samples.isEmpty else { return }
         let frames = samples.count / max(1, channels)
@@ -643,7 +678,7 @@ final class StreamFileWriter {
     /// than one drain and `convert` hands the converter a single buffer.
     private func write(samples: [Float], channels: Int) {
         guard let file, let converter else { return }
-        let maxFrames = 8192
+        let maxFrames = Int(StreamRingSizing.readFrames)
         var offset = 0
         let totalFrames = samples.count / max(1, channels)
         while offset < totalFrames {
@@ -692,6 +727,11 @@ final class StreamFileWriter {
             case .haveData, .inputRanDry, .endOfStream:
                 let produced = out.frameLength
                 append(out, to: file)
+                // The override applies here too, or `--check-drain`'s baseline
+                // row is not the baseline: the tail flush is itself new in this
+                // increment, and a row labelled "what shipped before" that still
+                // gets a looped flush cannot attribute anything.
+                guard Self.pullUntilDryOverride ?? Self.pullUntilDry else { return }
                 // Nothing left to give, or the converter has said it is finished.
                 guard produced > 0, status == .haveData else { return }
             case .error:
@@ -756,14 +796,16 @@ final class StreamFileWriter {
                 return
             }
         }
-        Log.audio.error("conversion did not run dry in 64 passes; the chunk is abandoned")
+        Log.audio.error("conversion did not run dry in 64 passes; the residue of this chunk is abandoned")
     }
 
     private func makeOutputBuffer(forInputFrames frames: AVAudioFrameCount) -> AVAudioPCMBuffer? {
         let ratio = Self.outputSampleRate / effectiveRate
         let slack = Self.outputSlackOverride ?? Self.outputSlackFrames
+        // No `capacity > 0` guard: capacity is at least `slack`, whose smallest
+        // swept value is 64, so the guard was unreachable and read as though the
+        // arithmetic could produce zero.
         let capacity = AVAudioFrameCount(Double(frames) * ratio) + slack
-        guard capacity > 0 else { return nil }
         return AVAudioPCMBuffer(pcmFormat: Self.outputFormat, frameCapacity: capacity)
     }
 

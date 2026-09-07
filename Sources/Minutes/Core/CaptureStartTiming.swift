@@ -118,10 +118,18 @@ struct CaptureStartTiming: Equatable, Sendable, Codable {
 
     /// The offset, split into the part capture caused and the part the devices
     /// did. The two terms sum to `streamOffsetSeconds` by construction.
-    var decomposition: (serialisation: TimeInterval, deviceLatency: TimeInterval)? {
+    ///
+    /// **The second term is a *difference* of two warm-ups, not one device's
+    /// latency**, and it was named `deviceLatency` and logged as "N ms of device
+    /// first-callback latency" — which reads as an absolute cost and is negative
+    /// whenever the microphone is the slower of the two. It reduces to
+    /// `systemFirstCallbackSeconds - micFirstCallbackSeconds`. Both absolute
+    /// terms are available separately and `--check-clock` prints them; this one
+    /// is the part of the offset that removing the serialisation cannot touch.
+    var decomposition: (serialisation: TimeInterval, deviceLatencyGap: TimeInterval)? {
         guard let total = streamOffsetSeconds,
               let serial = startSerialisationSeconds else { return nil }
-        return (serialisation: serial, deviceLatency: total - serial)
+        return (serialisation: serial, deviceLatencyGap: total - serial)
     }
 
     /// Hand-written per the spine's Decodable-evolution convention. Every field

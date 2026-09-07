@@ -50,7 +50,8 @@ final class SystemTapCapture {
             throw MinutesError.systemAudioTapFailed(stage: "resolve format", status: -1)
         }
         let channels = max(1, Int(asbd.mChannelsPerFrame))
-        let r = RingBuffer(capacity: Int(asbd.mSampleRate) * channels * 10)
+        let r = RingBuffer(capacity: Int(asbd.mSampleRate) * channels
+                           * StreamRingSizing.seconds)
         ring = r
         let c = AudioClockTap()
         clock = c
@@ -75,26 +76,43 @@ final class SystemTapCapture {
                 }
             }
         }
-        try w.start()
-        writer = w
-
-        // AD-1: the IOProc is created here and started in `begin()`. Creating it
-        // is a property write on the aggregate device and is not cheap; starting
-        // it is the call that must sit next to the microphone's.
-        try createIOProc()
+        // From here on every failure tears down explicitly. The earlier guards in
+        // this function already did; these two relied on `deinit`, which cannot
+        // run once `createIOProc` has retained self, and could not run before it
+        // because the writer's drain thread was already going.
+        do {
+            try w.start()
+            writer = w
+            // AD-1: the IOProc is created here and started in `begin()`. Creating
+            // it is a property write on the aggregate device and is not cheap;
+            // starting it is the call that must sit next to the microphone's.
+            try createIOProc()
+        } catch {
+            teardown()
+            throw error
+        }
         chainBuiltHostSeconds = AudioClockTap.seconds(fromHostTime: mach_absolute_time())
     }
 
     /// Starts the device. Deliberately the smallest possible amount of work, so
     /// that this call and `MicCapture.begin()` can be adjacent (AD-59).
+    /// **Tears down on every failure path, and that is AD-2 rather than tidiness.**
+    /// `createIOProc` does `Unmanaged.passRetained(self)`, so a prepared instance
+    /// holds a reference to itself and `deinit` can never fire. Dropping one
+    /// without tearing it down leaks the private aggregate device and the process
+    /// tap for the life of the process — and a leaked aggregate device is visible
+    /// system-wide — as well as leaving the writer's drain thread spinning on a
+    /// file it will never close.
     func begin() throws {
         guard let proc = ioProcID, aggregateID != 0 else {
+            discard()
             throw MinutesError.systemAudioTapFailed(stage: "start device", status: -1)
         }
         let st = AudioDeviceStart(aggregateID, proc)
         startedHostSeconds = AudioClockTap.seconds(fromHostTime: mach_absolute_time())
         Log.audio.info("AudioDeviceStart -> \(st)")
         guard st == noErr else {
+            discard()
             throw MinutesError.systemAudioTapFailed(stage: "start device", status: st)
         }
         isRunning = true
@@ -102,11 +120,13 @@ final class SystemTapCapture {
         observeDeviceChanges()
     }
 
-    /// Prepare and begin in one call, for the paths with no second Stream to
-    /// line up with.
-    func start(url: URL) throws {
-        try prepare(url: url)
-        try begin()
+    /// Releases a prepared-but-never-begun chain.
+    ///
+    /// Needed because `prepare()` and `begin()` are separate calls (AD-59): a
+    /// caller that prepares this and then fails on the *other* Stream has to be
+    /// able to give it back, and `deinit` cannot do it — see `begin()`.
+    func discard() {
+        teardown()
     }
 
     /// Rebuilds ONLY the CoreAudio objects, against whatever the default output

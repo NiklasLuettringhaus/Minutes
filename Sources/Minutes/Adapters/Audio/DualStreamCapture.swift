@@ -78,7 +78,20 @@ final class DualStreamCapture: Capturing {
         timing.tapChainBuiltAt = AudioClockTap.seconds(fromHostTime: mach_absolute_time())
 
         // 3. Start both devices, back to back. Nothing goes between these.
-        try mic.begin()
+        //
+        // The microphone's failure is still fatal, and it now has a prepared tap
+        // chain to give back before it propagates. Without this the aggregate
+        // device and the process tap leak for the life of the process — visible
+        // system-wide (AD-2) — and the tap's drain thread spins on a file it
+        // never closes, because `createIOProc` retains the tap and `deinit`
+        // therefore cannot run.
+        do {
+            try mic.begin()
+        } catch {
+            prepared?.discard()
+            outputDevice.stop()
+            throw error
+        }
         timing.micStartedAt = AudioClockTap.seconds(fromHostTime: mach_absolute_time())
         if let p = prepared {
             do {
@@ -88,6 +101,9 @@ final class DualStreamCapture: Capturing {
             } catch let e as MinutesError {
                 systemFailure = e
                 system = nil
+                // `begin()` tears itself down on failure, so nothing is left to
+                // release here — but the Session continues mic-only, and this is
+                // the path where forgetting it would leak silently.
                 Log.audio.error("system stream could not be started, continuing mic-only: \(e.localizedDescription, privacy: .public)")
             }
         }
@@ -140,7 +156,7 @@ final class DualStreamCapture: Capturing {
         timing.micFirstSampleAt = micResult.originHostSeconds
         timing.systemFirstSampleAt = systemResult.originHostSeconds
         if let d = timing.decomposition {
-            Log.audio.info("start offset decomposes: \(Int(d.serialisation * 1000)) ms between the two device starts, \(Int(d.deviceLatency * 1000)) ms of device first-callback latency")
+            Log.audio.info("start offset decomposes: \(Int(d.serialisation * 1000)) ms between the two device starts, \(Int(d.deviceLatencyGap * 1000)) ms of difference between the two devices' first-callback latencies")
         }
         // FR-102. The one number this increment exists for, on the record
         // whether it is zero or not.

@@ -41,7 +41,8 @@ final class MicCapture {
         format = fmt
 
         // ~10 s of headroom; the writer thread drains continuously.
-        let r = RingBuffer(capacity: Int(fmt.sampleRate) * Int(fmt.channelCount) * 10)
+        let r = RingBuffer(capacity: Int(fmt.sampleRate) * Int(fmt.channelCount)
+                           * StreamRingSizing.seconds)
         ring = r
         let w = StreamFileWriter(url: url, format: fmt, ring: r)
         let c = AudioClockTap()
@@ -97,8 +98,9 @@ final class MicCapture {
         Log.audio.info("mic capture started")
     }
 
-    /// Prepare and begin in one call, for the paths that have no second Stream
-    /// to line up with — `TestPlayground` and Voice Enrolment.
+    /// Prepare and begin in one call, for the one path with no second Stream to
+    /// line up with: Voice Enrolment. (`TestPlayground` uses
+    /// `DualStreamCapture`, so it gets the adjacent starts of AD-59.)
     func start(url: URL) throws {
         try prepare(url: url)
         try begin()

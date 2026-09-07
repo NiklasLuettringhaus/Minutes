@@ -73,26 +73,36 @@ enum DrainCheck {
         // is scheduled on the efficiency cores and throttled.
         // The A/B interleaved in one binary, so machine state drifting between
         // two separate builds cannot be mistaken for the effect.
-        // All four combinations, interleaved in one binary, so machine state
+        // Every configuration interleaved in one binary, so machine state
         // drifting between separate builds cannot be mistaken for the effect.
-        // The two halves of the fix are swept apart because a change nobody can
+        // The halves of the fix are swept apart because a change nobody can
         // attribute is a change that gets reverted for the wrong reason.
-        for pull in [false, true] {
-            for slack in [AVAudioFrameCount(64), StreamFileWriter.outputSlackFrames] {
-                StreamFileWriter.pullUntilDryOverride = pull
-                StreamFileWriter.outputSlackOverride = slack
-                let label = (pull, slack == 64)
-                let name: String
-                switch label {
-                case (false, true):  name = "slack 64, one pass      <- what shipped before increment 11"
-                case (false, false): name = "slack 4096, one pass"
-                case (true, true):   name = "slack 64, pull until dry"
-                case (true, false):  name = "slack 4096, pull until dry  <- shipping"
-                }
-                print("--- \(name) ---")
-                for shape in shapes {
-                    measure(shape, seconds: seconds, qos: .utility)
-                }
+        //
+        // **The scheduling class is swept too.** It is the increment's own
+        // entering suspicion — a `.utility` drain thread is scheduled on the
+        // efficiency cores and throttled, and if it is late the ring overflows —
+        // and the first version of this tool documented a seam for it and then
+        // called `measure` with a hard-coded `.utility`. A suspicion that is
+        // instrumented and not run is an assertion.
+        let configurations: [(name: String, slack: AVAudioFrameCount,
+                              pull: Bool, qos: QualityOfService)] = [
+            ("slack 64, one pass, .utility        <- what shipped before increment 11",
+             64, false, .utility),
+            ("slack 64, one pass, .userInitiated  <- does the QoS alone fix it?",
+             64, false, .userInitiated),
+            ("slack 4096, one pass, .utility      <- the constant alone",
+             StreamFileWriter.outputSlackFrames, false, .utility),
+            ("slack 64, pull until dry, .utility  <- the loop alone",
+             64, true, .utility),
+            ("slack 4096, pull until dry, .utility  <- shipping",
+             StreamFileWriter.outputSlackFrames, true, .utility),
+        ]
+        for c in configurations {
+            StreamFileWriter.pullUntilDryOverride = c.pull
+            StreamFileWriter.outputSlackOverride = c.slack
+            print("--- \(c.name) ---")
+            for shape in shapes {
+                measure(shape, seconds: seconds, qos: c.qos)
             }
         }
         StreamFileWriter.outputSlackOverride = nil
