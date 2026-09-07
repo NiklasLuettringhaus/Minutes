@@ -82,10 +82,58 @@ The identity closes to within 20 ms. **They are two faults and they had been
 read as one number.** No single correction addresses both, which is why the
 increment has two halves.
 
-A second instrumented recording, **16.9 minutes on AirPods Pro**, is the
-control: both devices at 24 kHz, callbacks of 4,096 (mic) and **480** (tap),
-start offset **+52.8 ms**, and the System Stream short by **≤35 ms**. Two
-recordings, two configurations, and the loss appears in one of them.
+### Four real recordings, decomposed the same way
+
+Three more instrumented recordings arrived during the increment, all made by the
+build that predates it. Every row is the device's own frame count against the
+file on disk, so nothing here is inferred. Recordings are named by duration.
+
+```
+Scripts/decompose-capture.py
+```
+
+The script prints the device's *kind* rather than its name, because a device a
+user has named after themselves is a name; the models are given here as prose.
+
+| minutes | output device | start offset | Mic Stream short by | System Stream short by |
+|---|---|---|---|---|
+| 42.4 | built-in speakers | **+1,006 ms** | −0.00 s (0.000%) | **8.24 s (0.325%)** |
+| 16.9 | AirPods Pro | +53 ms | −0.13 s (−0.012%) | 0.03 s (0.003%) |
+| 24.9 | built-in speakers | +21 ms | −0.09 s (−0.006%) | 0.56 s (0.037%) |
+| 48.1 | built-in speakers | +60 ms | 0.79 s (0.027%) | **12.29 s (0.426%)** |
+
+Four things this table settles, and two of them correct claims made earlier in
+this increment.
+
+1. **The asymmetry is real on real recordings**, not only in the harness. On the
+   48.1-minute recording the System Stream lost **15.5×** what the Mic Stream
+   lost, and the System Stream's callbacks are 512 frames against the
+   microphone's 4,800.
+2. **It is conditional on load and not on the device or the duration.** The
+   24.9-minute and 48.1-minute recordings were made on the **same output device
+   on the same day**, at the same rate and the same callback sizes, and lost
+   **0.037%** and **0.426%** — an order of magnitude apart. This is the same
+   conclusion the drift table forced at the top of this note, now with the
+   configuration held fixed.
+3. **The Mic Stream is susceptible too, just far less.** It lost 0.027% on the
+   worst recording, which is not zero. Callback size decides *susceptibility*;
+   load decides *magnitude*. An earlier draft of this note said the asymmetry
+   "follows from the callback size alone", and that was too strong.
+4. **The +1,006 ms start offset is an outlier, not the typical case.** The other
+   three read **+21, +53 and +60 ms** through the same unfixed code. So the
+   serialisation cost is itself conditional on what else holds the audio devices,
+   and the increment's start-offset work is worth less on a median meeting than
+   the single measurement it was scoped from suggested. That is worth saying
+   plainly: the number that justified half this increment was the worst of four.
+
+A fifth Session the same day is not in the table and is recorded here because it
+is a **different fault**, found while building this one: the microphone produced
+**0.13 seconds** while the System Stream produced **57 seconds**, with
+`micRate.framesObserved` at zero and its clock source falling back to the wall
+clock — the input device delivered no callbacks at all. `systemContinuity`
+records one rebase. The Session never left `captured`. Nothing in this increment
+addresses it and nothing in this increment caused it; it is on the shipping build
+and it is logged as an action item.
 
 ## 3. Three mechanisms, and how each was settled
 
@@ -161,11 +209,17 @@ frame count is exact. Twenty seconds per shape against ten competing
 | **4800 fr / 100 ms, stereo 48 kHz** | **0%, 0%, 0%** | 0%, 0%, 0% |
 
 **The control is the two 4,800-frame shapes, and they are the reason this is an
-explanation rather than a coincidence.** They lose nothing at either setting. The
-microphone's callbacks are 4,800 frames and the system tap's are 512, so the
-asymmetry the real recording shows — **0.33% against 0.005%, a factor of 380** —
-follows from the callback size alone, with no audio device in the experiment. The
-real recording's 0.33% sits inside the reproduced range.
+explanation rather than a coincidence.** They lose nothing at either setting.
+The microphone's callbacks are 4,800 frames and the system tap's are 512, so the
+susceptibility the real recordings show — up to **15.5×** between the two
+Streams of one recording — is reproduced from the callback size with no audio
+device in the experiment, and the real losses (0.003% to 0.426%) sit inside the
+reproduced range.
+
+**What the harness does *not* show is the magnitude.** It applies ten competing
+`userInteractive` threads, which is more contention than a meeting produces, and
+the real recordings vary by an order of magnitude on identical hardware. Callback
+size decides which Stream is exposed; load decides how much it loses.
 
 The two controls also rule out the two variables that were moving together in the
 first reading: **channel count is irrelevant** (512-frame mono loses; 4,800-frame
