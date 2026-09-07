@@ -27,7 +27,22 @@ final class SystemTapCapture {
     /// capture Swift context (AD-1).
     private var selfRef: Unmanaged<SystemTapCapture>?
 
-    func start(url: URL) throws {
+    /// Host seconds at which the device chain finished being built, on the
+    /// callbacks' own clock (FR-104). Absent until `prepare` has run.
+    private(set) var chainBuiltHostSeconds: Double?
+    /// Host seconds at which `AudioDeviceStart` returned (FR-104).
+    private(set) var startedHostSeconds: Double?
+
+    /// Everything that can be done before the device is running (AD-59).
+    ///
+    /// **This is the expensive half, and moving it is the point.** The chain is
+    /// a process tap, a default-output-device lookup, a private aggregate device
+    /// and an IOProc, and under the previous order all of it was constructed
+    /// *after* the microphone had already started recording — so every
+    /// millisecond of it landed in FR-97's offset. AD-2's construction order is
+    /// unchanged and still absolute; only where the *start* falls inside it has
+    /// moved.
+    func prepare(url: URL) throws {
         try buildDeviceChain()
 
         guard let fmt = format, let asbd = fmt.streamDescription.pointee as AudioStreamBasicDescription? else {
@@ -63,9 +78,35 @@ final class SystemTapCapture {
         try w.start()
         writer = w
 
-        try startIO()
+        // AD-1: the IOProc is created here and started in `begin()`. Creating it
+        // is a property write on the aggregate device and is not cheap; starting
+        // it is the call that must sit next to the microphone's.
+        try createIOProc()
+        chainBuiltHostSeconds = AudioClockTap.seconds(fromHostTime: mach_absolute_time())
+    }
+
+    /// Starts the device. Deliberately the smallest possible amount of work, so
+    /// that this call and `MicCapture.begin()` can be adjacent (AD-59).
+    func begin() throws {
+        guard let proc = ioProcID, aggregateID != 0 else {
+            throw MinutesError.systemAudioTapFailed(stage: "start device", status: -1)
+        }
+        let st = AudioDeviceStart(aggregateID, proc)
+        startedHostSeconds = AudioClockTap.seconds(fromHostTime: mach_absolute_time())
+        Log.audio.info("AudioDeviceStart -> \(st)")
+        guard st == noErr else {
+            throw MinutesError.systemAudioTapFailed(stage: "start device", status: st)
+        }
         isRunning = true
+        logTapFormatAfterStart()
         observeDeviceChanges()
+    }
+
+    /// Prepare and begin in one call, for the paths with no second Stream to
+    /// line up with.
+    func start(url: URL) throws {
+        try prepare(url: url)
+        try begin()
     }
 
     /// Rebuilds ONLY the CoreAudio objects, against whatever the default output
@@ -161,16 +202,26 @@ final class SystemTapCapture {
 
     }
 
-    // 5 & 6. IOProc with a C function pointer, then start. NOT the block variant (AD-1).
-    private func startIO() throws {
+    // 5. IOProc with a C function pointer. NOT the block variant (AD-1).
+    private func createIOProc() throws {
         selfRef = Unmanaged.passRetained(self)
-        var st = AudioDeviceCreateIOProcID(aggregateID, Self.ioProc,
+        let st = AudioDeviceCreateIOProcID(aggregateID, Self.ioProc,
                                            selfRef!.toOpaque(), &ioProcID)
         Log.audio.info("AudioDeviceCreateIOProcID -> \(st)")
-        guard st == noErr, let proc = ioProcID else {
+        guard st == noErr, ioProcID != nil else {
+            selfRef?.release(); selfRef = nil
             throw MinutesError.systemAudioTapFailed(stage: "create IOProc", status: st)
         }
-        st = AudioDeviceStart(aggregateID, proc)
+    }
+
+    // 6. Start. Used by the device-change rebuild, which has no second Stream to
+    // be adjacent to and must therefore do both halves itself.
+    private func startIO() throws {
+        try createIOProc()
+        guard let proc = ioProcID else {
+            throw MinutesError.systemAudioTapFailed(stage: "create IOProc", status: -1)
+        }
+        let st = AudioDeviceStart(aggregateID, proc)
         Log.audio.info("AudioDeviceStart -> \(st)")
         guard st == noErr else {
             throw MinutesError.systemAudioTapFailed(stage: "start device", status: st)
@@ -242,6 +293,12 @@ final class SystemTapCapture {
         let origin = w?.originHostSeconds
         teardown()
         let e = w?.evidence ?? .none
+        // After `teardown()`, which flushes the ring through `writer.stop()`, and
+        // therefore after the tail is written rather than resident. `teardown`
+        // resets the ring, so these are read from the writer's own snapshot of
+        // the counters rather than from the ring — see `StreamFileWriter.ledger`.
+        let led = w?.ledger ?? .unknown
+        let press = w?.drainPressure ?? .unknown
         Log.audio.info("system capture stopped duration=\(e.duration) peak=\(e.peak) nonSilent=\(e.nonSilentSeconds) producedAudio=\(e.producedAudio) declaredRate=\(r.declaredRate) observedRate=\(r.observedRate)")
         if let why = e.failureReason {
             Log.audio.error("system stream produced no usable audio: \(why, privacy: .public)")
@@ -253,7 +310,8 @@ final class SystemTapCapture {
             Log.audio.error("system stream continuity: \(why, privacy: .public)")
         }
         return StreamCaptureResult(duration: e.duration, evidence: e, rate: r,
-                                   continuity: cont, originHostSeconds: origin)
+                                   continuity: cont, originHostSeconds: origin,
+                                   ledger: led, pressure: press)
     }
 
     var level: Float { writer?.peak ?? 0 }

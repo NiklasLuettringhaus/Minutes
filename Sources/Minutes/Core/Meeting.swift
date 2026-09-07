@@ -273,6 +273,32 @@ struct Meeting: Codable, Sendable, Identifiable {
     var micContinuity: StreamContinuity?
     var systemContinuity: StreamContinuity?
 
+    /// What became of every sample each device delivered (AD-57, FR-102).
+    ///
+    /// The term `micContinuity` and `systemContinuity` cannot reach. Those two
+    /// answer "did this process receive everything the device counted", and on
+    /// the recording that forced this increment the answer was **yes on both
+    /// Streams** while the System Stream's file was 8.37 seconds short of 42
+    /// minutes. Nothing between the callback and the file reported to anyone.
+    ///
+    /// Absent on every record written before increment 11, and absent reads as
+    /// **never counted** rather than as nothing lost.
+    var micLedger: CaptureLedger?
+    var systemLedger: CaptureLedger?
+    /// How close each Stream came to outrunning its writer (AD-58, FR-103).
+    ///
+    /// Kept beside the ledger because a drop count with no cause attached is not
+    /// a diagnosis, and because a Stream that dropped nothing while peaking at
+    /// 96% of its ring is a fault waiting for a busier day.
+    var micPressure: DrainPressure?
+    var systemPressure: DrainPressure?
+    /// What each stage of capture start cost (AD-59, FR-104).
+    ///
+    /// `streamStartOffset` below is one number and was not actionable. This is
+    /// the same quantity decomposed into the part capture caused and the part
+    /// the devices did.
+    var startTiming: CaptureStartTiming?
+
     /// Seconds to add to a System Stream Utterance's time to place it on the Mic
     /// Stream's timeline (FR-97, AD-53).
     ///
@@ -454,6 +480,11 @@ struct Meeting: Codable, Sendable, Identifiable {
         self.systemRate = nil
         self.micContinuity = nil
         self.systemContinuity = nil
+        self.micLedger = nil
+        self.systemLedger = nil
+        self.micPressure = nil
+        self.systemPressure = nil
+        self.startTiming = nil
         self.streamStartOffset = nil
         self.echo = nil
         self.outputDevice = nil
@@ -499,6 +530,11 @@ struct Meeting: Codable, Sendable, Identifiable {
         systemRate = try c.decodeIfPresent(RateFidelity.self, forKey: .systemRate)
         micContinuity = try c.decodeIfPresent(StreamContinuity.self, forKey: .micContinuity)
         systemContinuity = try c.decodeIfPresent(StreamContinuity.self, forKey: .systemContinuity)
+        micLedger = try c.decodeIfPresent(CaptureLedger.self, forKey: .micLedger)
+        systemLedger = try c.decodeIfPresent(CaptureLedger.self, forKey: .systemLedger)
+        micPressure = try c.decodeIfPresent(DrainPressure.self, forKey: .micPressure)
+        systemPressure = try c.decodeIfPresent(DrainPressure.self, forKey: .systemPressure)
+        startTiming = try c.decodeIfPresent(CaptureStartTiming.self, forKey: .startTiming)
         streamStartOffset = try c.decodeIfPresent(TimeInterval.self, forKey: .streamStartOffset)
         echo = try c.decodeIfPresent(EchoAnalysis.self, forKey: .echo)
         outputDevice = try c.decodeIfPresent(OutputDevice.self, forKey: .outputDevice)

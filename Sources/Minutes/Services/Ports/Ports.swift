@@ -46,6 +46,20 @@ struct CapturedStreams: Sendable {
     /// Whether the output changed kind mid-Session. Recorded because the union
     /// in `outputDevice.kind` deliberately hides *when* it was possible.
     var outputDeviceChanged: Bool = false
+    /// What became of every sample each device delivered (FR-102, AD-57).
+    ///
+    /// Per Stream, never per Meeting, for the same reason the rate check is: on
+    /// the recording that forced this, the Mic Stream lost 22 ms and the System
+    /// Stream lost 8.37 s, and one figure for the recording would have been
+    /// wrong in both directions.
+    var micLedger: CaptureLedger = .unknown
+    var systemLedger: CaptureLedger = .unknown
+    /// How close each Stream came to outrunning its writer (FR-103, AD-58).
+    var micPressure: DrainPressure = .unknown
+    var systemPressure: DrainPressure = .unknown
+    /// What each stage of capture start cost, on the callbacks' own clock
+    /// (FR-104, AD-59).
+    var startTiming: CaptureStartTiming = .unknown
 }
 
 protocol Capturing: AnyObject {
@@ -240,4 +254,8 @@ struct StreamCaptureResult: Sendable {
     /// Host time, in seconds, of the very first sample this Stream delivered.
     /// The two Streams' offset is the difference of these (FR-97, AD-53).
     var originHostSeconds: Double?
+    /// What became of every sample the device delivered (FR-102, AD-57).
+    var ledger: CaptureLedger = .unknown
+    /// How close this Stream came to outrunning its writer (FR-103, AD-58).
+    var pressure: DrainPressure = .unknown
 }

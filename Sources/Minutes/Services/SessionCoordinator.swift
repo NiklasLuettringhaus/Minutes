@@ -127,6 +127,18 @@ final class SessionCoordinator: ObservableObject {
             // read as one.
             m.micContinuity = streams.micContinuity
             m.systemContinuity = streams.systemContinuity
+            // AD-57: what became of every sample the devices delivered. The term
+            // continuity cannot reach — it answers what the device handed over,
+            // and this answers what reached the file.
+            m.micLedger = streams.micLedger
+            m.systemLedger = streams.systemLedger
+            // AD-58: how close each Stream came to outrunning its writer, so a
+            // drop count has a cause attached and a near-miss is visible at all.
+            m.micPressure = streams.micPressure
+            m.systemPressure = streams.systemPressure
+            // AD-59: the offset below, decomposed into the part capture caused
+            // and the part the devices did.
+            m.startTiming = streams.startTiming
             // AD-53: measured, not estimated, and absent when it could not be.
             m.streamStartOffset = streams.streamStartOffset
             // AD-54: a fact about the capture, read rather than inferred.

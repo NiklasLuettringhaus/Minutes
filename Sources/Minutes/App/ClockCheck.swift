@@ -19,10 +19,17 @@ import Foundation
 enum ClockCheck {
 
     static func run() {
+        // The cap is 3600 rather than 60 because the fault this command now
+        // measures is **not exercised by a short capture**. A five-second probe
+        // reads +35 to +62 ms of start offset where a real 42-minute meeting read
+        // +1,006 ms, and the sample loss FR-102 counts appeared on two recordings
+        // of 31 and 42 minutes and on neither of six shorter ones. A diagnostic
+        // that cannot run for as long as the fault takes to appear is a
+        // diagnostic that reports the fault absent.
         let seconds = CommandLine.arguments.dropFirst().compactMap(Double.init).first ?? 6
         let sem = DispatchSemaphore(value: 0)
         Task {
-            await go(seconds: max(2, min(60, seconds)))
+            await go(seconds: max(2, min(3600, seconds)))
             sem.signal()
         }
         // The main thread pumps rather than blocks: AVAudioEngine needs a live
@@ -78,8 +85,13 @@ enum ClockCheck {
         let streams = capture.stop()
 
         print("")
-        report("microphone", streams.micRate, streams.micContinuity)
-        report("system tap", streams.systemRate, streams.systemContinuity)
+        report("microphone", streams.micRate, streams.micContinuity,
+               streams.micLedger, streams.micPressure)
+        report("system tap", streams.systemRate, streams.systemContinuity,
+               streams.systemLedger, streams.systemPressure)
+
+        print("")
+        reportStart(streams.startTiming)
 
         print("")
         if let offset = streams.streamStartOffset {
@@ -99,11 +111,77 @@ enum ClockCheck {
         }
     }
 
-    private static func report(_ name: String, _ rate: RateFidelity, _ cont: StreamContinuity) {
+    /// FR-104. Where the offset was actually spent.
+    ///
+    /// Printed as a decomposition rather than a total because a total is not
+    /// something a change can be aimed at. The two terms sum to the offset by
+    /// construction, so a reader can check the arithmetic rather than trust it.
+    private static func reportStart(_ t: CaptureStartTiming) {
+        guard t.isMeasured else {
+            print("start timing: unknown — no host times were stamped")
+            return
+        }
+        print("start timing (AD-59, all on the callbacks' own clock):")
+        if let m = t.micPrepareSeconds {
+            print(String(format: "  mic prepared in              %+7.1f ms, before either device was started", m * 1000))
+        }
+        if let b = t.tapChainBuildSeconds {
+            print(String(format: "  tap chain built in           %+7.1f ms, before either device was started", b * 1000))
+            print("    (under the previous order this was paid out of the microphone's recording time)")
+        }
+        if let ser = t.startSerialisationSeconds {
+            print(String(format: "  between the two starts       %+7.1f ms  <- the term AD-59 owns", ser * 1000))
+        }
+        if let m = t.micFirstCallbackSeconds {
+            print(String(format: "  mic first callback after     %+7.1f ms", m * 1000))
+        }
+        if let sy = t.systemFirstCallbackSeconds {
+            print(String(format: "  system first callback after  %+7.1f ms", sy * 1000))
+        }
+        if let d = t.decomposition, let total = t.streamOffsetSeconds {
+            print(String(format: "  offset %+.1f ms = %+.1f ms serialisation %+.1f ms device latency",
+                         total * 1000, d.serialisation * 1000, d.deviceLatency * 1000))
+        }
+    }
+
+    /// FR-102 and FR-103. The accounting identity, and how close the writer came
+    /// to losing the race.
+    private static func reportLedger(_ led: CaptureLedger, _ press: DrainPressure) {
+        guard led.isMeasured else {
+            print("  ledger:     unknown — the device supplied no counters")
+            return
+        }
+        print(String(format: "  ledger:     device %.0f in -> dropped %.0f in %d overflow(s), consumed %.0f, written %.0f out",
+                     led.deviceFrames, led.droppedFrames, led.overflows,
+                     led.consumedFrames, led.writtenFrames))
+        print(String(format: "              unaccounted %.0f in, conversion remainder %.0f out",
+                     led.unaccountedFrames, led.conversionRemainder))
+        if led.lostFrames >= 1 {
+            print(String(format: "              LOST %.0f out (%.3f s, %.4f%%)",
+                         led.lostFrames, led.lostSeconds, (led.lostProportion ?? 0) * 100))
+            for a in led.attribution {
+                print(String(format: "                %-45@ %.0f out", a.term as NSString, a.frames))
+            }
+            print("              disclosed to the reader: \(led.isWorthDisclosing ? "yes" : "no, under the 0.4 s floor")")
+        } else {
+            print("              every sample the device reported reached the file")
+        }
+        guard press.isMeasured else { return }
+        print(String(format: "  pressure:   ring holds %.1f s; high water %.0f frames (%.2f%% / %.3f s)",
+                     press.capacitySeconds, press.highWaterFrames,
+                     (press.highWaterProportion ?? 0) * 100, press.highWaterSeconds))
+        print(String(format: "              longest gap between drains %.1f ms, backlog then %.0f frames (%.3f s)",
+                     press.longestGapSeconds * 1000, press.backlogAtLongestGap,
+                     press.backlogAtLongestGapSeconds))
+    }
+
+    private static func report(_ name: String, _ rate: RateFidelity, _ cont: StreamContinuity,
+                               _ led: CaptureLedger, _ press: DrainPressure) {
         print("\(name):")
         print("  clock:      \(rate.source.rawValue)")
         guard rate.framesObserved > 0 else {
             print("  nothing measured")
+            reportLedger(led, press)
             return
         }
         print(String(format: "  declared:   %.0f Hz", rate.declaredRate))
@@ -128,5 +206,6 @@ enum ClockCheck {
         } else {
             print("  continuity: unknown")
         }
+        reportLedger(led, press)
     }
 }

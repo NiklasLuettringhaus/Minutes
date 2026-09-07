@@ -79,6 +79,20 @@ struct AudioClock: Equatable, Sendable, Codable {
     /// The device's counter restarted — a rebuilt tap chain, not lost audio.
     private(set) var rebases = 0
 
+    /// Every frame the device's counter accounted for since the first sample,
+    /// **across rebases** (AD-57, FR-102).
+    ///
+    /// Distinct from `sampleAdvance`, which is measured from `first` and is
+    /// therefore reset by a rebase — correct for a *rate*, and wrong for an
+    /// accounting identity that has to balance over the whole Session. A tap
+    /// chain rebuilt on an output-device change (FR-8) would otherwise make the
+    /// ledger report the entire pre-rebase recording as unaccounted for.
+    ///
+    /// It excludes the final callback's own frames, exactly as `sampleAdvance`
+    /// does, because a counter difference cannot see past the last buffer's
+    /// start. `framesProduced` adds them back.
+    private(set) var framesCounted: Double = 0
+
     init() {}
 
     mutating func record(_ tick: Tick) {
@@ -98,10 +112,15 @@ struct AudioClock: Equatable, Sendable, Codable {
         // as missing audio would invent a defect out of a supported feature.
         guard advance >= 0 else {
             rebases += 1
+            // The old device's last buffer is the best available account of what
+            // it produced after its final callback began. Assuming zero would
+            // charge the ledger for it; assuming more would invent audio.
+            framesCounted += previous.frames
             first = tick; last = tick
             framesDelivered = 0; framesMissing = 0
             return
         }
+        framesCounted += advance
         framesDelivered += previous.frames
         // Half a frame of slack, because these are Doubles and a device is
         // entitled to report a fractional sample time.
@@ -125,6 +144,18 @@ struct AudioClock: Equatable, Sendable, Codable {
     var sampleAdvance: Double {
         guard let f = first, let l = last else { return 0 }
         return l.sampleTime - f.sampleTime
+    }
+
+    /// Everything the device counted, from the first sample to the end of the
+    /// last buffer it handed over (AD-57).
+    ///
+    /// The numerator of the ledger's first term. `framesCounted` stops at the
+    /// last callback's *start*, so the last buffer's own frames are added here —
+    /// they were produced and delivered, and leaving them out would report one
+    /// buffer of every recording as lost.
+    var framesProduced: Double {
+        guard let l = last else { return 0 }
+        return framesCounted + l.frames
     }
 
     /// Frames per second, as the device counts them. Zero until measurable.

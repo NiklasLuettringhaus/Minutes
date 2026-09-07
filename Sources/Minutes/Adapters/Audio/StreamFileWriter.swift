@@ -54,6 +54,33 @@ final class StreamFileWriter {
     ///
     /// Measuring between two later points removes the transient entirely.
     private var measureBaseline: (frames: AVAudioFramePosition, at: Date)?
+    /// The ring's counters, frozen at `stop()` (AD-57).
+    ///
+    /// **The ledger must not depend on being read before the ring is reset.**
+    /// The first version read them live, and `SystemTapCapture.stop` calls
+    /// `teardown()` — which calls `ring.reset()` — before it reads the result. So
+    /// the System Stream reported zero drops and a zero high-water mark on every
+    /// capture, which is the *exact* reading the increment is trying to obtain
+    /// and would have looked like good news. Freezing them here makes the
+    /// measurement independent of the order two adapters happen to do their
+    /// teardown in.
+    private var frozen: (dropped: Int, overflows: Int, highWater: Int, resident: Int)?
+
+    /// The longest interval between two successive drains (FR-103, AD-58).
+    ///
+    /// Measured here rather than in the IOProc because this is the thread that
+    /// falls behind, and because AD-1 forbids adding anything to that one. It is
+    /// a subtraction of two values `lastDrainAt` already holds, so nothing new is
+    /// sampled — the same argument AD-45 makes for the rate check being free.
+    private(set) var longestDrainGap: TimeInterval = 0
+    /// The backlog waiting at the end of that longest gap, in input frames.
+    ///
+    /// **It never travels without the gap, and the gap never travels without
+    /// it.** The drain loop sleeps 20 ms whenever the ring is empty, so an idle
+    /// recording produces 20 ms gaps by design; what separates that from
+    /// starvation is whether work had piled up by the time the gap ended.
+    private(set) var backlogAtLongestGap: Double = 0
+
     /// When the most recently counted chunk was seen.
     ///
     /// The rate is `(frames since baseline) / (lastDrainAt - baselineAt)`, so both
@@ -213,6 +240,10 @@ final class StreamFileWriter {
         // this a five-second Test Playground recording (FR-47) would produce an
         // empty file.
         settleRateIfPossible(final: true)
+        // After the flush, so `resident` is what the flush could not move rather
+        // than what it had not moved yet, and before any caller resets the ring.
+        frozen = (dropped: ring.droppedSamples, overflows: ring.overflowEvents,
+                  highWater: ring.highWaterFill, resident: ring.count)
         file = nil
         thread = nil
     }
@@ -317,6 +348,43 @@ final class StreamFileWriter {
     /// Absent where the device supplied no timestamps.
     var originHostSeconds: Double? { clock?.snapshot.originHostSeconds }
 
+    /// What became of every sample the device delivered (AD-57, FR-102).
+    ///
+    /// **Every term is a counter this type or the ring already kept.** Nothing
+    /// new is measured; the change is that the counts now leave the adapter.
+    /// `inputFramesConsumed` in particular has existed since AD-44 and was
+    /// discarded at this boundary, and it is the single term that separates
+    /// "never got out of the ring" from "lost between the ring and the file" —
+    /// which is the difference between naming this defect's mechanism and
+    /// guessing it.
+    var ledger: CaptureLedger {
+        let channels = Double(max(1, format.channelCount))
+        let r = frozen ?? (dropped: ring.droppedSamples, overflows: ring.overflowEvents,
+                           highWater: ring.highWaterFill, resident: ring.count)
+        return CaptureLedger(
+            deviceFrames: clock?.snapshot.framesProduced ?? 0,
+            droppedFrames: Double(r.dropped) / channels,
+            overflows: r.overflows,
+            consumedFrames: Double(inputFramesConsumed),
+            residentFrames: Double(r.resident) / channels + Double(pending.count) / channels,
+            writtenFrames: Double(framesWritten),
+            inputRate: effectiveRate,
+            outputRate: Self.outputSampleRate)
+    }
+
+    /// How close this Stream came to outrunning this thread (AD-58, FR-103).
+    var drainPressure: DrainPressure {
+        let channels = Double(max(1, format.channelCount))
+        let r = frozen ?? (dropped: ring.droppedSamples, overflows: ring.overflowEvents,
+                           highWater: ring.highWaterFill, resident: ring.count)
+        return DrainPressure(
+            highWaterFrames: Double(r.highWater) / channels,
+            capacityFrames: Double(ring.capacity) / channels,
+            longestGapSeconds: longestDrainGap,
+            backlogAtLongestGap: backlogAtLongestGap,
+            inputRate: effectiveRate)
+    }
+
     /// The input format conversions actually use, which may not be the one the
     /// device claimed.
     private func makeConverter(inputRate: Double) -> AVAudioConverter? {
@@ -387,6 +455,17 @@ final class StreamFileWriter {
         let instant = now()
         if measureBaseline == nil {
             measureBaseline = (frames: inputFramesConsumed, at: instant)
+        }
+        // FR-103. The gap and the backlog that ended it, as a pair — see
+        // `longestDrainGap`. `backlog` is what was still in the ring after this
+        // read took its share, plus the share it took: the whole queue the
+        // writer arrived to find.
+        if let previous = lastDrainAt {
+            let gap = instant.timeIntervalSince(previous)
+            if gap > longestDrainGap {
+                longestDrainGap = gap
+                backlogAtLongestGap = Double(frames) + Double(ring.count) / Double(max(1, channels))
+            }
         }
         lastDrainAt = instant
 
