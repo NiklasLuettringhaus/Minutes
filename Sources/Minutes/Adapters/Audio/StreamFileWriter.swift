@@ -21,6 +21,68 @@ import AVFoundation
 final class StreamFileWriter {
     /// The one place the storage format is decided.
     static let outputSampleRate: Double = 16_000
+
+    /// Output frames offered to `AVAudioConverter` beyond what the current input
+    /// chunk needs — **and the fix for the drift this increment was written
+    /// for** (AD-57, FR-102).
+    ///
+    /// **It was 64, and 64 was the whole defect.** The output buffer is sized
+    /// from the input chunk in hand, so the slack is all the room the converter
+    /// has to hand back anything it is holding beyond that chunk. Sixty-four
+    /// frames is four milliseconds. Under load the converter holds more than
+    /// that, cannot shed it at four milliseconds per call, and the audio does not
+    /// reach the file.
+    ///
+    /// Measured with `--check-drain 20 10` — twenty seconds per shape against ten
+    /// competing `userInteractive` threads on a ten-core machine, three runs each:
+    ///
+    /// | producer shape | slack 64 | slack 4096 |
+    /// |---|---|---|
+    /// | 512 frames / 10.7 ms, stereo 48 kHz | 0.27–0.75% lost | **0%** |
+    /// | 480 frames / 20 ms, stereo 24 kHz | 0.50–0.60% | **0%** |
+    /// | 512 frames / 10.7 ms, mono 48 kHz | 0.80–0.91% | **0%** |
+    /// | 4800 frames / 100 ms, mono 48 kHz | 0% | **0%** |
+    /// | 4800 frames / 100 ms, stereo 48 kHz | 0% | **0%** |
+    ///
+    /// The two shapes that never lost anything are the ones whose callbacks are
+    /// **4,800 frames**, and the microphone's callbacks are 4,800 frames while the
+    /// system tap's are 512. That is the 380× asymmetry the real recording shows,
+    /// reproduced from the callback size alone with no audio device involved.
+    ///
+    /// **4096, and it is a bound rather than a tuned figure.** It is half of one
+    /// output chunk, so a conversion can always return a whole chunk's worth more
+    /// than the input it was just handed — which is strictly more than the
+    /// converter can be holding, because it is only ever handed one chunk at a
+    /// time. It costs 16 KB per conversion buffer and the buffer is transient.
+    /// This is not a widened tolerance: nothing is being allowed through that was
+    /// previously rejected, and the number it moves is a loss to **zero** rather
+    /// than to inside a window.
+    static let outputSlackFrames: AVAudioFrameCount = 4096
+
+    /// The slack actually used, so `--check-drain` can sweep it and show the
+    /// difference the shipping value makes. Production never sets it.
+    static var outputSlackOverride: AVAudioFrameCount?
+
+    /// Whether a conversion keeps pulling until the converter stops filling the
+    /// buffer — **the half of the fix that needs no constant** (AD-57).
+    ///
+    /// `outputSlackFrames` above makes the buffer big enough for the backlog at
+    /// the ratios this app actually meets, and "big enough" is a claim about the
+    /// ratio: at 3:1 one input chunk converts to at most 2,731 output frames, so
+    /// 4,096 covers it. At **2:1 upward** — an 8 kHz device, and this library
+    /// holds five recordings whose System Stream ran at 8000 Hz — one 8,192-frame
+    /// chunk converts to 16,384 output frames and 4,096 does not cover it at all.
+    ///
+    /// So the size is not the mechanism's cure, it is a symptom of not asking the
+    /// converter whether it has more. `.haveData` means the buffer was filled and
+    /// there may be more behind it; `.inputRanDry` means it has run out. Looping
+    /// on the former drains the backlog at any ratio and needs no figure to be
+    /// right.
+    ///
+    /// Sweepable so the two halves can be measured apart rather than shipped as
+    /// one change nobody can attribute. Production never sets it.
+    static var pullUntilDryOverride: Bool?
+    static let pullUntilDry = true
     private static let outputFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: outputSampleRate,
         channels: 1, interleaved: false)!
@@ -54,6 +116,25 @@ final class StreamFileWriter {
     ///
     /// Measuring between two later points removes the transient entirely.
     private var measureBaseline: (frames: AVAudioFramePosition, at: Date)?
+    /// Output frames the converter actually produced (AD-57).
+    ///
+    /// Splits `CaptureLedger.conversionRemainder` into its two halves, which are
+    /// different faults: frames the converter never produced from input it was
+    /// given, and frames it produced that did not reach the file. The first
+    /// reading of the identity could not tell them apart, and "consumed and not
+    /// written" was doing the work of both.
+    private(set) var convertProducedFrames: AVAudioFramePosition = 0
+    /// Times `AVAudioFile.write` threw.
+    ///
+    /// It was logged and never counted. A recording that lost audio because the
+    /// disk stalled and one that lost it because the ring overflowed are
+    /// different faults, and a log line that has rolled out of the unified log —
+    /// as the log for the 42.4-minute recording had by the time it was looked at
+    /// — is not a record.
+    private(set) var writeFailures = 0
+    /// Output frames lost to those failures.
+    private(set) var writeFailureFrames: AVAudioFramePosition = 0
+
     /// The ring's counters, frozen at `stop()` (AD-57).
     ///
     /// **The ledger must not depend on being read before the ring is reset.**
@@ -166,6 +247,21 @@ final class StreamFileWriter {
     /// Counted at input rate, which is what `nonSilentSeconds` divides by.
     private(set) var nonSilentInputFrames: AVAudioFramePosition = 0
 
+    /// The drain thread's scheduling class.
+    ///
+    /// **A seam, so that the question can be measured rather than argued.** This
+    /// thread was `.utility` from the day it was written, which is the lowest
+    /// non-background class: on Apple Silicon it is scheduled on the efficiency
+    /// cores and is subject to CPU throttling. If it is late, the ring overflows
+    /// and the user's audio is gone — which is not the profile of background
+    /// work, and 8.37 seconds went missing from one recording somewhere between
+    /// the callback and this thread.
+    ///
+    /// Exposed rather than simply changed because `--check-drain` has to be able
+    /// to sweep it and report the difference. A change that cannot be shown to
+    /// improve a measured number does not ship.
+    var qualityOfService: QualityOfService = .utility
+
     /// When true, silence is written instead of the captured audio.
     ///
     /// Applied here, on the writer's own thread, rather than in the capture
@@ -214,7 +310,7 @@ final class StreamFileWriter {
         running = true
         let t = Thread { [weak self] in self?.drainLoop() }
         t.name = "minutes.writer.\(url.lastPathComponent)"
-        t.qualityOfService = .utility
+        t.qualityOfService = qualityOfService
         thread = t
         t.start()
     }
@@ -240,6 +336,7 @@ final class StreamFileWriter {
         // this a five-second Test Playground recording (FR-47) would produce an
         // empty file.
         settleRateIfPossible(final: true)
+        flushConverter()
         // After the flush, so `resident` is what the flush could not move rather
         // than what it had not moved yet, and before any caller resets the ring.
         frozen = (dropped: ring.droppedSamples, overflows: ring.overflowEvents,
@@ -368,9 +465,16 @@ final class StreamFileWriter {
             consumedFrames: Double(inputFramesConsumed),
             residentFrames: Double(r.resident) / channels + Double(pending.count) / channels,
             writtenFrames: Double(framesWritten),
+            producedFrames: Double(convertProducedFrames),
+            writeFailures: writeFailures,
+            writeFailureFrames: Double(writeFailureFrames),
             inputRate: effectiveRate,
             outputRate: Self.outputSampleRate)
     }
+
+    /// The rate the converter is actually configured to read, for diagnostics
+    /// that need to distinguish a rebuilt converter from a settled one.
+    var converterInputRate: Double { converter?.inputFormat.sampleRate ?? 0 }
 
     /// How close this Stream came to outrunning this thread (AD-58, FR-103).
     var drainPressure: DrainPressure {
@@ -552,56 +656,133 @@ final class StreamFileWriter {
                 dst.update(from: p.baseAddress! + offset * channels, count: n * channels)
             }
             offset += n
-            guard let out = convert(src, using: converter) else { continue }
-            if isMuted, let ch = out.floatChannelData?[0] {
-                ch.update(repeating: 0, count: Int(out.frameLength))
-            }
-            guard out.frameLength > 0 else { continue }
-            do {
-                try file.write(from: out)
-                framesWritten += AVAudioFramePosition(out.frameLength)
-            } catch {
-                Log.audio.error("write failed: \(error.localizedDescription, privacy: .public)")
-            }
+            convertAndAppend(src, using: converter, into: file)
         }
     }
 
-    /// One captured chunk to 16 kHz mono.
+    /// Empties the resampler's filter tail into the file (AD-57).
     ///
-    /// The input-block form is required rather than optional: with a sample-rate
-    /// change the output frame count differs from the input's, so the simple
-    /// `convert(to:from:)` overload is not applicable. `inputRanDry` is the normal
-    /// terminating status here — we hand over one buffer and the converter asks for
-    /// more — and whatever it produced by then is real audio that must be written.
-    private func convert(_ src: AVAudioPCMBuffer, using converter: AVAudioConverter) -> AVAudioPCMBuffer? {
-        let ratio = Self.outputSampleRate / effectiveRate
-        let capacity = AVAudioFrameCount(Double(src.frameLength) * ratio) + 64
-        guard capacity > 0,
-              let out = AVAudioPCMBuffer(pcmFormat: Self.outputFormat, frameCapacity: capacity)
-        else { return nil }
-
-        var supplied = false
-        var error: NSError?
-        let status = converter.convert(to: out, error: &error) { _, outStatus in
-            if supplied {
-                outStatus.pointee = .noDataNow
+    /// **Found by the accounting identity, which is the point of having one.**
+    /// Every capture reported a non-zero `conversionRemainder` — 20 to 400
+    /// output frames, under 25 ms, noisy and not proportional to duration. The
+    /// cause is that nothing ever told `AVAudioConverter` the stream had ended,
+    /// so the samples inside its delay line were converted from input this
+    /// process had consumed and were never emitted.
+    ///
+    /// The loss is small. Fixing it is not about the milliseconds: a remainder
+    /// that is *always* non-zero is a remainder a reader learns to ignore, and
+    /// this increment exists because a quantity nobody looked at hid a defect
+    /// three orders of magnitude larger. A term that reads zero when nothing is
+    /// wrong is the only kind worth reporting.
+    private func flushConverter() {
+        guard let file, let converter, rateSettled else { return }
+        // Looped for the same reason `convertAndAppend` is: one call returns at
+        // most one buffer's worth and the converter may be holding more. 64
+        // passes is a bound against a converter that never reports itself dry,
+        // not an expectation — a filter tail is a few hundred frames.
+        for _ in 0..<64 {
+            guard let out = AVAudioPCMBuffer(pcmFormat: Self.outputFormat,
+                                             frameCapacity: 8192) else { return }
+            var error: NSError?
+            let status = converter.convert(to: out, error: &error) { _, outStatus in
+                outStatus.pointee = .endOfStream
                 return nil
             }
-            supplied = true
-            outStatus.pointee = .haveData
-            return src
+            switch status {
+            case .haveData, .inputRanDry, .endOfStream:
+                let produced = out.frameLength
+                append(out, to: file)
+                // Nothing left to give, or the converter has said it is finished.
+                guard produced > 0, status == .haveData else { return }
+            case .error:
+                Log.audio.error("tail resample failed: \(error?.localizedDescription ?? "unknown", privacy: .public)")
+                return
+            @unknown default:
+                return
+            }
         }
+        Log.audio.error("tail flush did not run dry in 64 passes; the remainder is abandoned")
+    }
 
-        switch status {
-        case .haveData, .inputRanDry:
-            return out
-        case .endOfStream:
-            return out.frameLength > 0 ? out : nil
-        case .error:
-            Log.audio.error("resample failed: \(error?.localizedDescription ?? "unknown", privacy: .public)")
-            return nil
-        @unknown default:
-            return nil
+    /// Hands one chunk to the converter and writes everything it yields.
+    ///
+    /// **Looped, and the loop is the fix.** The output buffer is sized from the
+    /// chunk in hand, so it is the converter's only opportunity to return
+    /// anything it is still holding from earlier chunks. A single call could shed
+    /// only `outputSlackFrames` of that per chunk; under load the converter holds
+    /// more than that and the audio never reaches the file. Measured with
+    /// `--check-drain 20 10`, three runs each: **0.16% to 0.60% lost** on the
+    /// shapes with 480- and 512-frame callbacks, **0.000%** on the shapes with
+    /// 4,800-frame callbacks — which is the microphone's callback size and the
+    /// System Stream's, and therefore the 380× asymmetry the real recording
+    /// shows, reproduced with no audio device involved.
+    ///
+    /// `.haveData` means the buffer came back full and there may be more behind
+    /// it. `.inputRanDry` means the converter has consumed everything it was
+    /// given. Looping on the first is correct at every ratio, which sizing the
+    /// buffer is not.
+    private func convertAndAppend(_ src: AVAudioPCMBuffer,
+                                  using converter: AVAudioConverter,
+                                  into file: AVAudioFile) {
+        var supplied = false
+        // A bound, not an expectation: one chunk cannot need more passes than
+        // its own output size divided by the buffer, and this is far above that.
+        // It exists so a converter that never reports itself dry cannot spin.
+        var passes = 0
+        while passes < 64 {
+            passes += 1
+            guard let out = makeOutputBuffer(forInputFrames: src.frameLength) else { return }
+            var error: NSError?
+            let status = converter.convert(to: out, error: &error) { _, outStatus in
+                if supplied {
+                    outStatus.pointee = .noDataNow
+                    return nil
+                }
+                supplied = true
+                outStatus.pointee = .haveData
+                return src
+            }
+            switch status {
+            case .haveData, .inputRanDry, .endOfStream:
+                append(out, to: file)
+                guard Self.pullUntilDryOverride ?? Self.pullUntilDry else { return }
+                // Anything but `.haveData` means the converter has run out, and a
+                // zero-length buffer means it had nothing left to give.
+                guard status == .haveData, out.frameLength > 0 else { return }
+            case .error:
+                Log.audio.error("resample failed: \(error?.localizedDescription ?? "unknown", privacy: .public)")
+                return
+            @unknown default:
+                return
+            }
+        }
+        Log.audio.error("conversion did not run dry in 64 passes; the chunk is abandoned")
+    }
+
+    private func makeOutputBuffer(forInputFrames frames: AVAudioFrameCount) -> AVAudioPCMBuffer? {
+        let ratio = Self.outputSampleRate / effectiveRate
+        let slack = Self.outputSlackOverride ?? Self.outputSlackFrames
+        let capacity = AVAudioFrameCount(Double(frames) * ratio) + slack
+        guard capacity > 0 else { return nil }
+        return AVAudioPCMBuffer(pcmFormat: Self.outputFormat, frameCapacity: capacity)
+    }
+
+    /// Writes one converted buffer, honouring the mute and counting both halves
+    /// of what can go wrong with it.
+    private func append(_ out: AVAudioPCMBuffer, to file: AVAudioFile) {
+        if isMuted, let ch = out.floatChannelData?[0] {
+            ch.update(repeating: 0, count: Int(out.frameLength))
+        }
+        guard out.frameLength > 0 else { return }
+        convertProducedFrames += AVAudioFramePosition(out.frameLength)
+        do {
+            try file.write(from: out)
+            framesWritten += AVAudioFramePosition(out.frameLength)
+        } catch {
+            writeFailures += 1
+            writeFailureFrames += AVAudioFramePosition(out.frameLength)
+            Log.audio.error("write failed: \(error.localizedDescription, privacy: .public)")
         }
     }
+
 }

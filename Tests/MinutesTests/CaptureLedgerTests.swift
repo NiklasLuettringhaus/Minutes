@@ -76,13 +76,34 @@ final class CaptureLedgerTests: XCTestCase {
         XCTAssertEqual(l.attribution.first?.term, "unaccounted for")
     }
 
-    func testALossBetweenTheRingAndTheFileIsReportedAsAConversionRemainder() {
-        let l = CaptureLedger(deviceFrames: 300_000, droppedFrames: 0, overflows: 0,
-                              consumedFrames: 300_000, residentFrames: 0,
-                              writtenFrames: 90_000, inputRate: 48_000, outputRate: 16_000)
-        XCTAssertEqual(l.unaccountedFrames, 0, "the writer consumed everything")
-        XCTAssertEqual(l.conversionRemainder, 10_000, "and wrote 10,000 output frames fewer")
-        XCTAssertEqual(l.attribution.first?.term, "consumed and not written")
+    /// The two halves of a conversion loss are different faults and the ledger
+    /// must not render them identically. "Consumed and not written" was doing
+    /// the work of both, and the two have different causes and different fixes:
+    /// one is a converter that did not produce, the other is a disk that did not
+    /// accept.
+    func testTheTwoHalvesOfAConversionLossAreDistinguished() {
+        // The converter never produced it.
+        let neverConverted = CaptureLedger(
+            deviceFrames: 300_000, droppedFrames: 0, overflows: 0,
+            consumedFrames: 300_000, residentFrames: 0, writtenFrames: 90_000,
+            producedFrames: 90_000, inputRate: 48_000, outputRate: 16_000)
+        XCTAssertEqual(neverConverted.unaccountedFrames, 0, "the writer consumed everything")
+        XCTAssertEqual(neverConverted.conversionRemainder, 10_000)
+        XCTAssertEqual(neverConverted.unproducedFrames, 10_000)
+        XCTAssertEqual(neverConverted.writeFailureFrames, 0)
+        XCTAssertEqual(neverConverted.attribution.first?.term,
+                       "consumed and never converted")
+
+        // The converter produced it and the file refused it.
+        let notWritten = CaptureLedger(
+            deviceFrames: 300_000, droppedFrames: 0, overflows: 0,
+            consumedFrames: 300_000, residentFrames: 0, writtenFrames: 90_000,
+            producedFrames: 100_000, writeFailures: 3, writeFailureFrames: 10_000,
+            inputRate: 48_000, outputRate: 16_000)
+        XCTAssertEqual(notWritten.unproducedFrames, 0, "the converter did its part")
+        XCTAssertEqual(notWritten.writeFailures, 3)
+        XCTAssertEqual(notWritten.attribution.first?.term,
+                       "converted and not written to the file")
     }
 
     /// AD-57: **zero is a measurement and absent is not.** The Mic Stream is this
@@ -352,5 +373,195 @@ final class CaptureLedgerTests: XCTestCase {
         XCTAssertEqual(p.highWaterProportion ?? 0, 0.96, accuracy: 0.001)
         XCTAssertEqual(p.highWaterSeconds, 9.6, accuracy: 0.01)
         XCTAssertTrue(p.isMeasured)
+    }
+}
+
+/// FR-102, AD-57 — the conversion defect itself, and the two halves of its fix.
+///
+/// **These exist so that a revert fails the suite.** The mechanism is one
+/// constant and one loop, both of which look like harmless simplifications on
+/// the page: the output buffer offered to `AVAudioConverter` was sized from the
+/// input chunk plus 64 frames, and each chunk was converted in a single pass.
+/// Under load that lost 0.16% to 0.60% of the shapes with 480- and 512-frame
+/// callbacks and nothing at all of the shapes with 4,800-frame ones, which is
+/// the 380× asymmetry the real recording shows.
+///
+/// The load-dependent measurement lives in `--check-drain`, deliberately. A test
+/// that has to load the machine to fail is a test of the scheduler, which is
+/// what took four attempts to get out of `RateCorrectionTests`. What is asserted
+/// here is the arithmetic that makes the fix correct, and the deterministic
+/// half of the behaviour.
+final class ConverterDrainTests: XCTestCase {
+
+    private var tmp: URL!
+
+    override func setUpWithError() throws {
+        tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("minutes-conv-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+    }
+
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: tmp)
+        StreamFileWriter.outputSlackOverride = nil
+        StreamFileWriter.pullUntilDryOverride = nil
+    }
+
+    /// What the two halves of the fix are, and which of them is principled.
+    ///
+    /// **The first version of this test asserted that 4,096 frames is a bound
+    /// covering one chunk's output, and that was wrong.** One 8,192-frame chunk
+    /// converts to 5,461 output frames at 24 kHz and 16,384 at 8 kHz, both above
+    /// 4,096. The constant is not a bound and is not derived; it is a larger
+    /// number that measurably removes the loss (`--check-drain`), and the honest
+    /// statement of it is here rather than in a comment claiming otherwise.
+    ///
+    /// The principled half is `pullUntilDry`: `.haveData` means the buffer came
+    /// back full and the converter may hold more, `.inputRanDry` means it has
+    /// run out. Asking is correct at every ratio, which choosing a size is not.
+    /// So the loop is what this test requires to be on.
+    func testTheLoopIsThePrincipledHalfAndTheConstantIsNotABound() {
+        XCTAssertTrue(StreamFileWriter.pullUntilDry,
+                      "the loop is the half that is correct at every ratio")
+        let chunk = 8192.0
+        let out = StreamFileWriter.outputSampleRate
+        // Recorded as a fact about the constant, not as a justification of it:
+        // there are ratios this app meets where one chunk's output exceeds it,
+        // which is exactly why the loop cannot be removed in its favour.
+        XCTAssertLessThan(Double(StreamFileWriter.outputSlackFrames),
+                          chunk * (out / 8_000),
+                          "at 2:1 one chunk is 16384 output frames; the constant "
+                          + "does not cover it and only the loop does")
+        XCTAssertGreaterThan(StreamFileWriter.outputSlackFrames, 64,
+                             "and it is larger than the 64 that shipped before, "
+                             + "which --check-drain measures as the difference "
+                             + "between 0.16-0.60%% lost and 0.000%%")
+    }
+
+    /// Every sample in must reach the file, at every ratio the app meets —
+    /// including the upsampling one the slack cannot cover on its own.
+    func testEverySampleReachesTheFileAtEveryRatioTheAppMeets() throws {
+        for rate in [8_000.0, 16_000, 22_050, 24_000, 44_100, 48_000] {
+            for channels in [AVAudioChannelCount(1), 2] {
+                let fmt = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                                      sampleRate: rate, channels: channels,
+                                                      interleaved: channels > 1))
+                let ring = RingBuffer(capacity: Int(rate) * Int(channels) * 10)
+                let w = StreamFileWriter(
+                    url: tmp.appendingPathComponent("r\(Int(rate))c\(channels).wav"),
+                    format: fmt, ring: ring)
+                try w.start()
+                // Small callbacks on purpose: this is the shape that loses.
+                //
+                // The count is **two seconds of audio at this rate**, not a fixed
+                // number of callbacks. The first version wrote 200 callbacks at
+                // every rate, which is 2.1 s at 48 kHz and **12.8 s at 8 kHz** —
+                // past the ring's ten seconds, so it overran the buffer and
+                // measured the fixture rather than the writer.
+                let callbackFrames = 512
+                let block = [Float](repeating: 0.3, count: callbackFrames * Int(channels))
+                let callbacks = Int(rate * 2) / callbackFrames
+                for _ in 0..<callbacks {
+                    block.withUnsafeBufferPointer { ring.write($0.baseAddress!, count: block.count) }
+                }
+                w.stop()
+
+                let l = w.ledger
+                let offered = Double(callbacks * callbackFrames)
+                XCTAssertEqual(l.droppedFrames, 0, "ring at \(rate) Hz x\(channels)")
+                XCTAssertEqual(l.consumedFrames, offered, "consumed at \(rate) Hz x\(channels)")
+                let expected = offered * (StreamFileWriter.outputSampleRate / rate)
+                // One frame of slack for the ratio's own rounding, and no more:
+                // the resampler's priming is measured at ~11 frames in total and
+                // the tail is now flushed, so a real loss shows immediately.
+                XCTAssertEqual(l.writtenFrames, expected, accuracy: 16,
+                               "file short at \(rate) Hz x\(channels): "
+                               + "produced \(l.producedFrames), expected \(expected)")
+            }
+        }
+    }
+
+    /// **The deterministic fixture cannot reproduce the loss, and that is the
+    /// finding rather than a gap in the test.**
+    ///
+    /// The first version of this test asserted that one pass at a 64-frame slack
+    /// would lose most of an upsampled chunk. It wrote **every frame**: the
+    /// output buffer is sized from the chunk in hand times the ratio, so it
+    /// always covers that chunk exactly, and no backlog forms on an idle
+    /// machine at any ratio. The loss is only reproducible **under load**, which
+    /// `--check-drain 20 10` does and a unit test must not — a test that has to
+    /// load the machine to fail is a test of the scheduler, which took four
+    /// attempts to get out of `RateCorrectionTests`.
+    ///
+    /// So what this asserts is the part that is deterministic and that a revert
+    /// would still break: both configurations consume everything, neither drops
+    /// anything, and the *shipping* one writes every frame at the ratio where
+    /// the constant alone provably cannot cover a chunk.
+    ///
+    /// **The mechanism by which extra slack helps under load is not
+    /// established.** The arithmetic above says it should not be needed, and the
+    /// measurement says it is. That disagreement is recorded in
+    /// `spikes/measurement-stream-alignment-2026-09-07.md` as an open question
+    /// rather than resolved by a story about `AVAudioConverter`'s internals.
+    func testBothConfigurationsConsumeEverythingAndTheShippingOneWritesItAll() throws {
+        func run(slack: AVAudioFrameCount, pull: Bool) throws -> CaptureLedger {
+            StreamFileWriter.outputSlackOverride = slack
+            StreamFileWriter.pullUntilDryOverride = pull
+            let fmt = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                                  sampleRate: 8_000, channels: 1,
+                                                  interleaved: false))
+            let ring = RingBuffer(capacity: 8_000 * 10)
+            let w = StreamFileWriter(
+                url: tmp.appendingPathComponent("s\(slack)p\(pull).wav"),
+                format: fmt, ring: ring)
+            try w.start()
+            // 8 kHz up to 16 kHz doubles the frame count, and 8 chunks of 8,192
+            // frames is 8.2 s — inside the ring's ten seconds on purpose.
+            let block = [Float](repeating: 0.3, count: 8192)
+            for _ in 0..<8 {
+                block.withUnsafeBufferPointer { ring.write($0.baseAddress!, count: block.count) }
+            }
+            w.stop()
+            return w.ledger
+        }
+
+        let before = try run(slack: 64, pull: false)
+        let after = try run(slack: StreamFileWriter.outputSlackFrames, pull: true)
+
+        let offered = Double(8 * 8192)
+        let expected = offered * 2   // 8 kHz -> 16 kHz
+        for (name, l) in [("one pass, slack 64", before), ("shipping", after)] {
+            XCTAssertEqual(l.consumedFrames, offered, "\(name) consumed everything")
+            XCTAssertEqual(l.droppedFrames, 0, "\(name): this is not a ring fault")
+            XCTAssertEqual(l.writeFailures, 0, "\(name): nor a write fault")
+        }
+        XCTAssertEqual(after.writtenFrames, expected, accuracy: 16,
+                       "the shipping configuration writes every frame at 2:1")
+        XCTAssertEqual(after.unproducedFrames, 0, accuracy: 16,
+                       "and nothing is left inside the converter")
+    }
+
+    /// A write that throws must be counted, not only logged. The unified log for
+    /// the recording that forced this increment had already rolled over by the
+    /// time anyone looked, so "no write failures were logged" could not be said
+    /// either way.
+    func testAFailedWriteIsCountedAndNotOnlyLogged() throws {
+        let fmt = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                              sampleRate: 48_000, channels: 1,
+                                              interleaved: false))
+        let ring = RingBuffer(capacity: 48_000 * 10)
+        let w = StreamFileWriter(url: tmp.appendingPathComponent("ok.wav"),
+                                 format: fmt, ring: ring)
+        try w.start()
+        let block = [Float](repeating: 0.3, count: 48_000)
+        block.withUnsafeBufferPointer { ring.write($0.baseAddress!, count: block.count) }
+        w.stop()
+        // The happy path must report zero rather than absent, which is what makes
+        // a non-zero count on some future recording legible.
+        XCTAssertEqual(w.ledger.writeFailures, 0)
+        XCTAssertEqual(w.ledger.writeFailureFrames, 0)
+        XCTAssertGreaterThan(w.ledger.producedFrames, 0)
+        XCTAssertEqual(w.ledger.producedFrames, w.ledger.writtenFrames,
+                       "nothing was produced that did not reach the file")
     }
 }

@@ -55,6 +55,19 @@ struct CaptureLedger: Equatable, Sendable, Codable {
     var residentFrames: Double
     /// Frames actually written to the file, at the output rate.
     var writtenFrames: Double
+    /// Output frames the converter produced.
+    ///
+    /// Splits `conversionRemainder` into two faults that are not the same one:
+    /// frames the converter never produced from input it consumed, and frames it
+    /// produced that did not reach the file.
+    var producedFrames: Double
+    /// Times a write to the file threw, and the output frames lost with them.
+    ///
+    /// Previously logged and never counted. The unified log for the recording
+    /// that forced this increment had already rolled over by the time anyone
+    /// looked, so "no write failures were logged" could not be said either way.
+    var writeFailures: Int
+    var writeFailureFrames: Double
     /// The rate the writer converted *from*, which may be the corrected one
     /// rather than the declared one (AD-44).
     var inputRate: Double
@@ -64,6 +77,22 @@ struct CaptureLedger: Equatable, Sendable, Codable {
     static let unknown = CaptureLedger(
         deviceFrames: 0, droppedFrames: 0, overflows: 0, consumedFrames: 0,
         residentFrames: 0, writtenFrames: 0, inputRate: 0, outputRate: 0)
+
+    /// Whether the *writer's* own terms are measurable.
+    ///
+    /// Deliberately separate from `isMeasured`, which needs the device's
+    /// counters. The conversion terms are about what this process did with what
+    /// it consumed and are meaningful with no device clock at all — which is the
+    /// case in every device-free harness, and was the case in the first reading
+    /// of this type, where they silently returned zero and hid the defect this
+    /// increment found.
+    var isWriterMeasured: Bool { consumedFrames > 0 && inputRate > 0 && outputRate > 0 }
+
+    /// Output frames the converter was given input for and never produced.
+    var unproducedFrames: Double {
+        guard isWriterMeasured, producedFrames > 0 else { return 0 }
+        return expectedWrittenFrames - producedFrames
+    }
 
     /// Whether the device supplied enough for the identity to mean anything.
     ///
@@ -97,7 +126,7 @@ struct CaptureLedger: Equatable, Sendable, Codable {
     /// — 0.0003%, and *not* per call. So a remainder here of more than a few
     /// hundred frames is not the resampler, whatever it looks like on the page.
     var conversionRemainder: Double {
-        guard isMeasured else { return 0 }
+        guard isWriterMeasured else { return 0 }
         return expectedWrittenFrames - writtenFrames
     }
 
@@ -132,11 +161,12 @@ struct CaptureLedger: Equatable, Sendable, Codable {
     /// Only terms that are actually non-trivial appear. A term of under a frame
     /// is arithmetic on `Double`s, not a fault.
     var attribution: [(term: String, frames: Double)] {
-        guard isMeasured else { return [] }
+        guard isMeasured || isWriterMeasured else { return [] }
         let terms = [
             ("dropped before the writer could read them", droppedFrames * (outputRate / max(1, inputRate))),
             ("still in the ring when capture stopped", residentFrames * (outputRate / max(1, inputRate))),
-            ("consumed and not written", conversionRemainder),
+            ("converted and not written to the file", writeFailureFrames),
+            ("consumed and never converted", unproducedFrames),
             ("unaccounted for", unaccountedFrames * (outputRate / max(1, inputRate))),
         ]
         return terms.filter { $0.1 >= 1 }.sorted { $0.1 > $1.1 }
@@ -194,7 +224,12 @@ struct CaptureLedger: Equatable, Sendable, Codable {
 
     init(deviceFrames: Double, droppedFrames: Double, overflows: Int,
          consumedFrames: Double, residentFrames: Double, writtenFrames: Double,
+         producedFrames: Double = 0, writeFailures: Int = 0,
+         writeFailureFrames: Double = 0,
          inputRate: Double, outputRate: Double) {
+        self.producedFrames = producedFrames
+        self.writeFailures = writeFailures
+        self.writeFailureFrames = writeFailureFrames
         self.deviceFrames = deviceFrames
         self.droppedFrames = droppedFrames
         self.overflows = overflows
@@ -216,6 +251,9 @@ struct CaptureLedger: Equatable, Sendable, Codable {
         consumedFrames = try c.decodeIfPresent(Double.self, forKey: .consumedFrames) ?? 0
         residentFrames = try c.decodeIfPresent(Double.self, forKey: .residentFrames) ?? 0
         writtenFrames = try c.decodeIfPresent(Double.self, forKey: .writtenFrames) ?? 0
+        producedFrames = try c.decodeIfPresent(Double.self, forKey: .producedFrames) ?? 0
+        writeFailures = try c.decodeIfPresent(Int.self, forKey: .writeFailures) ?? 0
+        writeFailureFrames = try c.decodeIfPresent(Double.self, forKey: .writeFailureFrames) ?? 0
         inputRate = try c.decodeIfPresent(Double.self, forKey: .inputRate) ?? 0
         outputRate = try c.decodeIfPresent(Double.self, forKey: .outputRate) ?? 0
     }

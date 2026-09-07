@@ -34,6 +34,11 @@ enum Entry {
             // received, and the offset between the two streams' first samples.
             // Creates no Meeting and keeps no audio.
             ClockCheck.run()
+        } else if CommandLine.arguments.contains("--check-drain") {
+            // Story 17.3. Reproduces the drain-starvation mechanism against the
+            // real ring and writer with a synthetic producer, so no audio device
+            // is opened and it is safe during a recording.
+            DrainCheck.run()
         } else if CommandLine.arguments.contains("--check-aec") {
             // FR-99 / AD-55. The measurement that has to come before the
             // feature: run the canceller over the recordings on disk and print

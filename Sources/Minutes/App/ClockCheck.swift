@@ -154,8 +154,9 @@ enum ClockCheck {
         print(String(format: "  ledger:     device %.0f in -> dropped %.0f in %d overflow(s), consumed %.0f, written %.0f out",
                      led.deviceFrames, led.droppedFrames, led.overflows,
                      led.consumedFrames, led.writtenFrames))
-        print(String(format: "              unaccounted %.0f in, conversion remainder %.0f out",
-                     led.unaccountedFrames, led.conversionRemainder))
+        print(String(format: "              unaccounted %.0f in; converter produced %.0f, never converted %.0f, not written %.0f in %d failure(s)",
+                     led.unaccountedFrames, led.producedFrames,
+                     led.unproducedFrames, led.writeFailureFrames, led.writeFailures))
         if led.lostFrames >= 1 {
             print(String(format: "              LOST %.0f out (%.3f s, %.4f%%)",
                          led.lostFrames, led.lostSeconds, (led.lostProportion ?? 0) * 100))
