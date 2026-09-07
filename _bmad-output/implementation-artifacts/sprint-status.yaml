@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-31-2026 11:23
-last_updated: '09-04-2026 16:04'
+last_updated: '09-07-2026 14:05'
 project: Minutes
 project_key: NOKEY
 tracking_system: file-system
@@ -195,6 +195,16 @@ development_status:
   16-15-the-people-in-the-room-are-found-by-ruling-out-the-call: done
   16-16-a-pooled-figure-is-something-the-harness-prints: done
   epic-16-retrospective: done
+
+  epic-17: backlog
+  17-1-the-samples-that-never-reached-the-file-are-counted: backlog
+  17-2-a-consumer-that-fell-behind-says-by-how-much: backlog
+  17-3-the-mechanism-is-named-by-a-measurement-not-by-a-reading: backlog
+  17-4-what-it-cost-to-start-each-stream-is-stamped-not-inferred: backlog
+  17-5-both-streams-start-together: backlog
+  17-6-the-fix-the-measurement-names: backlog
+  17-7-fr-6-s-tolerance-is-settled-either-way: backlog
+  epic-17-retrospective: optional
 action_items:
   - id: "16-2"
     epic: 16

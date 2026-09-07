@@ -3921,3 +3921,316 @@ rows beside them
 | FR-100 | 16.15 | in-room voices found by ruling out the call |
 | FR-101 | 16.16 | the pooled figure is produced by the harness |
 
+## Epic 17: The Two Streams Actually Line Up
+
+**Why this epic exists.** Increment 10 measured the offset between the two
+Streams and applied it at the merge. That was the right thing to do and it is a
+**symptom fix**: the transcript comes out in the right order while the recording
+on disk stays misaligned. Everything downstream that wants to compare the two
+Streams — the Echo detector, AD-56's cross-stream voice comparison, any future
+canceller — still has to search for an offset that capture could simply not have
+introduced.
+
+Then the continuity check increment 10 added made something visible that nobody
+had seen. On a 42.4-minute recording, **both devices ran at 48 kHz within 0.84 s
+of each other and both reported zero missing frames and zero discontinuities** —
+so the device handed this process everything it counted. And the System Stream's
+file is 8.37 seconds short. That audio was received by this process and never
+written. **It is not a regression from increment 10; the second-worst case was
+recorded by the build that predates it.** It is a defect increment 10's
+instrument made legible for the first time.
+
+**Two faults, and they are not one fault at two sizes.**
+
+| | measured | where it comes from |
+|---|---|---|
+| The Streams do not start together | **+1,006 ms** on a real meeting, **+35 to +54 ms** on a five-second probe | the microphone is opened, *then* the tap chain is built, serially, and each Stream begins at its own first callback |
+| The Streams drift apart | **8.37 s / 0.33%** lost on the System Stream against **22 ms / 0.005%** on the Mic Stream of the same recording | samples are received and not written, and nothing counts them |
+
+The 9.17 s difference between the two files decomposes into exactly those two:
+0.84 s of start-and-stop offset plus 8.37 s of loss, adding to 9.19 s against a
+measured 9.17 s. They had been read as one number and no single correction can
+address both.
+
+**What makes this epic different from Epic 16.** That one was written from a
+defect nobody had noticed. This one is written from a defect nobody had a
+*mechanism* for, and the epic's whole shape is a refusal to guess it. At least
+three mechanisms fit the measurement — a ring that dropped samples, a resampler
+that ate them, a producer never called with them — and all three are visible from
+reading the code, which is precisely the evidence increment 10 learned not to
+trust on its own. So **the instrument is built and read before any fix is
+chosen**, and the build order below is that constraint rather than a value
+ranking.
+
+**One mechanism is already refuted, by measurement rather than by argument.**
+`StreamFileWriter.convert` hands `AVAudioConverter` one buffer per drain and
+takes whatever comes back on `inputRanDry`, and the obvious reading is that it
+discards a filter tail per call — which would make the System Stream, draining
+far more often, lose proportionally more. Driven exactly as the writer drives it,
+the deficit is a **constant ~11 frames in total** across runs of 1,500 to 20,000
+calls: 0.0003%, four orders of magnitude too small, and not per-call at all. It
+is the resampler's one-time priming latency. That is one candidate gone for a
+reason, before a story was written on it.
+
+**What this epic explicitly does not build.** It does not pad, trim or resample
+either file to make the lengths match — that destroys the evidence of the defect
+and is what left eight recordings from increment 8 permanently incomparable. It
+does not widen any tolerance: AD-51 replaced a 12% window with a figure derived
+per measurement precisely so this class of problem stops being absorbed. It does
+not make the merge cleverer — the merge already does the best that can be done
+with a misaligned pair, and more work there is more work compensating for a fault
+upstream of it. It does not introduce a second session clock (AD-4 stands). It
+does not touch `StreamFileWriter`'s 16 kHz mono output, the recogniser, or
+anything the recogniser reads, so **nothing here should move the AMI numbers and
+the corpus is re-run to know that rather than to assume it.**
+
+**The bar, and it is the point of the epic.** A change that cannot be shown to
+improve a measured number does not ship. Every figure below is re-measured before
+and after, and **a recording made after the fix is the only proof** — the existing
+library was captured by the unfixed path and cannot demonstrate a start offset it
+never recorded. `--check-clock` over five seconds is not a substitute: it
+understates the start fault twentyfold.
+
+### Story 17.1: The samples that never reached the file are counted
+
+*(tier T7 · FR-102 · AD-57, AD-58)*
+
+As someone who will one day read a transcript with a sentence missing from it, I
+want the app to have counted what it lost, so that the loss is a number on the
+record rather than something a reader has to notice.
+
+**Acceptance Criteria:**
+
+**Given** a capture on either Stream
+**When** it stops
+**Then** the record carries frames the device counted, frames dropped before the
+writer could consume them, frames the writer consumed, and frames written — and
+the remainder that does not attribute to any of them
+
+**And** each of the following holds:
+
+- `RingBuffer.didOverflow` becomes a **count of dropped samples** and a count of
+  **separate overflow occasions**, and it reaches a consumer. Today it is a
+  `Bool` set on the line where samples are dropped and **read by nobody** — no
+  caller, no record, no log line. A Bool cannot distinguish 353 from 133,944, and
+  that 380× asymmetry is the only real clue the measurement carries.
+- `inputFramesConsumed` already exists on `StreamFileWriter` and is discarded at
+  the adapter boundary. It is the term that splits "never got out of the ring"
+  from "lost between the ring and the file", so it is the difference between
+  naming the mechanism and guessing it.
+- Zero is recorded as zero. A Stream that dropped nothing is what makes a Stream
+  that dropped something interpretable, and the Mic Stream is the control this
+  epic cannot do without.
+- **Absent** is distinguishable from zero, for a device that supplied no
+  counters — the same rule the rate check, the continuity check and the Echo
+  verdict already follow.
+- The counts are printable from a terminal on a capture that creates no Meeting,
+  so the figure does not cost a real meeting to obtain.
+- The identity is asserted **in a test**, on a fixture where the drop count is
+  known because the harness caused it: nothing may be inferred from a real
+  recording that a fixture cannot demonstrate first.
+- No file is padded, trimmed or resampled. The counts explain the lengths; they
+  do not correct them.
+
+### Story 17.2: A consumer that fell behind says by how much
+
+*(tier T7 · FR-103 · AD-58)*
+
+As whoever debugs the next occurrence, I want to know how close the recording
+came to outrunning its own buffer, so that a drop count has a cause attached
+rather than being a fact with no explanation.
+
+**Acceptance Criteria:**
+
+**Given** a capture that has run for any length of time
+**When** it stops
+**Then** the record carries the longest interval between successive drains and
+the ring's high-water fill as a share of capacity
+
+**And** each of the following holds:
+
+- Both are measured **on the writer's thread**, from values it already holds.
+  Nothing new is added to the IOProc: AD-1 forbids it, and a measurement that
+  costs something on that thread is one somebody eventually makes optional.
+- Both rings hold **ten seconds**. That number decides what the high-water mark
+  is for: a fault that needs the consumer to be ten seconds late is a different
+  fault from one that needs it to be fifty milliseconds late, and only the
+  high-water mark separates them. Without it, a zero drop count and a ring that
+  peaked at 96% are indistinguishable — and the second is a fault waiting for a
+  busier day.
+- The longest drain gap is measured against the drain loop's own 20 ms idle
+  sleep, so a stall is distinguishable from an idle wait.
+- These are diagnostics and **never gates**. No capture is refused, delayed,
+  degraded or altered on the strength of them, and none is gated on a preference
+  (AD-45's rule, and its reason).
+
+### Story 17.3: The mechanism is named by a measurement, not by a reading
+
+*(tier T7 · FR-102, FR-103 · AD-57)*
+
+As the person deciding what to change, I want the loss reproduced under
+conditions I control, so that the fix is aimed at the mechanism that is actually
+responsible rather than the one that reads most plausibly.
+
+**Acceptance Criteria:**
+
+**Given** the instrument of 17.1 and 17.2
+**When** the consumer is deliberately starved while a producer delivers at a
+known rate
+**Then** the ledger attributes every lost frame to a named term, and the
+signature it produces is compared against the signature the real recording has
+
+**And** each of the following holds:
+
+- The harness reproduces the real shape: a producer delivering **512 frames
+  every 10.7 ms** into a ten-second ring against one delivering **4,800 frames
+  every 100 ms**, which is the 380× asymmetry's only structural difference.
+- The **control is the Mic Stream**, and any explanation that does not account
+  for 22 ms against 8.37 s on the same recording is wrong. This is the discipline
+  that caught the canceller: 7.3 dB looked like a weak pass until the same code
+  scored 6.49 dB on a recording with no echo in it.
+- Where more than one mechanism contributes, the report says **which contributes
+  how much**. "Both" is an answer; "probably the ring" is not.
+- A mechanism that is refuted is written down **with the measurement that refuted
+  it**, so it is not re-proposed. The resampler tail is already in that state and
+  goes in the record whether or not it turns out to matter.
+- The conclusion names the **command** that produced it. A number without its
+  command is not a measurement, and this project has already had to retract one.
+
+### Story 17.4: What it cost to start each Stream is stamped, not inferred
+
+*(tier T7 · FR-104 · AD-59)*
+
+As someone trying to close a one-second offset, I want to know which stage spent
+it, because one number cannot be acted on and five can.
+
+**Acceptance Criteria:**
+
+**Given** a Session that captured both Streams
+**When** it starts
+**Then** each stage records the host time it completed on — the microphone's
+open, the process tap's creation, the aggregate device's creation, the IOProc's
+creation, the device start — and the offset FR-97 records is reported beside its
+decomposition into setup serialisation and first-callback latency
+
+**And** each of the following holds:
+
+- The stamps are on the **same clock the callbacks use**, so the decomposition
+  subtracts comparable numbers rather than mixing a wall clock into an audio
+  measurement (AD-51's rule, applied to a different quantity).
+- **+1,006 ms on a real meeting against +35 to +54 ms on a five-second probe
+  across six runs** is the fact this story exists to explain. A twentyfold
+  understatement means the cold probe does not exercise whatever costs the
+  second, and the decomposition is how that stops being a guess.
+- Printable from a terminal without recording a Meeting, and taken **both ways**
+  — cold, and with a meeting application already holding the microphone and the
+  output device. That second condition is the leading unmeasured candidate
+  (§13 Q26) and it is cheap to test.
+- A Session that captured no host times records no decomposition, and none reads
+  as unknown rather than as zero.
+
+### Story 17.5: Both Streams start together
+
+*(tier T7 · FR-105 · AD-59, AD-2, FR-7)*
+
+As someone whose recording will be compared across its two Streams by four
+different consumers, I want capture not to have introduced an offset in the first
+place, so that nothing downstream has to search for one.
+
+**Acceptance Criteria:**
+
+**Given** a Session capturing both Streams
+**When** capture starts
+**Then** every step that can complete before either device is running has
+completed, and the two device starts are adjacent
+
+**And** each of the following holds:
+
+- Nothing sits between the two starts that could have been done earlier. The
+  process tap, the default-output UID lookup, the private aggregate device and
+  the IOProc are all constructed before the microphone is started, not after.
+- **AD-2's construction and teardown order is unchanged and still absolute.**
+  This story moves where the *start* lands inside that order and nothing else;
+  every failure path still tears down in strict reverse.
+- **FR-7 takes precedence over this story.** A tap that cannot be built must
+  neither delay nor prevent the microphone, and a Mic-only Session must start no
+  later than it does today. A test asserts it: if building the tap chain throws,
+  the microphone is running and the Session is degraded, exactly as now.
+- The offset on a **new** real recording falls, and the test asserts the
+  **direction** rather than a threshold nothing has met — the failure mode of
+  the previous attempt at a count (Story 16.5) was assuming the direction.
+- `--check-clock`'s offset **must not get worse**: +35 to +54 ms is the baseline
+  and a change that improves a real meeting while degrading the probe is a
+  change that has moved the cost rather than removed it.
+- FR-97's measured offset and its application at the merge **stay**. A Meeting
+  recorded before this still needs it, and an offset that has genuinely fallen to
+  zero costs nothing to apply.
+
+### Story 17.6: The fix the measurement names
+
+*(tier T7 · FR-102 · AD-57, AD-58)*
+
+As the owner of a 42-minute recording missing eight seconds of the call, I want
+the cause removed rather than reported, so that the next recording does not need
+the report.
+
+**Acceptance Criteria:**
+
+**Given** the mechanism named by 17.3
+**When** the change aimed at it is made
+**Then** the drop count on a new capture falls, and the accounting identity
+closes
+
+**And** each of the following holds:
+
+- **The change is not specified here, deliberately.** Specifying it before 17.3
+  has reported is the mistake this epic's ordering exists to prevent, and a fix
+  aimed at the wrong one of three mechanisms would move the number on one
+  recording and not on another — which is the signature this defect already has.
+- Whatever it is, it is **not** a wider ring, a wider tolerance, a padded file or
+  a cleverer merge. A bigger buffer moves the load at which the fault appears
+  without removing it, and the epic's opening rules the other three out.
+- The Mic Stream's 22 ms **must not get worse**. A change that helps the System
+  Stream at the Mic Stream's expense has redistributed the fault.
+- If the measurement rules the fix out, that is **recorded with the measurement
+  that ruled it out** and shipped as a finding. This has happened three times
+  across increments 9 and 10 and every time the honest record was worth more
+  than the change.
+
+### Story 17.7: FR-6's tolerance is settled either way
+
+*(tier T7 · FR-6 amended, FR-105 · AD-59)*
+
+As a reader of the PRD, I want the ±100 ms claim to be either true or honest,
+because it has been neither since increment 1.
+
+**Acceptance Criteria:**
+
+**Given** at least one new real dual-stream recording made after 17.5 and 17.6
+**When** its start offset is measured
+**Then** FR-6 either holds at ±100 ms or is amended to what capture can actually
+deliver, with the measurement beside it
+
+**And** each of the following holds:
+
+- The evidence is a **new recording**. The existing library cannot show a start
+  offset it never recorded, and `--check-clock` understates the fault twentyfold.
+- One recording is not a measurement where the quantity is variable, and the
+  drift's variability is established: 0.00% and 0.37% both already exist in the
+  library. The claim made is bounded by the evidence taken.
+- Every baseline in this epic is reported **before and after**, including the
+  pooled WER — unchanged is a result, and it is re-run to know rather than
+  assumed.
+- Where a change made something worse, it is said so and reverted.
+
+### Epic 17 FR Coverage
+
+| FR | Story | What it covers |
+|---|---|---|
+| FR-102 | 17.1 | the samples that never reached the file are counted |
+| FR-103 | 17.2 | a consumer that fell behind says by how much |
+| FR-102, FR-103 | 17.3 | the mechanism is named by measurement |
+| FR-104 | 17.4 | what starting each Stream cost, per stage |
+| FR-105 | 17.5 | both Streams start together |
+| FR-102 | 17.6 | the fix the measurement names |
+| FR-6 (amended) | 17.7 | the tolerance is settled either way |
