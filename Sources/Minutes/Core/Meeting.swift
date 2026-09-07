@@ -410,6 +410,26 @@ struct Meeting: Codable, Sendable, Identifiable {
         return out
     }
 
+    /// Audio that was received and never written, per Stream (FR-102, AD-57).
+    ///
+    /// **Second among the degradation notices, above "only your microphone was
+    /// captured", and the ordering is argued in `EXPERIENCE.md`.** A gap has a
+    /// known position and is marked in place; a lost stretch leaves the file
+    /// **continuous across the join**, so the words either side become adjacent
+    /// when they never were and two half-sentences can read as one sentence
+    /// nobody said. Small in extent and misleading in kind, which is the axis
+    /// that table is ordered on.
+    ///
+    /// Absent on every record written before increment 11, and absent is not
+    /// zero: a Meeting with no ledger says nothing rather than saying nothing
+    /// was lost.
+    var lostAudioNotices: [String] {
+        var out: [String] = []
+        if let why = micLedger?.explanation(streamIsSystem: false) { out.append(why) }
+        if let why = systemLedger?.explanation(streamIsSystem: true) { out.append(why) }
+        return out
+    }
+
     /// FR-86. Whether derived content may be built from the whole transcript.
     var mayDeriveMetadata: Bool { untrustworthyStreams.isEmpty }
 

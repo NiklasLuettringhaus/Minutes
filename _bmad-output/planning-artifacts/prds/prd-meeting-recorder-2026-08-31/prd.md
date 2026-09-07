@@ -1472,6 +1472,25 @@ it regardless, because a Bool cannot say 353 where the other stream says
 - The counts are readable from a terminal for a capture that creates no Meeting, so the figure can be taken without spending a real meeting to get it.
 - **No file is padded, trimmed or resampled to make the counts agree.** The lengths on disk are evidence, and rewriting them is what made eight recordings in increment 8 permanently incomparable.
 
+**Amended by implementation, increment 11.** The identity has one more term than
+this requirement asked for, and the extra term is the one that found the defect:
+
+- **"Consumed and not written" is two faults, not one.** Frames the converter was
+  given input for and never produced, and frames it produced that a write threw
+  on, have different causes and different fixes. The first reading collapsed them
+  and the collapsed term was doing the work of both. `AVAudioFile.write` failures
+  were also *logged and never counted*, and the unified log for the recording
+  that forced this increment had already rolled over by the time anyone read it —
+  so "no write failures occurred" could not be said either way.
+- **The writer's terms must not be gated on the device's counters.** They were,
+  which made every one of them read zero in every device-free harness — including
+  the harness built to find this defect. A term that reads zero when it cannot be
+  computed is worse than absent.
+- **The loss is located and not explained.** The identity puts it in the
+  conversion step: dropped 0, write failures 0, unaccounted 0, produced short of
+  expected. Two changes remove it, measured. *Why* they do is Q27, and this
+  requirement does not pretend otherwise.
+
 #### FR-103: A consumer that fell behind says so, and by how much
 Where samples are lost between the callback and the file, the reason is a consumer that did not keep up, and the two numbers that establish it are free to take on the thread that fell behind.
 
@@ -1513,6 +1532,26 @@ for an offset that capture could simply not have introduced.
 - FR-6's ±100 ms claim is either met on that recording or **restated as what capture can deliver, with the measurement beside it**. A tolerance that has been out by ten times since increment 1 is not repaired by being repeated.
 - FR-7 is unaffected: a tap that cannot be built must still neither delay nor prevent the microphone, and a Mic-only Session must start no later than it does today.
 - FR-97's measured offset and its application at the merge **stay**, whatever the offset becomes. A Meeting recorded before this still needs it, and an offset that has genuinely fallen to zero costs nothing to apply.
+
+**Amended by implementation, increment 11.** Two things the requirement assumed
+turned out differently, and both are recorded because both nearly caused a wrong
+change.
+
+- **The serialisation was smaller than the number it was blamed for, and the
+  first stage measurement said otherwise because it was wrong.** It charged
+  `engine.prepare()` to the tap chain and reported 350 ms of chain building that
+  was mostly the microphone's. Separated: the chain is **41–63 ms** cold and the
+  microphone's preparation is 195–423 ms, and neither is now paid out of
+  recording time. A stage measurement that charges one stage for another points a
+  change at the wrong place.
+- **The residual is device first-callback latency, and the microphone's is
+  negative.** Its first sample is stamped 3 to 7 ms *before* `engine.start()`
+  returns, which settles empirically that `AVAudioTime.hostTime` is the timestamp
+  of the buffer's first sample rather than of its delivery — so FR-97's offset
+  carries no one-buffer bias. One cold run read the microphone's first callback at
+  +213 ms and the offset at −208 ms; five subsequent runs read +16 to +30 ms. That
+  outlier is recorded because it was nearly published as a regression on a single
+  measurement.
 
 ## 5. Non-Goals (Explicit)
 
@@ -1885,6 +1924,20 @@ already holding the microphone and the output device, so creating an aggregate
 device over a busy output forces a reconfiguration that a cold open never pays
 for. *Revisit when* FR-104's decomposition has been taken both ways — cold, and
 with a meeting application live.
+
+**Q27 (increment 11): why does giving `AVAudioConverter` more output room help
+under load?** The loss is located exactly — input consumed, output never
+produced, nothing dropped and nothing failed to write — and two changes remove
+it: asking the converter whether it has more (`.haveData` means the buffer came
+back full), and offering 4,096 output frames of room instead of 64. The second
+is measured to work and **is not explained**. The arithmetic says it should not
+be needed: capacity is `inputFrames × ratio + slack`, so it always covers the
+chunk in hand, and a deterministic fixture at 8 kHz→16 kHz with a 64-frame slack
+writes every frame. The loss only appears under load, and only on shapes with
+480- and 512-frame callbacks. *Revisit when* something can see
+`AVAudioConverter`'s own accounting, which its interface does not expose. An
+earlier draft of the spike note asserted a mechanism here and the arithmetic
+refuted it; the honest state is this question.
 
 ## 14. Assumptions Index
 

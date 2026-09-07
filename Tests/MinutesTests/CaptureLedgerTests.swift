@@ -565,3 +565,101 @@ final class ConverterDrainTests: XCTestCase {
                        "nothing was produced that did not reach the file")
     }
 }
+
+/// FR-102 as the reader meets it — the notice, and where it sits.
+///
+/// The UX spine fixes the order of the degradation notices by **how misleading
+/// the transcript below is, worst first**, and this one is inserted second:
+/// above "only your microphone was captured", because that notice describes
+/// something absent while this one describes something that may be *wrong*. The
+/// file runs straight across the join, so two half-sentences can read as one
+/// sentence nobody said.
+final class LostAudioNoticeTests: XCTestCase {
+
+    private func meeting(lostSystemSeconds: Double, overflows: Int = 2) -> Meeting {
+        var m = Meeting(id: "20260907-120000-test",
+                        startedAt: Date(timeIntervalSince1970: 1_780_000_000))
+        m.duration = 2541
+        m.stage = .written
+        m.systemStreamCaptured = true
+        m.utterances = [
+            Utterance(start: 0, end: 3, text: "One.", speaker: .local, origin: .mic),
+            Utterance(start: 3, end: 6, text: "Two.", speaker: .remote(0), origin: .system),
+        ]
+        let device: Double = 121_947_648
+        let droppedInput = lostSystemSeconds * 16_000 * 3
+        m.systemLedger = CaptureLedger(
+            deviceFrames: device, droppedFrames: droppedInput, overflows: overflows,
+            consumedFrames: device - droppedInput, residentFrames: 0,
+            writtenFrames: (device - droppedInput) / 3,
+            producedFrames: (device - droppedInput) / 3,
+            inputRate: 48_000, outputRate: 16_000)
+        m.micLedger = CaptureLedger(
+            deviceFrames: device, droppedFrames: 0, overflows: 0,
+            consumedFrames: device, residentFrames: 0, writtenFrames: device / 3,
+            producedFrames: device / 3, inputRate: 48_000, outputRate: 16_000)
+        return m
+    }
+
+    func testALostStretchIsDisclosedAndNamesTheStreamAndTheCount() throws {
+        let m = meeting(lostSystemSeconds: 8.37, overflows: 3)
+        XCTAssertEqual(m.lostAudioNotices.count, 1,
+                       "the microphone lost nothing, so it says nothing")
+        let why = try XCTUnwrap(m.lostAudioNotices.first)
+        XCTAssertTrue(why.contains("the call's own audio"), why)
+        XCTAssertTrue(why.contains("3 separate stretches"), why)
+        XCTAssertTrue(why.contains("8 seconds"), why)
+
+        let note = NoteWriter().render(meeting: m)
+        XCTAssertTrue(note.contains(why), "the Note carries it; a reader months later has only this file")
+    }
+
+    /// The ordering rule, asserted rather than described. This is the one that
+    /// breaks if somebody moves the block.
+    func testTheNoticeSitsAboveTheMicOnlyNotice() throws {
+        var m = meeting(lostSystemSeconds: 8.37)
+        m.systemStreamCaptured = false
+        let note = NoteWriter().render(meeting: m)
+        let lost = try XCTUnwrap(note.range(of: "was lost while this was being recorded"))
+        let micOnly = try XCTUnwrap(note.range(of: "Only the microphone was captured"))
+        XCTAssertLessThan(lost.lowerBound, micOnly.lowerBound,
+                          "what may be wrong outranks what is merely absent")
+    }
+
+    /// Under the floor, the reader is told nothing and the count is still on the
+    /// record. This is what stops the floor becoming a tolerance.
+    func testUnderTheFloorTheNoteSaysNothingAndTheRecordStillHasTheCount() throws {
+        let m = meeting(lostSystemSeconds: 0.022)   // the Mic Stream's measured 22 ms
+        XCTAssertTrue(m.lostAudioNotices.isEmpty)
+        let note = NoteWriter().render(meeting: m)
+        XCTAssertFalse(note.contains("was lost while this was being recorded"))
+        XCTAssertGreaterThan(try XCTUnwrap(m.systemLedger).droppedFrames, 0,
+                             "and the count is still exactly there")
+    }
+
+    /// A Meeting from before this existed must say nothing at all — absent is
+    /// unknown, and unknown is never rendered where a measurement would go.
+    func testAMeetingWithNoLedgerSaysNothing() {
+        var m = meeting(lostSystemSeconds: 8.37)
+        m.micLedger = nil
+        m.systemLedger = nil
+        XCTAssertTrue(m.lostAudioNotices.isEmpty)
+        let note = NoteWriter().render(meeting: m)
+        XCTAssertFalse(note.contains("was lost"))
+        // And it does not say "unknown" *about the capture* either. The
+        // assertion is scoped: `transcription_model: "unknown"` is a different,
+        // pre-existing field and is honest where the model really is unknown.
+        XCTAssertFalse(note.lowercased().contains("audio was lost"))
+        XCTAssertFalse(note.contains("stretches"))
+    }
+
+    /// A fully-accounted-for capture says nothing in a banner, because there is
+    /// nothing to disclose — the zero belongs in provenance, not in the reader's
+    /// way.
+    func testACleanCaptureRaisesNoNotice() {
+        let m = meeting(lostSystemSeconds: 0)
+        XCTAssertTrue(m.lostAudioNotices.isEmpty)
+        XCTAssertTrue(try! XCTUnwrap(m.systemLedger).isMeasured,
+                      "measured, and measured at zero")
+    }
+}

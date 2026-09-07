@@ -499,6 +499,23 @@ So capture evidence has two independent parts, and a stream must satisfy both to
 - **Prevents:** the gap AD-51 opened and did not close. AD-51 made the device's own counters the authority on the *rate*, and its continuity term answers "did the device hand us everything it counted". It says nothing about what happened to those samples afterwards, and on a 42.4-minute recording the answer was that 8.37 seconds of the System Stream — 0.33% — was received by this process and never written, with the audio clock reporting **zero** missing frames and **zero** discontinuities throughout. This AD prevents that residual being invisible again, and prevents the next occurrence being discovered the way this one was: by subtracting two file lengths months later, on a defect that had already been present in eight recordings.
 - **Rule:** A Stream's capture record carries the terms of one identity, each as a count and none as a flag: **frames the device counted** (AD-51's sample-time advance), **frames dropped before the writer could consume them**, **frames the writer consumed from the ring**, and **frames written to the file**. The identity is stated where the counts are declared and its remainder is recorded **as a remainder** — a residual nobody can attribute is information about a mechanism nobody has named, and folding it into a tolerance is how this defect survived fourteen recordings. Zero is a measurement and is recorded as one; **absent** is reserved for a device that supplied no counters, as it is for the rate (AD-51) and the Echo verdict (AD-54). **No file is ever padded, trimmed or resampled to make the terms agree**: the lengths on disk are the evidence, and rewriting a header to make a recording look right is what left eight recordings in increment 8 permanently incomparable.
 
+  *Amended 2026-09-07, on implementation.* Three things the rule as written did
+  not say, each of which the implementation needed:
+
+  - **The conversion term is two terms.** Frames the converter never produced
+    from input it consumed, and frames it produced that a write threw on, are
+    different faults with different fixes, and one term for both was doing the
+    work of neither. Write failures were previously logged and never counted.
+  - **The writer's terms are measurable without the device's.** They were gated
+    on the device frame count, so they read zero in every device-free harness —
+    including the one built to find this defect. Absent must be distinguishable
+    from zero *per term*, not per record.
+  - **`AudioClock` needs a total that survives a rebase.** `sampleAdvance` is
+    measured from the baseline and is reset when the device's counter restarts
+    (FR-8), which is correct for a rate and wrong for an identity that has to
+    balance over a whole Session: a rebuilt tap chain would otherwise report the
+    entire pre-rebase recording as unaccounted for.
+
   *Why this is an addition to AD-51 and not a weakening of it.* AD-51 is correct about what it claims — the device is the authority on the rate, and on this recording it was right to four decimal places on both Streams. It is simply not the authority on what reached the file, because nothing between the callback and the file reports to it. Widening AD-51's tolerance to cover a 0.33% shortfall would have absorbed exactly the class of fault AD-51's derived tolerance was introduced to stop absorbing.
 
 ### AD-58 — The producer counts what it drops; the consumer measures its own lateness
@@ -514,6 +531,17 @@ So capture evidence has two independent parts, and a stream must satisfy both to
 - **Binds:** FR-6, FR-7, FR-97, FR-104, FR-105, AD-2, AD-4, AD-53
 - **Prevents:** capture paying for the second Stream's setup with the first Stream's recording time, and — because FR-97 now measures the result — the temptation to leave it there because the merge compensates. `DualStreamCapture.start` opens the microphone and *then* builds the tap chain serially: process tap, default-output UID, private aggregate device, IOProc, device start. Each Stream begins at its own first callback, so every millisecond of that construction lands in the offset. Measured: **+1,006 ms** on a real 42.4-minute meeting. Everything downstream that compares the two Streams — AD-47's exclusion, AD-56's cross-stream comparison, any future canceller — then has to search for an offset that capture could simply not have introduced.
 - **Rule:** Capture setup is ordered so that every step that can complete before either device is running does complete before either device is running, and the two device starts are **adjacent**, with nothing between them that could have been done earlier. AD-2's construction and teardown order is unchanged and still absolute — this AD constrains only *where the start lands within it*. FR-7's degradation is unchanged and takes precedence: a tap that cannot be built must neither delay nor prevent the microphone, so a failure in the tap chain still leaves a Mic-only Session starting no later than it does today. The offset FR-97 measures is **not** removed by this rule and is still recorded and still applied at the merge (AD-53), because a Meeting recorded before this exists still needs it and an offset that has genuinely fallen to zero costs nothing to apply.
+
+  *Amended 2026-09-07, on implementation.* The rule holds and the numbers
+  attached to it were wrong twice, so both are recorded. The first stage
+  measurement charged `engine.prepare()` to the tap chain and reported 350 ms of
+  chain building that was mostly the microphone's — a stage measurement that
+  charges one stage for another points a change at the wrong place, which is
+  worse than having none. Separated, the chain is **41–63 ms** cold. And one cold
+  run of the new order read the offset at **−208 ms** and was nearly published as
+  a regression; five subsequent runs read **+16 to +30 ms** against a baseline of
+  +40 to +62 ms. The gap between the two device starts is now **+0.1 to +0.2 ms**,
+  which is the term this AD owns and the only one it claims.
 
   *What this AD does not claim.* It cannot close the whole +1,006 ms, and it is not written as though it can. A five-second `--check-clock` probe over the same code path reads **+35 to +54 ms**, so most of the second is spent on something a cold open does not exercise, and FR-104's per-stage stamps exist to find out what. Removing the serialisation is the term this AD owns; the residual is a measurement, not an assumption.
 

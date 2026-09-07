@@ -415,6 +415,13 @@ struct MeetingDetail: View {
                     StateBanner(kind: .degraded,
                                 text: "The recording of \(u.stream) is not reliable. \(u.why) Minutes wrote no summary or title from it.")
                 }
+                // FR-102. Second, above the mic-only notice, because what is
+                // there may not be true rather than merely absent: the file runs
+                // straight across the join, so a sentence there may be two
+                // halves of different ones. EXPERIENCE.md argues the position.
+                ForEach(meeting.lostAudioNotices, id: \.self) { why in
+                    StateBanner(kind: .degraded, text: why)
+                }
                 if !meeting.systemStreamCaptured && meeting.isComplete {
                     StateBanner(kind: .degraded,
                                 text: "Only your microphone was captured, so remote participants are not in this transcript.")
