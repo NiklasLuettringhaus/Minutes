@@ -18,6 +18,7 @@ final class Preferences: ObservableObject {
         static let keepAudio = "keepAudio"
         static let launchAtLogin = "launchAtLogin"
         static let lastPane = "lastPane"
+        static let promptDelivery = "promptDelivery"
         static let didCompleteFirstRun = "didCompleteFirstRun"
         static let lastSystemCaptureOK = "lastSystemCaptureOK"
         static let lastThroughput = "lastThroughputRatio"
@@ -61,6 +62,64 @@ final class Preferences: ObservableObject {
     }
     @Published var metadataBackend: MetadataBackendChoice {
         didSet { d.set(metadataBackend.rawValue, forKey: K.metadataBackend) }
+    }
+
+    /// How the Detection Prompt reaches the user (FR-12).
+    ///
+    /// **A choice because both surfaces are defensible and they were shipped
+    /// together, which is neither.** The notification came first and failed in
+    /// the first real huddle: macOS shows a notification's actions only when the
+    /// banner is hovered or expanded, and under Banner style it auto-dismisses
+    /// before most people get there, so the one channel carrying the Record
+    /// button was the one that might never show it. The panel was added with
+    /// real buttons — and the notification was kept beside it as a durable
+    /// record, reachable in Notification Centre after the panel's 90 seconds.
+    ///
+    /// Two prompts for one question is its own defect: the user gets a slide-in
+    /// *and* a panel, has to work out which one carries the buttons, and
+    /// answering one does not visibly resolve the other. So the app stops
+    /// deciding for everybody. The default is the panel alone, because it is the
+    /// surface that always shows its buttons.
+    enum PromptDelivery: String, CaseIterable {
+        /// The floating panel only. Always shows its buttons; closes after 90 s.
+        case panel
+        /// The notification only. Survives in Notification Centre; its buttons
+        /// may be hidden until the banner is hovered.
+        case notification
+        /// Both, which is what shipped before this was a choice.
+        case both
+
+        var title: String {
+            switch self {
+            case .panel: return "A floating panel"
+            case .notification: return "A notification"
+            case .both: return "Both"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .panel:
+                return "A small panel in the corner with Record, Not now and Never for this app. "
+                    + "It never takes focus from your meeting and closes itself after 90 seconds."
+            case .notification:
+                return "A notification that stays in Notification Centre until you answer it. "
+                    + "macOS may hide its buttons until you hover the banner."
+            case .both:
+                return "The panel to answer, and a notification as a record you can come back to. "
+                    + "Two prompts for one meeting."
+            }
+        }
+
+        /// Whether this choice needs notification permission to work at all.
+        var needsNotifications: Bool { self != .panel }
+
+        var showsPanel: Bool { self != .notification }
+        var showsNotification: Bool { self != .panel }
+    }
+
+    @Published var promptDelivery: PromptDelivery {
+        didSet { d.set(promptDelivery.rawValue, forKey: K.promptDelivery) }
     }
     @Published var showInDock: Bool {
         didSet {
@@ -123,6 +182,13 @@ final class Preferences: ObservableObject {
         showInDock = d.object(forKey: K.showInDock) as? Bool ?? false
         metadataBackend = (d.string(forKey: K.metadataBackend)
             .flatMap(MetadataBackendChoice.init(rawValue:))) ?? .auto
+        // Defaults to the panel rather than to `both`, which is what existing
+        // installs were doing. That is a deliberate change of behaviour on
+        // upgrade: `both` is the configuration the user asked to be rid of, and
+        // silently keeping it for everyone who already had it would make the
+        // setting look broken to exactly the people who want it.
+        promptDelivery = (d.string(forKey: K.promptDelivery)
+            .flatMap(PromptDelivery.init(rawValue:))) ?? .panel
         removeFillerWords = d.object(forKey: K.removeFiller) as? Bool ?? true
         fillerWords = d.stringArray(forKey: K.fillerWords) ?? FillerWords.defaults
         customWatchedApps = d.stringArray(forKey: K.customWatchedApps) ?? []

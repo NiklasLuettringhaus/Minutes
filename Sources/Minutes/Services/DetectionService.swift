@@ -141,8 +141,21 @@ final class DetectionService: ObservableObject {
             // carrying the Record button was the one channel that might never show
             // it. The panel has real buttons, is non-activating exactly like the
             // notification, and does not depend on a System Settings alert style.
-            PromptPanel.shared.present(h)
-            if Notifier.shared.canDeliver {
+            // FR-12, and the surface is the user's choice (`PromptDelivery`).
+            //
+            // **The panel is the fallback and it is not optional.** If the user
+            // chose the notification and notification permission is absent, the
+            // ask still has to arrive somewhere: a preference that silently
+            // results in no prompt at all is how a real Teams call went
+            // unprompted with nothing to show for it. So `notification` degrades
+            // to the panel rather than to silence — the same rule FR-7 applies
+            // to the System Stream.
+            let choice = Preferences.shared.promptDelivery
+            let canNotify = Notifier.shared.canDeliver
+            if choice.showsPanel || !canNotify {
+                PromptPanel.shared.present(h)
+            }
+            if choice.showsNotification, canNotify {
                 Notifier.shared.askToRecord(h)
             }
         }

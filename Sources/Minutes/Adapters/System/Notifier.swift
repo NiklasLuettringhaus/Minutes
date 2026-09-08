@@ -97,7 +97,11 @@ final class Notifier: NSObject, ObservableObject, UNUserNotificationCenterDelega
         // Says where the buttons are, because under Banner style macOS hides the
         // notification's own actions until it is hovered. The panel is the
         // actionable surface; this is the durable record of the ask.
-        c.body = "Record this meeting? Answer in the panel at the top right, or hover here."
+        // The body depends on whether a panel is also being raised, because
+        // pointing at a panel that does not exist is worse than saying nothing.
+        c.body = Preferences.shared.promptDelivery.showsPanel
+            ? "Record this meeting? Answer in the panel at the top right, or hover here."
+            : "Record this meeting? Hover to see the buttons."
         // Outlives a banner's few seconds so the ask is still reachable in
         // Notification Centre after the panel has timed out.
         c.interruptionLevel = .timeSensitive
