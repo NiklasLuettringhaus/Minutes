@@ -297,6 +297,17 @@ hand, so no backlog should form — and a deterministic 8 kHz fixture at the old
 a mechanism for it, the arithmetic refuted it inside an hour, and the note now
 carries the refutation next to the claim. It is PRD Q27, not a story.
 
+**5a. And then the real Session corroborated it from the other side.** The
+first capture on the fixed build spent **693 ms** building the tap chain — against
+41–63 ms on a cold probe, which is the twentyfold understatement the prompt
+predicted, measured. So the serialisation term genuinely is worth hundreds of
+milliseconds on a real Session, and AD-59 removes all of it: 0.045 ms between the
+two starts. **But FR-6 still fails, in the opposite direction.** The residual is
+−209 ms and every millisecond of it is the microphone taking 209 ms to deliver
+its first sample where the tap takes 0.07 ms. So ±100 ms is withdrawn as a claim
+about capture rather than replaced with a wider number — a wider number would be
+a new assertion of exactly the kind that has been wrong for eleven increments.
+
 **5. The number that justified half the increment was the worst of four.** The
 +1,006 ms start offset was measured on one recording. Three more instrumented
 recordings arrived during the increment and read **+21, +53 and +60 ms** through
@@ -357,8 +368,11 @@ found in passing**, which is the finding as much as the defects are.
 | | before | after | source |
 |---|---|---|---|
 | start offset, `--check-clock` | +40, +41, +62 ms | **+14, +15, +15, +16, +18 ms** | `--check-clock 6` ×5, installed build |
-| gap between the two device starts | the whole tap-chain build | **+0.0 to +0.1 ms** | the same runs |
-| FR-6's ±100 ms on the probe | fails | **holds, 5 of 5** | the same runs |
+| gap between the two device starts, probe | the whole tap-chain build | **+0.0 to +0.1 ms** | the same runs |
+| gap between the two device starts, **real Session** | **693 ms** of tap-chain build | **0.045 ms** | first Session on the fixed build |
+| start offset, **real Session** | ~+484 ms under the old order | **−209 ms**, all of it the mic's own warm-up | the same Session |
+| FR-6's ±100 ms | asserted, never met | **withdrawn as a claim; measured instead** | FR-6 as amended |
+| audio lost on a **real Session**, both Streams | 0.005% / 0.325–0.426% | **0 frames. Every term equal, not "within a callback"** | the same Session |
 | audio consumed and never written, under load | **7 of 10 cells, worst 4.200%** | **0 of 10 cells** | `--check-drain 10 6` ×2 |
 | drain thread at `.userInitiated` instead | — | 6 of 10 cells still lost | the same sweep |
 | ring overflows, every cell of every sweep | **unmeasurable** | **0** | `--check-drain` |
@@ -384,11 +398,13 @@ Recorded and not fixed: the threshold is the user's.
 
 ## What was not delivered, and why
 
-- **A real *meeting* on the fixed build.** The strongest available evidence is
-  five 6-second probes and a two-run load sweep; a 42-minute meeting on
-  loudspeakers under video-call load is the condition the fault likes, and it is
-  the user's to hold. The instrument is in place, so the next such meeting
-  answers it in one number without anybody remembering to look.
+- **A 42-minute loudspeaker meeting on the fixed build.** A real four-minute
+  Session on a Bluetooth headset *was* captured and it is the increment's
+  strongest evidence — both Streams' identities close **exactly**, every term
+  equal to every other, and it measured 693 ms of tap-chain build now paid before
+  either device starts. What it is not is the condition the drift likes: 42
+  minutes, loudspeakers, video-call load. The instrument answers that on the next
+  such Session without anybody remembering to look.
 - **Why extra output room helps** (Q27), above.
 - **The `rebuildForDeviceChange` defect** the review found: a failed rebuild nils
   the writer and ring mid-recording, contradicting its own comment and discarding

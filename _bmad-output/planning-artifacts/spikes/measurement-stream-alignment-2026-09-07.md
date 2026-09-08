@@ -341,6 +341,50 @@ returns (−3 to −7 ms), which settles empirically that `AVAudioTime.hostTime`
 the timestamp of the buffer's first sample and not of its delivery. There is no
 one-buffer bias in FR-97's offset.
 
+## 6a. The first real Session on the fixed build
+
+A four-minute Session recorded on 8 September, output through a Bluetooth
+headset, is the first real capture carrying the full ledger. It answers both
+halves of the increment on a real recording rather than on a probe.
+
+**The drift: closed exactly, on both Streams.**
+
+| | Mic Stream | System Stream |
+|---|---|---|
+| frames the device counted | 3,866,624 | 3,872,000 |
+| frames the writer consumed | 3,866,624 | 3,872,000 |
+| frames the converter produced | 3,866,624 | 3,872,000 |
+| frames written to the file | **3,866,624** | **3,872,000** |
+| dropped / held / resident / unaccounted | **0 / 0 / 0 / 0** | **0 / 0 / 0 / 0** |
+| write failures | 0 | 0 |
+| ring high-water mark | 4,096 of 160,000 (**2.56%**) | 2,560 of 480,000 (**0.53%**) |
+| longest gap between drains | 342 ms | 158 ms |
+
+Every term is equal to every other term. Not "within a callback" — equal.
+
+**The start: the serialisation is gone and the residual is the microphone.**
+
+```
+mic prepared in                   108.66 ms
+tap chain built in                693.39 ms   <- what the old order paid out of recording time
+between the two device starts       0.045 ms  <- the term AD-59 owns
+mic first sample after start      209.49 ms
+system first sample after start     0.066 ms
+=> offset                          -209.4 ms
+```
+
+**693 ms** of tap-chain construction on a real Session, against 41–63 ms on a
+cold probe — which is the twentyfold understatement §6 predicted, now measured
+from the other side, and it corroborates the +1,006 ms reading rather than
+explaining it away. Under the previous order this Session's offset would have
+been about **+484 ms**; it is now **−209 ms**, and every millisecond of what
+remains is the microphone taking 209 ms to deliver its first sample where the
+tap takes 0.07 ms.
+
+So **FR-6's ±100 ms fails on this recording, in the opposite direction to the
+defect the increment started from**, and it fails for a reason capture does not
+control. FR-6 is amended to say that rather than to claim a wider window.
+
 ## 7. What is measured, and what is inferred
 
 Stated plainly, because the difference is the whole discipline of this increment.
@@ -368,10 +412,13 @@ Stated plainly, because the difference is the whole discipline of this increment
   size), the same load dependence, and a magnitude range containing the observed
   0.33%. What would refute it is a recording made after this fix that still loses
   audio — in which case the ledger will say which term it went to.
-- **How much of the +1,006 ms the new order removes on a real meeting.** The
-  probe's tap chain builds in 41–63 ms; a real meeting's took roughly a second,
-  and that term is now paid before either device starts. This has not been
-  confirmed on a real meeting, because a real meeting is the user's to hold.
+- ~~**How much of the +1,006 ms the new order removes on a real meeting.**~~
+  **Answered in §6a**: 693 ms of tap-chain build on a real Session, all of it now
+  paid before either device starts, with 0.045 ms left between the two starts.
+  What is still not confirmed is the **42-minute loudspeaker** case specifically:
+  the Session measured was four minutes on a Bluetooth headset, and the drift is
+  known to be load-conditional. The instrument answers it on the next such
+  Session without anyone remembering to look.
 
 ## 8. What did not change, and was checked rather than assumed
 
