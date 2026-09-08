@@ -1556,6 +1556,84 @@ change.
   outlier is recorded because it was nearly published as a regression on a single
   measurement.
 
+### 4.16 Surviving a change of audio hardware (increment 12)
+
+Raised by a user's own recordings, not by anything in this repository. One Teams
+call on 8 September became **three** recordings — 8m50s, 35m50s and a third —
+with 21 s and 46 s between them, and each restart needed its own Detection
+Prompt. The first record carried `outputDeviceChanged: true` and named the
+built-in microphone where the next named AirPods. That is the whole evidence
+trail, and it existed only because AD-54 stores the output device on the Meeting.
+
+#### FR-106: A change of audio hardware does not end the Session
+Moving audio to different hardware during a Session — AirPods connecting, a
+headset unplugged, an output menu changed — leaves one Session, one recording and
+one Note. Both Streams continue across it.
+
+**Consequences (testable):**
+- A watched application that releases the input device and takes another does not
+  end the Session, and raises no second Prompt.
+- The Mic Stream keeps recording across the change, including when the new device
+  runs at a different sample rate.
+- A meeting that genuinely ends is still detected, within FR-14's thirty seconds.
+- The output file's sample rate never changes, whatever the devices do.
+- Where the change cannot be absorbed, the Session says so rather than producing
+  a short file that looks complete.
+
+**Three causes, each measured.**
+
+1. **The detector's absence had no hysteresis.** There was a 2.5 s debounce
+   entering a meeting and **none** leaving it, so the moment between releasing one
+   input device and taking the next was read as the call ending. FR-14's own
+   testable consequence allows *thirty seconds* to notice a meeting has ended and
+   the implementation spent none of it. Twelve of those seconds are now spent on
+   a grace period. This is not a widened tolerance: the deadline was always
+   thirty seconds and the code was tighter than the requirement, in the one
+   direction that loses audio.
+2. **A meeting's identity was the process holding the device.** Teams exposes no
+   bare audio process object — only `.modulehost`, `.helper` and
+   `.notificationcenter` (AD-5) — and swaps between them across a hardware
+   change, so a meeting's identity changed while the meeting did not. AD-5 had
+   already made the watched prefix the unit of *matching*; it is now the unit of
+   identity.
+3. **Nothing observed `AVAudioEngineConfigurationChange`** — zero occurrences in
+   the tree — in a class whose System Stream counterpart has had a rebuild path
+   for its own device change since FR-8. The engine stops itself when the input
+   hardware changes, so the microphone silently ended.
+
+**Measured, `--check-device-switch`, MacBook Pro Microphone → USB PnP Audio
+Device, mic frames the device delivered:**
+
+| capture | before | after |
+|---|---|---|
+| 20 s ×3 | 10.0 s, 10.2 s, 20.0 s | 19.6 s, 19.6 s, 19.5 s |
+| 16 s ×5 | 8.0 s ×5 | 15.6 s ×5 |
+
+Seven of eight captures lost the microphone at the instant of the switch, to the
+sample. Eight of eight now survive. **One before-run survived, unexplained** —
+recorded rather than smoothed, because it is also why this went unnoticed and why
+some meetings will be intact.
+
+**What this cost, stated rather than absorbed.**
+
+- **A meeting that ends now takes up to 12 s longer to stop**, so up to twelve
+  seconds of room noise is recorded after it. Inside FR-14's budget, and cheap
+  next to losing half a call.
+- **The rate verdict becomes unavailable, not wrong, on a Session where the
+  device changed rate.** Two rates over one elapsed time describe neither, and
+  AD-44 reporting it would raise "recorded at the wrong rate" on a correct
+  recording. AD-45 already refuses to build on an unknown rate. It is a real loss
+  of cover for those Sessions — see Q28.
+- **A change of channel count is refused, not absorbed.** The ring's interleaving
+  and the writer's arithmetic are built on one channel count.
+
+**What AD-57's ledger could not see, and this is the uncomfortable part.** While
+half the meeting was missing the ledger read dropped 0, unaccounted 0, never
+converted 0, identity closed exactly — and it was *right*. It answers what became
+of every sample the device delivered and is silent by construction on whether the
+device kept delivering. Increment 11 built an instrument that would not have
+found this, and the thing that finds it is `deviceFrames` against elapsed time.
+
 ## 5. Non-Goals (Explicit)
 
 These exist to stop the "let me also add the nearby thing" failure mode at epic, story and code level.
@@ -1941,6 +2019,29 @@ writes every frame. The loss only appears under load, and only on shapes with
 `AVAudioConverter`'s own accounting, which its interface does not expose. An
 earlier draft of the spike note asserted a mechanism here and the arithmetic
 refuted it; the honest state is this question.
+
+**Q28 (increment 12): what covers the rate on a Session where the device changed
+rate?** FR-106 makes AD-44's verdict *unavailable* rather than wrong once the
+input rate changes mid-file, because two rates over one elapsed time describe
+neither. That is honest and it is a real loss: AD-44 exists because a wrong rate
+produces a recording that looks fine and reads fine, and it is exactly a Session
+with a hardware change that now has no cover. The shape of an answer is a rate
+check *per segment* — the writer already knows where each retune happened — but
+the segmentation has to be stored to be checkable afterwards, and nothing stores
+it yet. *Revisit when* a Session with a real rate change exists to measure
+against; the deterministic fixture cannot tell a correct segmentation from a
+lucky one.
+
+**Q29 (increment 12): why did one capture in eight survive the device switch
+without the rebuild?** Seven of eight lost the microphone at the instant of the
+switch, to the sample. One ran the full twenty seconds. The likely reason is that
+`AVAudioEngine` does not always follow the default device while it holds the old
+one open, which would mean the fault is timing-dependent rather than certain —
+consistent with it surviving eleven increments unnoticed. Worth knowing because
+it bounds how much of the author's existing library is affected, and the answer
+is in the Meeting records already on disk: a Session with `outputDeviceChanged`
+true and a Mic Stream shorter than its System Stream is the signature. *Revisit
+when* counting that signature across the library is worth the pass.
 
 ## 14. Assumptions Index
 

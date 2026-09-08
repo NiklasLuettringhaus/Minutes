@@ -601,6 +601,20 @@ Verified on the target machine on 2026-08-31.
 | Speaker match threshold | **0.35, measured** — calibrated 2026-09-01 against five real Meetings (AD-31). Was 0.45, never calibrated |
 | Build/packaging | `swift build` + `Scripts/build-app.sh` (assemble + ad-hoc `codesign`) |
 
+### AD-60 — A device change is absorbed by the layer that owns the device; a Session never ends because hardware moved
+
+- **Binds:** FR-8, FR-12, FR-14, FR-106, AD-5, AD-11, AD-44, AD-51, AD-57
+- **Prevents:** the two ways a hardware change became a lost recording, both measured on a user's own meetings. One Teams call on 8 September 2026 became three recordings 21 s and 46 s apart, each restart demanding its own Detection Prompt; and seven of eight instrumented captures lost the Mic Stream at the instant of the switch, to the sample. Neither had a test that could have caught it: the detector's decision was inline in a method that enumerates CoreAudio process objects, and the Mic Stream's device change was observed by nothing at all — zero occurrences of `AVAudioEngineConfigurationChange` in the tree, in a class whose System Stream counterpart has had a rebuild path since FR-8.
+- **Rule:** A change of audio hardware is handled where the device is owned, and is never allowed to propagate outward as the end of something.
+
+  **Detection.** A meeting's identity is the watched-app prefix, never the bundle ID of whichever process holds the device — AD-5 already made the prefix the unit of matching and it is now the unit of identity. Absence of the device is subject to hysteresis in both directions: a watched app must hold the input device for the debounce before a meeting is believed to have started, and must hold **no** input device for the grace period before it is believed to have ended. The grace period is spent out of FR-14's thirty-second budget and must leave room for one poll and the stop itself. The decision lives in a pure type that can be driven by literals; it does not live beside the enumeration.
+
+  **Capture.** Each Stream observes its own device's change notification and rebuilds onto the new device **into the same file**. The output file's sample rate is fixed and never changes, whatever the devices do, so a rate change is absorbed by retuning the converter and no sample already written is touched. Samples captured before the change belong to the old rate and are converted at it before its converter is retired. A change that cannot be absorbed — a different channel count — ends that Stream and says why; it never writes frames no reader can interpret, and it never discards what was captured before the change.
+
+  **Honesty about what is lost.** A rate that legitimately changed is not a rate that was misreported: AD-44's verdict becomes *unavailable* for such a Session rather than wrong, because two rates over one elapsed time describe neither, and AD-45 already refuses to build on an unknown rate. AD-57's identity keeps closing across the change only because its expected term is counted per conversion rather than derived from a single ratio; the derived form is exact with one rate and would invent two seconds of loss across two.
+
+  **And a limit on AD-57 that this AD exists to record.** While half a meeting was missing, the ledger read dropped 0, unaccounted 0, never converted 0, and its identity closed exactly — correctly. It answers what became of every sample the device *delivered* and is structurally silent on whether the device kept delivering. Increment 11 built an instrument that could not have found this fault. Nothing may treat a closed ledger as evidence that a Stream ran for the whole Session; `deviceFrames` against elapsed time is the term that answers that, and `--check-device-switch` is where it is read.
+
 ## Structural Seed
 
 ### Processing pipeline (AD-8)
