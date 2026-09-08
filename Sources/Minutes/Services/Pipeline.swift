@@ -43,8 +43,19 @@ actor Pipeline {
     /// rather than left looking live.
     func resumeInterrupted() async {
         let store = MeetingStore.shared
-        for m in await store.loadAll() where !m.isComplete && !m.hasFailed {
+        for m in await store.loadAll() where !m.isComplete {
             if await store.hasAudio(id: m.id) {
+                // FR-107. A Meeting that failed because its header said the
+                // audio was empty is excluded from resume for good — the
+                // failure is recorded, nothing retries it, and the audio is
+                // sitting there intact. So a failed Meeting is reconsidered
+                // **only when a repair actually changed something**: that is a
+                // new fact about the file, not a retry of the same attempt, and
+                // it cannot loop because the second pass finds nothing to fix.
+                if m.hasFailed {
+                    guard await repairUnclosedAudio(id: m.id) else { continue }
+                    Log.pipeline.info("retrying \(m.id, privacy: .public): its audio was repaired")
+                }
                 Log.pipeline.info("resuming interrupted meeting \(m.id, privacy: .public)")
                 enqueue(meetingID: m.id)
             } else {
@@ -54,6 +65,43 @@ actor Pipeline {
             }
         }
         await AppStateBridge.reloadMeetings()
+    }
+
+    /// Repairs both Streams' headers where they under-claim, and reports whether
+    /// anything changed (FR-107).
+    ///
+    /// Both Streams, because they fail together — the process died holding both
+    /// files open — and a Session with a readable microphone and an unreadable
+    /// System Stream would lose the far end of the call for no reason.
+    @discardableResult
+    private func repairUnclosedAudio(id: String) async -> Bool {
+        let store = MeetingStore.shared
+        var repaired = false
+        var recovered = 0.0
+        for stream in StreamKind.allCases {
+            guard let url = await store.audioURL(id: id, stream: stream) else { continue }
+            do {
+                if let a = try WavTailRepair.repair(url) {
+                    repaired = true
+                    recovered = max(recovered, a.recoverableSeconds)
+                }
+            } catch {
+                // A file that is not a readable WAVE is a different fault and
+                // the stage that reads it will report it properly. Never fail
+                // the Meeting from inside a repair.
+                Log.pipeline.error("could not assess \(stream.rawValue, privacy: .public).wav: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        if repaired {
+            // The stored duration was written as 0 by a Session that never got
+            // to write it. Correct it from what the audio actually holds, so the
+            // library stops showing a real meeting as zero seconds long.
+            _ = try? await store.update(id: id) { m in
+                if m.duration < recovered { m.duration = recovered }
+            }
+            Log.pipeline.info("repaired unclosed audio for \(id, privacy: .public): \(String(format: "%.1f", recovered), privacy: .public)s recoverable")
+        }
+        return repaired
     }
 
     private func publishInFlight() async {
@@ -91,6 +139,14 @@ actor Pipeline {
             Log.pipeline.error("cannot load meeting \(id, privacy: .public)")
             return
         }
+
+        // FR-107. Before any stage reads the audio: a Session that ended
+        // because the process died left its WAV headers claiming zero bytes,
+        // and every reader believes the header. Repairing here rather than in
+        // the transcribe stage covers resume, --reprocess and a fresh capture
+        // with one call, and costs a header read per Meeting when there is
+        // nothing to do.
+        await repairUnclosedAudio(id: id)
 
         // Clear a prior failure before retrying (FR-39).
         if meeting.failure != nil {

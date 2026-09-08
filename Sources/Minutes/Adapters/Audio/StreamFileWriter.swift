@@ -649,9 +649,37 @@ final class StreamFileWriter {
 
     private func drainLoop() {
         while running {
+            stampHeaderIfDue()
             if ring.count == 0 { usleep(20_000); continue }
             drainOnce()
         }
+    }
+
+    /// How often the file's own length claim is brought up to date (FR-107).
+    ///
+    /// A WAV's two size fields are written on close, so a Session that ends
+    /// because the process died leaves every sample on disk under a header
+    /// saying the audio is zero bytes long — and every reader believes it.
+    /// `Pipeline` repairs that after the fact, but a recording should be
+    /// readable by anything, not only by a Minutes that knows to repair it.
+    ///
+    /// Five seconds is the most audio a crash can cost from the *header's*
+    /// point of view, against a write of eight bytes at fixed low offsets. It
+    /// is deliberately not synchronised: the case this defends against is the
+    /// process dying, which leaves the page cache intact.
+    private static let headerStampInterval: TimeInterval = 5
+
+    private var lastHeaderStamp: Date?
+
+    private func stampHeaderIfDue() {
+        let now = Date()
+        if let last = lastHeaderStamp,
+           now.timeIntervalSince(last) < Self.headerStampInterval { return }
+        lastHeaderStamp = now
+        // Failure here is never the recording's problem: the file stays exactly
+        // as it was and `Pipeline` still repairs it afterwards.
+        do { try WavTailRepair.stamp(url, sync: false) }
+        catch { Log.audio.error("could not stamp the header: \(error.localizedDescription, privacy: .public)") }
     }
 
     private func drainOnce() {
