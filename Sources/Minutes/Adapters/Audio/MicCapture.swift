@@ -27,7 +27,20 @@ final class MicCapture {
     /// mid-meeting silently ended the microphone, and the only reason it had not
     /// been noticed is that the detector was ending the whole Session two
     /// seconds later anyway.
+    /// Suppresses the rebuild, so `--check-device-switch` can measure the
+    /// behaviour this fix replaces instead of describing it.
+    ///
+    /// A measurement seam in the same style as `StreamFileWriter`'s
+    /// `outputSlackOverride`, and like those it gates **nothing** by default:
+    /// unset, the rebuild happens. It exists because "the microphone used to die
+    /// here" is a claim, and a claim with no command behind it is worth nothing.
+    static var suppressDeviceRebuildForMeasurement = false
+
     private func observeConfigurationChanges() {
+        guard !Self.suppressDeviceRebuildForMeasurement else {
+            Log.audio.error("device-change rebuild suppressed for measurement")
+            return
+        }
         guard configObserver == nil else { return }
         configObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,

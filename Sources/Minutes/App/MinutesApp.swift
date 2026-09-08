@@ -34,6 +34,11 @@ enum Entry {
             // received, and the offset between the two streams' first samples.
             // Creates no Meeting and keeps no audio.
             ClockCheck.run()
+        } else if CommandLine.arguments.contains("--check-device-switch") {
+            // FR-106. Records both Streams, changes the default input device
+            // half way through, and reports what survived — the measurement the
+            // requirement rests on. Puts the device back on every path.
+            DeviceSwitchCheck.run()
         } else if CommandLine.arguments.contains("--check-drain") {
             // Story 17.3. Reproduces the drain-starvation mechanism against the
             // real ring and writer with a synthetic producer, so no audio device

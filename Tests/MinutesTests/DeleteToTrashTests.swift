@@ -114,6 +114,7 @@ final class UnlinkAllowlistTests: XCTestCase {
         "AecCheck.swift": "REQUIRED: the cancelled copy it re-transcribes, in the temporary directory. Trashing it would put a duplicate of a meeting in the user\'s Trash every time the measurement ran.",
         "DrainCheck.swift": "REQUIRED: --check-drain opens no audio device at all — the producer is synthetic — and writes to a temporary directory only so the real StreamFileWriter is exercised rather than a copy of it. Nothing in it is the user's, and it runs several times per invocation while sweeping four configurations.",
         "ClockCheck.swift": "REQUIRED: --check-clock records a few seconds into a temporary directory purely to read the devices' own timestamps, and it is not a Meeting. Trashing it would file the user's room in their Trash every time they ran a diagnostic.",
+        "DeviceSwitchCheck.swift": "REQUIRED: --check-device-switch records into a temporary directory purely to see what survives an input device change, and it is not a Meeting. Same reason as ClockCheck — and this one runs for twenty seconds by default, so the Trash would fill faster.",
     ]
 
     func testNoNewUnlinkOfAnythingTheUserCanLose() throws {
