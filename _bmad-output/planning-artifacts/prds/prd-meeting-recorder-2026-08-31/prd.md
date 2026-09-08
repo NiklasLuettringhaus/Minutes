@@ -1634,6 +1634,87 @@ of every sample the device delivered and is silent by construction on whether th
 device kept delivering. Increment 11 built an instrument that would not have
 found this, and the thing that finds it is `deviceFrames` against elapsed time.
 
+### 4.17 Nothing on disk stays unreadable (increment 12)
+
+Raised by the author asking why a Meeting the app had transcribed was reported
+as *"Invalid audio data provided"*. The answer was that it had not transcribed
+it, and could not: five Meetings sat at `captured` and three of them held 26
+minutes, 5 minutes and 3 minutes of real conversation.
+
+#### FR-107: An interrupted recording stays readable
+Audio captured before a Session was interrupted is readable afterwards, by
+Minutes and by anything else.
+
+**Consequences (testable):**
+- A recording whose process died is readable without any manual step.
+- A Meeting that failed because its audio was unreadable is retried once the
+  audio is readable, rather than excluded permanently.
+- A recording *in progress* can be opened and read by another reader.
+- No sample is altered by any of this.
+
+**Cause.** A WAV records the length of its audio in two size fields and both are
+written when the file is **closed**. A Session that ended because the process
+died — a crash, a force quit, an installer replacing the app mid-Session —
+therefore left every sample on disk under a header saying the audio was **zero
+bytes long**, and every reader believes the header. `AVAudioFile` does not report
+such a file as empty; it refuses to open it, which is where the message the
+author saw comes from.
+
+The second half was worse: `Pipeline.resumeInterrupted` skips anything with a
+failure recorded, so a Meeting that failed *because* its header said the audio
+was empty was excluded for good while the audio sat there intact. The staged,
+resumable design had a hole exactly where it was needed.
+
+**The repair changes eight bytes** — the `data` chunk size and the `RIFF` size,
+computed from the bytes present, rounded down to a whole frame. It only ever
+raises an under-claim: a header claiming *more* than the file holds is a
+truncated file, a different fault, and raising it would feed whatever follows the
+audio to the transcriber as speech. The writer also stamps the length every five
+seconds while recording, so a killed process leaves a file readable by anything
+rather than only by a Minutes that knows to repair it.
+
+**Known bound, not fixed.** Nothing reaches the file until the rate settles
+(AD-44), up to six seconds. A crash inside that window still loses the opening,
+header or no header.
+
+#### FR-108: A Stream that recorded nothing is absent, not a failure
+A Session where one Stream captured no audio still produces a Note from the
+other one.
+
+**Consequences (testable):**
+- A Session with an empty Mic Stream and a System Stream holding speech produces
+  a Note containing the far end.
+- A Session where both Streams are empty fails, and says so.
+- The threshold agrees with the transcriber's own 300 ms floor, so the two cannot
+  disagree about the same file.
+
+**Cause.** FR-7 says a Session whose system tap failed still produces a Note from
+the microphone alone. **The mirror case had no rule at all.** Two Meetings had a
+microphone that recorded nothing — 4,096 bytes, header only — beside a System
+Stream holding 57 s and 8 s of real far-end speech, at peaks near full scale.
+`transcribe` throws on an empty file, the stage threw with it, and the far end of
+two calls was discarded while sitting on disk.
+
+**Measured on the real library, before and after both requirements:**
+
+| | before | after |
+|---|---|---|
+| Meetings at `written` | 35 | **37** |
+| stuck at `captured` | 2 | **0** |
+| recorded failures | 5 | **0** |
+
+Recovered: 26m35s → 325 Utterances, 5m38s → 74, 3m17s → 39, and 65 s of far end
+from the two empty-microphone Sessions → 4 and 7. Everything on disk that holds
+audio now holds a transcript.
+
+**What this did not fix, measured and left alone.** `--check-echo` over the whole
+library reports four Sessions where the microphone picked up the call through the
+speakers, and on those the exclusion drops **0%, 0%, 0% and 1%** of Mic Stream
+words while **55 to 695 words per Session still repeat the far end**. FR-90's
+conservatism is deliberate and documented — either signal alone is unsafe — so
+this is a known remaining defect and not something to tune away. It is what
+FR-99's canceller exists for.
+
 ## 5. Non-Goals (Explicit)
 
 These exist to stop the "let me also add the nearby thing" failure mode at epic, story and code level.
@@ -2042,6 +2123,25 @@ it bounds how much of the author's existing library is affected, and the answer
 is in the Meeting records already on disk: a Session with `outputDeviceChanged`
 true and a Mic Stream shorter than its System Stream is the signature. *Revisit
 when* counting that signature across the library is worth the pass.
+
+**Answered 2026-09-08.** The pass was run: **two** Sessions in a 37-Meeting
+library have a Stream that stopped well before the Session did, and **both**
+carry `outputDeviceChanged: true` — a two-for-two correlation. One is a 173 s
+Session whose microphone delivered **6 s** and whose System Stream delivered
+62 s; the other a 58 s Session whose microphone delivered nothing. Both were
+recorded on the day the fault was found, before the fix was installed. The rest
+of the library is unaffected, so the timing-dependence in Q29 is real and the
+exposure was small. The 173 s Session is also the sharpest possible confirmation
+of AD-60's rule: its Mic Stream ledger closes **exactly** — device 292,800
+frames, consumed 292,800, written 97,600, dropped 0, unaccounted 0 — while 167
+of its 173 seconds are missing. A closed ledger says nothing about whether the
+device kept delivering.
+
+Also found by that pass, and not fixed: `--check-rates` divides frames by the
+*Session's* duration, so a Stream that stopped early reads as a wrong rate. It
+reported that Session as a rate failure of x28.37 when its declared rate is
+correct and its problem is duration. It is the same conflation AD-60 forbids,
+in the diagnostic rather than in the ledger.
 
 ## 14. Assumptions Index
 
