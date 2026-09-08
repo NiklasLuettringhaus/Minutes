@@ -90,6 +90,16 @@ struct CaptureLedger: Equatable, Sendable, Codable {
     var inputRate: Double
     /// The rate the file is written at.
     var outputRate: Double
+    /// Output frames the conversions should have produced, accumulated at the
+    /// rate in force for each one (FR-106).
+    ///
+    /// **Absent means "derive it from the rates", not "zero"** — the spine's
+    /// convention, and here it is what keeps every Meeting recorded before this
+    /// existed reading correctly. Present means the writer counted it, which it
+    /// has to when the device changed its rate mid-file: `inputRate` is then the
+    /// *last* rate, and one rate applied to the whole file describes neither
+    /// half.
+    var expectedOutputFrames: Double?
 
     static let unknown = CaptureLedger(
         deviceFrames: 0, droppedFrames: 0, overflows: 0, consumedFrames: 0,
@@ -140,10 +150,13 @@ struct CaptureLedger: Equatable, Sendable, Codable {
         return deviceFrames - droppedFrames - consumedFrames - residentFrames
     }
 
-    /// Output frames the conversion should have produced from what it consumed.
     /// Output frames the conversion should have produced from what it has
     /// actually handed over — consumed, less anything still held back.
+    ///
+    /// The writer's own count wins where it has one, because a single ratio is
+    /// only exact while the input rate is a single number (FR-106).
     var expectedWrittenFrames: Double {
+        if let counted = expectedOutputFrames { return counted }
         guard inputRate > 0 else { return 0 }
         return max(0, consumedFrames - heldFrames) * (outputRate / inputRate)
     }
@@ -261,7 +274,9 @@ struct CaptureLedger: Equatable, Sendable, Codable {
          consumedFrames: Double, residentFrames: Double, writtenFrames: Double,
          producedFrames: Double = 0, writeFailures: Int = 0,
          writeFailureFrames: Double = 0, heldFrames: Double = 0,
-         inputRate: Double, outputRate: Double) {
+         inputRate: Double, outputRate: Double,
+         expectedOutputFrames: Double? = nil) {
+        self.expectedOutputFrames = expectedOutputFrames
         self.producedFrames = producedFrames
         self.writeFailures = writeFailures
         self.writeFailureFrames = writeFailureFrames
@@ -293,5 +308,8 @@ struct CaptureLedger: Equatable, Sendable, Codable {
         heldFrames = try c.decodeIfPresent(Double.self, forKey: .heldFrames) ?? 0
         inputRate = try c.decodeIfPresent(Double.self, forKey: .inputRate) ?? 0
         outputRate = try c.decodeIfPresent(Double.self, forKey: .outputRate) ?? 0
+        // Absent stays absent: a Meeting recorded before this term existed must
+        // fall back to the derived form, not read as zero expected frames.
+        expectedOutputFrames = try c.decodeIfPresent(Double.self, forKey: .expectedOutputFrames)
     }
 }

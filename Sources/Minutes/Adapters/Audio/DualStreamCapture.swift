@@ -190,6 +190,7 @@ final class DualStreamCapture: Capturing {
             micRate: micRate,
             systemRate: systemRate,
             systemTapEstablished: tapEstablished,
+            micEndedEarly: mic.endedEarlyReason,
             micContinuity: micResult.continuity,
             systemContinuity: systemResult.continuity,
             streamStartOffset: offset,

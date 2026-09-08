@@ -29,6 +29,13 @@ struct CapturedStreams: Sendable {
     /// nothing", which is the condition worth telling the user about — including
     /// when it delivered no callbacks at all and so has zero duration.
     var systemTapEstablished: Bool = false
+    /// Why the Mic Stream stopped before the Session did, when it did (FR-106).
+    ///
+    /// The Mic Stream is the one that cannot be absent — FR-7 lets the System
+    /// Stream fail and still produce a Note — so a microphone that ended early
+    /// has to be said out loud rather than left as a short file that looks
+    /// complete.
+    var micEndedEarly: String?
     /// Whether each stream received everything its device produced (AD-51).
     var micContinuity: StreamContinuity = .unknown
     var systemContinuity: StreamContinuity = .unknown

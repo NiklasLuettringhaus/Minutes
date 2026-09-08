@@ -244,6 +244,13 @@ final class StreamFileWriter {
     /// holding it costs nothing worth counting.
     private var pending: [Float] = []
     private var rateSettled = false
+    /// Output frames the conversions performed so far should have produced,
+    /// accumulated at the rate in force for each one (FR-106).
+    private var expectedOutputFrames: Double = 0
+    /// True once the device this Stream reads has changed its sample rate
+    /// mid-file. It makes the rate verdict unavailable rather than wrong — see
+    /// `rateFidelity`.
+    private var deviceRateChanged = false
     /// Called on the drain thread the first time the observed rate disagrees with
     /// the declared one (AD-44). Never called for a settling or correct stream.
     var onRateDisagreement: (@Sendable (RateFidelity) -> Void)?
@@ -325,6 +332,75 @@ final class StreamFileWriter {
         t.start()
     }
 
+    /// Points the converter at a new device rate, mid-file (FR-106, AD-60).
+    ///
+    /// **The output file's rate never changes**, and that is what makes this
+    /// possible at all: only what the converter *reads* is different, so the
+    /// file needs no rewriting and the samples already in it are untouched. The
+    /// machinery is the same one AD-44's rate correction has used since it was
+    /// written — `makeConverter` at a new rate, `effectiveRate` updated — and
+    /// the only new part is that the reason is the device changing rather than
+    /// the device lying.
+    ///
+    /// The ownership discipline is `stop()`'s, for `stop()`'s reasons: the
+    /// samples still in the ring were captured at the **old** rate and must be
+    /// converted by the old converter before it is retired, and the flush that
+    /// empties that converter's filter tail cannot run beside a live `drainOnce`
+    /// without silently discarding audio.
+    ///
+    /// Returns false when the drain thread could not be joined, in which case
+    /// nothing was changed and the caller must not keep capturing into this
+    /// writer.
+    @discardableResult
+    func retune(inputRate: Double) -> Bool {
+        guard inputRate > 0 else { return false }
+        guard inputRate != effectiveRate else { return true }
+
+        running = false
+        let deadline = Date().addingTimeInterval(3)
+        while !(thread?.isFinished ?? true), Date() < deadline { usleep(5_000) }
+        guard thread?.isFinished ?? true else {
+            Log.audio.error("the drain thread did not stop within 3 s; not retuning to \(inputRate, privacy: .public) Hz")
+            // Put it back the way it was rather than leave the stream stalled.
+            running = true
+            return false
+        }
+
+        // Everything captured at the old rate, converted at the old rate.
+        while ring.count > 0 {
+            let before = ring.count
+            drainOnce()
+            if ring.count >= before { break }
+        }
+        // A device change before the rate ever settled would leave the opening
+        // held in `pending` and convert it at the wrong rate. Force the decision
+        // on the samples that belong to the old device, then empty the filter
+        // tail so no part of it is attributed to the new one.
+        settleRateIfPossible(final: true)
+        flushConverter()
+
+        guard let c = makeConverter(inputRate: inputRate) else {
+            Log.audio.error("could not build a converter at \(inputRate, privacy: .public) Hz; the stream ends here")
+            return false
+        }
+        Log.audio.info("input rate changed \(self.effectiveRate, privacy: .public) Hz -> \(inputRate, privacy: .public) Hz mid-file; converter retuned, output stays \(Self.outputSampleRate, privacy: .public) Hz")
+        converter = c
+        effectiveRate = inputRate
+        deviceRateChanged = true
+        // The rate check has no single declared rate to check against any more.
+        // `rateFidelity` says so; this stops the correction path from trying to
+        // "fix" a rate that legitimately changed.
+        rateSettled = true
+
+        running = true
+        let t = Thread { [weak self] in self?.drainLoop() }
+        t.name = "minutes.writer.\(url.lastPathComponent)"
+        t.qualityOfService = qualityOfService
+        thread = t
+        t.start()
+        return true
+    }
+
     func stop() {
         // Signal the drain thread and WAIT for it to finish before touching the
         // file. Draining from two threads at once is a data race on AVAudioFile,
@@ -393,6 +469,15 @@ final class StreamFileWriter {
     /// the output rate, so it carries the same error it is meant to detect, and
     /// comparing it against input frames would always agree.
     var rateFidelity: RateFidelity {
+        // A device that changed its rate mid-file has no single declared rate to
+        // be checked against, and the aggregate of two rates over one elapsed
+        // time is a number that describes neither. AD-44 catches a device that
+        // *lies* about its rate; a device that legitimately changes it is a
+        // different fact, and reporting the first for the second would raise
+        // "the far end of the call was recorded at the wrong rate" on a
+        // recording that is correct. Unavailable, not wrong — and AD-45 already
+        // refuses to build anything on an unknown rate (FR-106, AD-60).
+        if deviceRateChanged { return .unknown }
         // The device's own account first (AD-51). It needs two callbacks rather
         // than three seconds, carries no scheduling jitter, and its tolerance is
         // computed from the measurement rather than declared.
@@ -505,7 +590,14 @@ final class StreamFileWriter {
             writeFailureFrames: failedFrames,
             heldFrames: held,
             inputRate: effectiveRate,
-            outputRate: Self.outputSampleRate)
+            outputRate: Self.outputSampleRate,
+            // Supplied **only** where the derived form cannot be right, which is
+            // when more than one input rate applied to this file. Everywhere
+            // else the absent form is deliberate: `(consumed - held) * ratio` is
+            // the identity increment 11 measured and closed exactly on real
+            // recordings, and replacing it globally with an accumulator would
+            // put a different arithmetic under that proof for no gain.
+            expectedOutputFrames: deviceRateChanged ? expectedOutputFrames : nil)
     }
 
     /// The rate the converter is actually configured to read, for diagnostics
@@ -691,6 +783,13 @@ final class StreamFileWriter {
                 dst.update(from: p.baseAddress! + offset * channels, count: n * channels)
             }
             offset += n
+            // Accumulated per chunk rather than derived from one rate at the
+            // end, because the input rate is no longer guaranteed to be one
+            // number for the whole file: moving audio to different hardware
+            // mid-Session changes it (FR-106). `(consumed - held) * ratio` was
+            // exact while there was a single rate and silently wrong across two,
+            // and this term is what the accounting identity is checked against.
+            expectedOutputFrames += Double(n) * (Self.outputSampleRate / effectiveRate)
             convertAndAppend(src, using: converter, into: file)
         }
     }

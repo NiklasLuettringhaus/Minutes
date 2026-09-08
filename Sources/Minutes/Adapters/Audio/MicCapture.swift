@@ -10,6 +10,99 @@ final class MicCapture {
     private var clock: AudioClockTap?
     private(set) var isRunning = false
     private(set) var format: AVAudioFormat?
+    private var configObserver: NSObjectProtocol?
+    /// Serialises a device-change rebuild against `stop()`. The rebuild arrives
+    /// on a background queue and `stop()` frees the writer it is retuning.
+    private let lifecycle = NSLock()
+    /// Set when a device change could not be absorbed, so `stop()` can say the
+    /// Mic Stream ended early rather than let a short file look complete.
+    private(set) var endedEarlyReason: String?
+
+    // MARK: - Surviving an input device change (FR-106, AD-60)
+
+    /// `AVAudioEngine` stops itself when the input hardware changes and
+    /// invalidates the tap installed on the input node. **Nothing observed this
+    /// notification**, in a class whose System Stream counterpart has had a full
+    /// rebuild path for its own device change since FR-8 — so putting AirPods in
+    /// mid-meeting silently ended the microphone, and the only reason it had not
+    /// been noticed is that the detector was ending the whole Session two
+    /// seconds later anyway.
+    private func observeConfigurationChanges() {
+        guard configObserver == nil else { return }
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: nil
+        ) { [weak self] _ in
+            // Off the notification thread. Restarting an engine and reading
+            // CoreAudio properties are both forbidden there, for the same reason
+            // the tap's own listener hops off it.
+            DispatchQueue.global(qos: .userInitiated).async { self?.inputDeviceChanged() }
+        }
+    }
+
+    /// Rebuilds onto the new device, into the same file.
+    ///
+    /// The output file is 16 kHz whatever the device does, so a rate change is
+    /// absorbed by retuning the converter — the file needs no rewriting and not
+    /// one sample already in it is touched. This is the case that matters on
+    /// real hardware: the built-in microphone here declares 48 kHz and AirPods
+    /// declare 24 kHz, so the ordinary act of putting AirPods in during a call
+    /// changes the rate and a handler that only restarted the engine would have
+    /// written the rest of the meeting at half speed.
+    ///
+    /// A change in *channel count* is not absorbed. The ring's interleaving and
+    /// the writer's per-frame arithmetic are both built on one channel count,
+    /// and the honest end of that road is to stop the Stream and say so rather
+    /// than write frames nobody can interpret.
+    private func inputDeviceChanged() {
+        lifecycle.lock(); defer { lifecycle.unlock() }
+        guard isRunning, let writer, let recording = format else { return }
+        let input = engine.inputNode
+        engine.stop()
+        input.removeTap(onBus: 0)
+
+        let fresh = input.outputFormat(forBus: 0)
+        guard fresh.sampleRate > 0, fresh.channelCount > 0 else {
+            endEarly("the new input device reported no usable format")
+            return
+        }
+        guard fresh.channelCount == recording.channelCount else {
+            endEarly("""
+                the new input device is \(fresh.channelCount)-channel and this \
+                recording is \(recording.channelCount)-channel
+                """)
+            return
+        }
+        guard let r = ring, let c = clock else {
+            endEarly("the capture was torn down while the device changed")
+            return
+        }
+        if fresh.sampleRate != writer.converterInputRate,
+           !writer.retune(inputRate: fresh.sampleRate) {
+            endEarly("could not convert from the new device's \(fresh.sampleRate) Hz")
+            return
+        }
+
+        installTap(format: fresh, ring: r, clock: c)
+        engine.prepare()
+        do { try engine.start() } catch {
+            endEarly("the engine would not restart: \(error.localizedDescription)")
+            return
+        }
+        Log.audio.info("mic capture rebuilt across an input device change sr=\(fresh.sampleRate) ch=\(fresh.channelCount)")
+    }
+
+    /// **Deliberately does not clear `isRunning`.** `stop()` guards on it, so
+    /// clearing it here would make the Session throw away every sample captured
+    /// before the device changed — turning a partial recording into no recording
+    /// at all, which is the opposite of the point. The engine is already stopped,
+    /// so nothing further arrives; the writer still owns a file it will flush and
+    /// close correctly.
+    private func endEarly(_ why: String) {
+        endedEarlyReason = why
+        Log.audio.error("mic stream ends here: \(why, privacy: .public)")
+    }
 
     static func authorizationStatus() -> AVAuthorizationStatus {
         AVCaptureDevice.authorizationStatus(for: .audio)
@@ -51,7 +144,23 @@ final class MicCapture {
         try w.start()
         writer = w
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: fmt) { buffer, when in
+        installTap(format: fmt, ring: r, clock: c)
+        observeConfigurationChanges()
+
+        engine.prepare()
+        Log.audio.info("mic capture prepared sr=\(fmt.sampleRate) ch=\(fmt.channelCount)")
+    }
+
+    /// The tap body, in one place because a device change has to reinstall it.
+    ///
+    /// `ring` and `clock` arrive as parameters and are captured directly rather
+    /// than reached through `self`. That is deliberate and must stay: this
+    /// closure runs on the audio thread on every buffer, and capturing `self`
+    /// would put an ARC retain and release in it.
+    private func installTap(format fmt: AVAudioFormat,
+                            ring r: RingBuffer,
+                            clock c: AudioClockTap) {
+        engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: fmt) { buffer, when in
             guard let ch = buffer.floatChannelData else { return }
             let frames = Int(buffer.frameLength)
             let channels = Int(buffer.format.channelCount)
@@ -77,9 +186,6 @@ final class MicCapture {
                 tmp.withUnsafeBufferPointer { r.write($0.baseAddress!, count: tmp.count) }
             }
         }
-
-        engine.prepare()
-        Log.audio.info("mic capture prepared sr=\(fmt.sampleRate) ch=\(fmt.channelCount)")
     }
 
     /// Starts the device. Kept to the smallest possible amount of work, because
@@ -91,6 +197,10 @@ final class MicCapture {
         }
         do { try engine.start() } catch {
             engine.inputNode.removeTap(onBus: 0)
+            if let o = configObserver {
+                NotificationCenter.default.removeObserver(o)
+                configObserver = nil
+            }
             writer?.stop(); writer = nil; ring = nil; clock = nil
             throw MinutesError.microphoneUnavailable(error.localizedDescription)
         }
@@ -125,6 +235,11 @@ final class MicCapture {
     /// evidence would be a wrong verdict: on a five-second Test Playground where
     /// the speech lands late, the unflushed tail could hold all of the signal.
     func stop() -> StreamCaptureResult {
+        lifecycle.lock(); defer { lifecycle.unlock() }
+        if let o = configObserver {
+            NotificationCenter.default.removeObserver(o)
+            configObserver = nil
+        }
         guard isRunning else { return StreamCaptureResult() }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
@@ -164,4 +279,8 @@ final class MicCapture {
     }
 
     var level: Float { writer?.peak ?? 0 }
+
+    deinit {
+        if let o = configObserver { NotificationCenter.default.removeObserver(o) }
+    }
 }

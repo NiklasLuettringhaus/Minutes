@@ -175,6 +175,15 @@ final class SessionCoordinator: ObservableObject {
             }
         }
 
+        // FR-106. The loudest of the three, so it is reported last and wins: a
+        // microphone that stopped part-way through means part of the meeting is
+        // not in the recording at all, which is worse than a wrong rate and
+        // worse than a silent System Stream.
+        if let why = streams.micEndedEarly {
+            AppState.shared.lastError = .microphoneUnavailable(
+                "The recording continued but your microphone stopped part-way through — \(why).")
+        }
+
         AppState.shared.setSessionState(.transcribing(meetingID: id, title: nil))
         Log.session.info("session stopped \(id, privacy: .public) duration=\(streams.duration) system=\(streams.systemCaptured)")
 
