@@ -116,9 +116,10 @@ this increment.
    conclusion the drift table forced at the top of this note, now with the
    configuration held fixed.
 3. **The Mic Stream is susceptible too, just far less.** It lost 0.027% on the
-   worst recording, which is not zero. Callback size decides *susceptibility*;
-   load decides *magnitude*. An earlier draft of this note said the asymmetry
-   "follows from the callback size alone", and that was too strong.
+   worst recording, which is not zero. Load decides the magnitude. An earlier
+   draft of this note said the asymmetry "follows from the callback size alone",
+   and that was too strong twice over — see §5's closing note, where the harness
+   turns out not to reproduce the shape dependence reliably either.
 4. **The +1,006 ms start offset is an outlier, not the typical case.** The other
    three read **+21, +53 and +60 ms** through the same unfixed code. So the
    serialisation cost is itself conditional on what else holds the audio devices,
@@ -235,7 +236,64 @@ cannot be mistaken for the result.
 ./.build/release/Minutes --check-drain 15 10
 ```
 
-[FOUR-WAY TABLE]
+Five configurations, ten cells each (five producer shapes × two runs), ten
+seconds per cell against six competing `userInteractive` threads:
+
+| configuration | cells that lost audio | worst | ring drops |
+|---|---|---|---|
+| slack 64, one pass, `.utility` — **what shipped before** | **7 / 10** | 4.200% | 0 |
+| slack 64, one pass, `.userInitiated` | 6 / 10 | 1.000% | 0 |
+| slack 4096, one pass, `.utility` | **0 / 10** | — | 0 |
+| slack 64, pull until dry, `.utility` | **0 / 10** | — | 0 |
+| slack 4096, pull until dry — **shipping** | **0 / 10** | — | 0 |
+
+Three things this settles.
+
+**Either half alone removes it.** The loop at the old slack is zero, and the new
+slack with one pass is zero. The loop is the half that ships as the reason,
+because it is correct at every ratio; the constant ships beside it because it
+costs 16 KB of transient buffer and there is no argument for keeping the number
+that lost the audio.
+
+**The scheduling class is not the mechanism, and that was the increment's
+entering suspicion.** A `.utility` drain thread is scheduled on the efficiency
+cores and throttled, and the obvious story was that it falls behind and the ring
+overflows. Raising it to `.userInitiated` and changing nothing else leaves
+**6 of 10 cells still losing audio**. The suspicion was instrumented and is now
+answered: no.
+
+**The ring never overflowed. Not once, in any cell, in any configuration.**
+`dropped` is zero across all fifty cells of this sweep and every cell of every
+earlier one, idle and loaded, with a high-water mark that never exceeded 3.84% of
+a ten-second capacity. The candidate this increment opened with — and the reason
+`RingBuffer.didOverflow` existed at all — is not what happened.
+
+### One outlier, unexplained, and recorded rather than dropped
+
+An earlier sweep produced a single cell of **9.353% lost in the shipping
+configuration**. It was taken while the machine was thrashing badly enough that
+the operating system killed the measurement process shortly afterwards — 2.5
+million pageouts — and the ledger split for that cell was not captured, so
+whether it was a ring overflow or a conversion loss is not known. It has not
+recurred: the shipping configuration is zero in **20 of the 21 cells** measured
+across every sweep.
+
+It is in this note because leaving it out would be the more comfortable and less
+honest choice, and because it is the one reading that would matter if it
+reproduced. What would settle it is the ledger split under memory pressure rather
+than CPU contention, which `--check-drain` does not currently create.
+
+### What the harness does not reliably reproduce
+
+**The shape asymmetry is not stable run to run.** Across sweeps the 4,800-frame
+mono shape has read 0.000% four times and **0.293%** once, and the 480-frame
+24 kHz shape has read anywhere from 0.000% to **4.200%**. So the earlier claim in
+this note — that the two 4,800-frame shapes are a clean control that never loses
+anything — holds for most runs and not for all, and callback size is a weaker
+predictor in the harness than the real recordings suggest. The real recordings'
+15.5× asymmetry between the two Streams of one recording is the firmer evidence
+for it; the harness establishes the *mechanism* and its load dependence, not the
+asymmetry.
 
 ## 6. The start offset: where the second went
 
