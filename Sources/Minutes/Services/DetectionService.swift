@@ -4,7 +4,25 @@ import AppKit
 
 /// A meeting Minutes believes is underway.
 struct DetectedMeeting: Identifiable, Equatable {
-    var id: String { bundleID }
+    /// **The watched app, not the process that happens to hold the device.**
+    ///
+    /// Identity used to be `bundleID`, and `bundleID` is whichever helper
+    /// process was found holding the input device — `com.microsoft.teams2` ships
+    /// no bare audio process object, only `.modulehost`, `.helper` and
+    /// `.notificationcenter` (AD-5). Two of those can hold the device across one
+    /// call, the enumeration order that picks between them is not guaranteed to
+    /// be stable, and the app swaps between them when audio moves to different
+    /// hardware. So the identity of a meeting changed while the meeting did not,
+    /// and a meeting whose identity changes looks exactly like one meeting
+    /// ending and another beginning.
+    ///
+    /// The prefix is the thing that is actually stable, and AD-5 already made it
+    /// the unit of *matching*. This makes it the unit of identity too.
+    var id: String { watchedPrefix }
+    /// The watched-app prefix this holder matched.
+    let watchedPrefix: String
+    /// The specific process holding the device. Kept for the log and for
+    /// provenance on the Meeting record — never for identity.
     let bundleID: String
     let appName: String
 }
@@ -64,13 +82,27 @@ final class DetectionService: ObservableObject {
     private static let debounce: TimeInterval = 2.5
     private static let pollInterval: TimeInterval = 1.0
 
+    /// Seconds a watched app may hold no input device at all before the meeting
+    /// is believed to be over (FR-106).
+    ///
+    /// Switching audio hardware mid-call makes the app release one input device
+    /// and take another, and between the two it holds neither. That gap used to
+    /// end the recording, because absence was acted on the moment it was seen.
+    ///
+    /// FR-14's own testable consequence allows thirty seconds to notice a
+    /// meeting has ended, so this spends a portion of a budget that was already
+    /// granted and never used. Twelve seconds is the trade: comfortably longer
+    /// than any device switch measured on this machine, comfortably inside
+    /// FR-14's deadline, and it costs up to twelve seconds of recorded silence
+    /// after a real meeting ends — which the transcript drops anyway, and which
+    /// is cheap next to losing the second half of a call.
+    static let releaseGrace: TimeInterval = 12.0
+
     @Published private(set) var activeApps: [DetectedMeeting] = []
 
     private var timer: Timer?
-    private var firstSeen: [String: Date] = [:]
-    /// One prompt per detected meeting; a declined meeting is not re-prompted
-    /// while the same input session continues (FR-12).
-    private var promptedThisSession: Set<String> = []
+    private var window = DetectionWindow(debounce: DetectionService.debounce,
+                                         grace: DetectionService.releaseGrace)
 
     private init() {}
 
@@ -88,8 +120,7 @@ final class DetectionService: ObservableObject {
     /// periodic audio-process enumeration (FR-43).
     func stop() {
         timer?.invalidate(); timer = nil
-        firstSeen = [:]
-        promptedThisSession = []
+        window.reset()
         activeApps = []
         Log.detection.info("detection stopped")
     }
@@ -106,29 +137,22 @@ final class DetectionService: ObservableObject {
         activeApps = holders
 
         let now = Date()
-        let heldIDs = Set(holders.map(\.bundleID))
+        let verdict = window.update(held: Set(holders.map(\.id)), now: now)
 
-        // Released: clear debounce state, and auto-stop if this Session came from
-        // a Detection Prompt for that app (FR-14).
-        // Snapshot before mutating: iterating `firstSeen.keys` while removing from
-        // `firstSeen` is undefined behaviour and can crash.
-        let released = firstSeen.keys.filter { !heldIDs.contains($0) }
-        for id in released {
-            firstSeen.removeValue(forKey: id)
-            promptedThisSession.remove(id)
+        // Ended: the app has held no input device for longer than the grace
+        // period. Auto-stop if this Session came from a Detection Prompt for
+        // that app (FR-14).
+        for id in verdict.ended {
+            Log.detection.info("\(id, privacy: .public) released the input device for \(Int(Self.releaseGrace), privacy: .public)s — treating the meeting as over")
             Task { await SessionCoordinator.shared.autoStopIfTriggered(by: id) }
         }
 
-        for h in holders {
-            if firstSeen[h.bundleID] == nil { firstSeen[h.bundleID] = now }
-            guard let since = firstSeen[h.bundleID],
-                  now.timeIntervalSince(since) >= Self.debounce else { continue }
-            guard !promptedThisSession.contains(h.bundleID) else { continue }
-            guard !Preferences.shared.isSuppressed(h.bundleID) else { continue }
+        for h in holders where verdict.candidates.contains(h.id) {
+            guard !Preferences.shared.isSuppressed(h.watchedPrefix) else { continue }
             guard !SessionCoordinator.shared.isRecording else { continue }
             guard AppState.shared.sessionState == .idle else { continue }
 
-            promptedThisSession.insert(h.bundleID)
+            window.announce(h.id)
             Log.detection.info("prompting for \(h.bundleID, privacy: .public)")
             AppState.shared.pendingPrompt = h
             // The panel is the prompt, and the notification is a record of it.
@@ -175,9 +199,20 @@ final class DetectionService: ObservableObject {
             guard let w = list.first(where: { bundle.hasPrefix($0.bundleIDPrefix) }) else { continue }
             guard !seen.contains(w.bundleIDPrefix) else { continue }
             seen.insert(w.bundleIDPrefix)
-            out.append(DetectedMeeting(bundleID: bundle, appName: w.displayName))
+            out.append(DetectedMeeting(watchedPrefix: w.bundleIDPrefix,
+                                       bundleID: bundle,
+                                       appName: w.displayName))
         }
         return out
+    }
+
+    /// The watched-app prefix a bundle ID belongs to, or nil when it belongs to
+    /// none. The one place a full bundle ID is turned back into an identity —
+    /// needed because a notification carries the bundle ID it was posted with,
+    /// and that notification may have been posted by an earlier build.
+    @MainActor
+    static func watchedPrefix(for bundleID: String) -> String? {
+        watched.first { bundleID.hasPrefix($0.bundleIDPrefix) }?.bundleIDPrefix
     }
 
     /// Any app holding the input device, for diagnostics in the Detection pane.

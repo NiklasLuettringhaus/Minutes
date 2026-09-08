@@ -154,8 +154,15 @@ final class Notifier: NSObject, ObservableObject, UNUserNotificationCenterDelega
             guard let bundleID = info["bundleID"] as? String,
                   let appName = info["appName"] as? String else { return }
             AppState.shared.pendingPrompt = nil
+            // A notification carries the bundle ID it was posted with, which may
+            // be a helper process and may come from an earlier build. Resolve it
+            // back to the watched prefix so the Session is tied to the app rather
+            // than to whichever process was holding the device at the time.
+            let prefix = DetectionService.watchedPrefix(for: bundleID) ?? bundleID
             await SessionCoordinator.shared.start(
-                triggeredBy: DetectedMeeting(bundleID: bundleID, appName: appName))
+                triggeredBy: DetectedMeeting(watchedPrefix: prefix,
+                                             bundleID: bundleID,
+                                             appName: appName))
 
         case Action.never:
             if let bundleID = info["bundleID"] as? String {

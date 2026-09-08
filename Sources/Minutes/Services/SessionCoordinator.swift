@@ -77,7 +77,11 @@ final class SessionCoordinator: ObservableObject {
         // watched app is holding the input right now fixes that without weakening
         // FR-14: the Session is genuinely tied to that meeting either way.
         let associated = app ?? DetectionService.appsUsingAudioInput().first
-        autoStopBundleID = associated?.bundleID
+        // The watched prefix, not the helper process that happened to hold the
+        // device when the Session started. Teams swaps between `.modulehost` and
+        // `.helper` across an audio-hardware change, and a Session pinned to the
+        // one that has gone away can never be matched again.
+        autoStopBundleID = associated?.watchedPrefix
         wasManualStart = (app == nil)
 
         // Provenance for the index at the top of the Note (FR-33). Captured at
@@ -190,8 +194,11 @@ final class SessionCoordinator: ObservableObject {
     /// FR-14. A Session the *app* started stops itself; a Session the *user*
     /// started asks first, because stopping something someone chose to start is
     /// their call. What must not happen — and did — is neither.
-    func autoStopIfTriggered(by bundleID: String) async {
-        guard isRecording, let trigger = autoStopBundleID, bundleID.hasPrefix(trigger) else { return }
+    /// `watchedPrefix` is the watched app's identity, not a process bundle ID —
+    /// both sides of this comparison are prefixes now, so it is an equality.
+    func autoStopIfTriggered(by watchedPrefix: String) async {
+        guard isRecording, let trigger = autoStopBundleID, watchedPrefix == trigger else { return }
+        let bundleID = watchedPrefix
         let name = AppState.shared.meeting(id: currentMeetingID ?? "")?.triggeringApp
             ?? DetectionService.watched.first { trigger.hasPrefix($0.bundleIDPrefix) }?.displayName
             ?? "The meeting"
