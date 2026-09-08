@@ -53,8 +53,25 @@ actor Pipeline {
                 // new fact about the file, not a retry of the same attempt, and
                 // it cannot loop because the second pass finds nothing to fix.
                 if m.hasFailed {
-                    guard await repairUnclosedAudio(id: m.id) else { continue }
-                    Log.pipeline.info("retrying \(m.id, privacy: .public): its audio was repaired")
+                    // Two conditions, and they cover different things.
+                    //
+                    // A repair that changed something is a new fact about the
+                    // file, so the previous attempt was made against different
+                    // bytes and deserves another.
+                    //
+                    // Otherwise: audio on disk and **not one Utterance** is a
+                    // Meeting that has nothing to show for itself while its
+                    // recording sits there. That is worth one attempt per
+                    // launch whatever the recorded reason, because the reason
+                    // may no longer be true — the two Meetings that prompted
+                    // FR-108 failed on a rule this build no longer applies, and
+                    // no per-meeting fact had changed to tell us so. It cannot
+                    // run away: this method runs once per launch, and a Meeting
+                    // that succeeds has Utterances and stops qualifying.
+                    let repaired = await repairUnclosedAudio(id: m.id)
+                    let hasNothingToShow = m.utterances.isEmpty
+                    guard repaired || hasNothingToShow else { continue }
+                    Log.pipeline.info("retrying \(m.id, privacy: .public): \(repaired ? "its audio was repaired" : "it has audio and no transcript", privacy: .public)")
                 }
                 Log.pipeline.info("resuming interrupted meeting \(m.id, privacy: .public)")
                 enqueue(meetingID: m.id)
@@ -65,6 +82,30 @@ actor Pipeline {
             }
         }
         await AppStateBridge.reloadMeetings()
+    }
+
+    /// A Stream's audio, or nil when there is not enough of it to transcribe.
+    ///
+    /// Reads the header only — never the audio — and uses the transcriber's own
+    /// floor of 300 ms, so the answer here and the answer it would give agree.
+    /// A shorter file is treated as absent rather than handed over to fail.
+    private func usableAudioURL(id: String, stream: StreamKind) async -> URL? {
+        let store = MeetingStore.shared
+        guard let url = await store.audioURL(id: id, stream: stream) else { return nil }
+        do {
+            let a = try WavTailRepair.assess(url)
+            guard a.sampleRate > 0, a.bytesPerFrame > 0 else { return nil }
+            let seconds = Double(a.actualDataBytes) / (a.sampleRate * Double(a.bytesPerFrame))
+            guard seconds >= 0.3 else {
+                Log.pipeline.info("\(stream.rawValue, privacy: .public).wav holds \(String(format: "%.2f", seconds), privacy: .public)s — treating it as absent")
+                return nil
+            }
+            return url
+        } catch {
+            // Unreadable is not the same as empty, and the transcriber's own
+            // error is the better report. Hand it over.
+            return url
+        }
     }
 
     /// Repairs both Streams' headers where they under-claim, and reports whether
@@ -208,8 +249,26 @@ actor Pipeline {
             return out.isEmpty ? nil : out
         }
 
-        let micURL = await store.audioURL(id: id, stream: .mic)
-        let systemURL = await store.audioURL(id: id, stream: .system)
+        // FR-108. A Stream file that holds no audio is **absent**, not a
+        // failure. This is FR-7's own rule — a Session where the tap failed
+        // still produces a Note from the microphone alone — applied to the
+        // Stream FR-7 did not consider.
+        //
+        // Two Meetings on the author's machine had a microphone that recorded
+        // nothing and a System Stream holding 57 s and 8 s of real far-end
+        // speech, and both were thrown away entirely: `transcribe` throws on an
+        // empty file, the stage threw with it, and the far end of two calls went
+        // in the bin while sitting on disk. FR-7 was written for the microphone
+        // surviving without the tap; the mirror case had no rule at all.
+        let micURL = await usableAudioURL(id: id, stream: .mic)
+        let systemURL = await usableAudioURL(id: id, stream: .system)
+        guard micURL != nil || systemURL != nil else {
+            throw MinutesError.audioFileWriteFailed(
+                "Neither Stream recorded any audio, so there is nothing to transcribe.")
+        }
+        if micURL == nil {
+            Log.pipeline.error("the microphone recorded nothing; transcribing the far end alone (FR-108)")
+        }
         // What capture recorded about this Session, read once. Two of these were
         // separate loads a few lines apart, which is a `meeting.json` parse each
         // and — worse — two chances to read a record that a concurrent update
