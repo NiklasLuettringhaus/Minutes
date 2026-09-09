@@ -14,7 +14,9 @@ import SwiftUI
 /// control, and §9.3 requires it be honest about which backend is really running.
 struct SummariesPane: View {
     @EnvironmentObject var prefs: Preferences
-    @State private var llmAvailable: Bool?
+    /// The reason, not a Bool (FR-109). Nil until the first check returns.
+    @State private var llm: LanguageModelAvailability?
+    @State private var rechecking = false
 
     var body: some View {
         PaneScaffold(title: "Summaries",
@@ -39,6 +41,29 @@ struct SummariesPane: View {
                         Text(activeExplanation)
                             .font(.caption).foregroundStyle(Tok.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
+
+                        // FR-109. A route to the setting, and only where the
+                        // setting could change the answer — a button that cannot
+                        // help is worse than none. The download case gets "Check
+                        // again" instead, because there is nothing to change and
+                        // the state resolves itself.
+                        if let llm, !llm.isUsable, prefs.metadataBackend == .auto {
+                            HStack(spacing: Tok.s3) {
+                                if llm.settingsCanHelp {
+                                    Button("Open Apple Intelligence Settings") {
+                                        Permissions.openAppleIntelligenceSettings()
+                                    }
+                                }
+                                if llm.mayResolveItself {
+                                    Button(rechecking ? "Checking…" : "Check again") {
+                                        Task { await recheck() }
+                                    }
+                                    .disabled(rechecking)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.top, Tok.s2)
+                        }
                     }
                 }
             }
@@ -65,7 +90,7 @@ struct SummariesPane: View {
                         // the card above already said — the same fact twice on one
                         // pane, forty lines apart, which invites the reader to hunt
                         // for the difference.
-                        if prefs.metadataBackend == .auto && llmAvailable == false {
+                        if prefs.metadataBackend == .auto, let llm, !llm.isUsable {
                             Text("Your choice cannot be honoured right now, so keyphrase extraction runs instead — see above.")
                                 .font(.caption).foregroundStyle(Tok.amberInk)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -88,29 +113,34 @@ struct SummariesPane: View {
                 }
             }
         }
-        .task { llmAvailable = await FoundationModelsBackend().isAvailable() }
+        // Asked when the pane appears. The answer changes while the app runs —
+        // a download finishes, the user switches Apple Intelligence on — and
+        // there is no notification for it, so the "Check again" button above is
+        // the honest way to ask again without navigating away.
+        .task { await recheck() }
+    }
+
+    private func recheck() async {
+        rechecking = true
+        llm = await FoundationModelsBackend().availability()
+        rechecking = false
     }
 
     /// What will *actually* run, which is not always what is selected.
     private var activeIsLLM: Bool {
-        prefs.metadataBackend == .auto && llmAvailable == true
+        prefs.metadataBackend == .auto && llm?.isUsable == true
     }
 
     private var activeExplanation: String {
-        if activeIsLLM {
-            return "Apple Intelligence is on, so titles, summaries, decisions and action items are written by the model built into macOS. It runs on this Mac."
-        }
+        if activeIsLLM { return LanguageModelAvailability.available.reasonForUser }
         if prefs.metadataBackend == .heuristic {
             return "You have pinned this option. Titles and summaries are built by selecting the most salient sentences and phrases from the transcript — no model, and the same transcript always gives the same result."
         }
-        switch llmAvailable {
-        case false:
-            return "Apple Intelligence is switched off on this Mac, so there is no language model to use. Titles and summaries are built by selecting the most salient sentences and phrases from the transcript — the same transcript always gives the same result. Nothing is invented: every decision and action item cites the timestamp it came from."
-        case nil:
-            return "Checking what is available…"
-        default:
-            return ""
-        }
+        guard let llm else { return "Checking what is available…" }
+        // The reason and the description of what runs instead are composed
+        // rather than written out per case, so a corrected reason cannot leave a
+        // stale second half behind it (FR-109).
+        return llm.reasonForUser + " " + LanguageModelAvailability.fallbackDescription
     }
 
     private func bullet(_ s: String) -> some View {

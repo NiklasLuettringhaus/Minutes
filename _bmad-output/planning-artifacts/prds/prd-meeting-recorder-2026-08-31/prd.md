@@ -1715,6 +1715,50 @@ conservatism is deliberate and documented — either signal alone is unsafe — 
 this is a known remaining defect and not something to tune away. It is what
 FR-99's canceller exists for.
 
+### 4.18 The app says why, not what it guessed (increment 12)
+
+Reported with a screenshot: Apple Intelligence switched **on** in System Settings,
+Minutes still saying it was off, and no way to get from the app to that setting.
+
+#### FR-109: An unavailable capability reports its own reason
+Where Minutes cannot use something, it says why that thing is unavailable — not
+the most likely reason — and offers a route to the place that can change it, only
+where such a place exists.
+
+**Consequences (testable):**
+- Each distinct unavailability reason produces a distinct sentence.
+- Only the "switched off" reason may say Apple Intelligence is switched off.
+- A reason this build does not recognise is quoted, never replaced by one it does.
+- A settings button appears only where a setting could change the answer.
+- The state is re-read when the pane appears, and on demand.
+
+**Cause.** `FoundationModelsBackend.isAvailable()` returned a **`Bool`**. It
+matched on the system's reason, logged it, and discarded it. The Summaries pane,
+given only `false`, printed the one reason it had been written with: *"Apple
+Intelligence is switched off on this Mac."* macOS reports at least three distinct
+reasons — `deviceNotEligible`, `appleIntelligenceNotEnabled`, `modelNotReady` —
+and the user was in the third: switched on, models 0% downloaded. The app was
+right that it had no model to use and wrong about why, which sent them to a
+setting they had already changed.
+
+**This is the same defect as `RingBuffer.didOverflow`**, replaced in increment 11
+for the same reason and recorded there in the same words: a Bool cannot
+distinguish causes, so whoever reads it invents one. Finding it twice in two
+increments makes it a pattern rather than an incident — see AD-61.
+
+**Measured.** A standalone probe against `SystemLanguageModel.default.availability`
+on the author's Mac read `available` a few hours after the screenshot, confirming
+the state had been `modelNotReady` and had resolved itself. The three reason cases
+were confirmed to compile against the installed SDK rather than assumed from
+documentation.
+
+**What it deliberately does not do.** System Settings on that Mac also said *"The
+organization managing this Mac is restricting access to certain Apple
+Intelligence features."* There is no API for that, so Minutes does not guess at
+it — the `unrecognised` case names a managed Mac as a possibility and sends the
+user to the pane that reports it authoritatively. Guessing at MDM state would be
+the same mistake one layer along.
+
 ## 5. Non-Goals (Explicit)
 
 These exist to stop the "let me also add the nearby thing" failure mode at epic, story and code level.

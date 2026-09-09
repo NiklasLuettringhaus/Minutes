@@ -19,21 +19,48 @@ struct FoundationModelsBackend: MetadataBackend {
     private static let chunkCharacters = 6000
 
     func isAvailable() async -> Bool {
+        await availability().isUsable
+    }
+
+    /// Why the model can or cannot be used — **not** whether (FR-109).
+    ///
+    /// The reason used to be logged here and discarded, leaving the caller to
+    /// invent one. It invented "Apple Intelligence is switched off" and was
+    /// wrong on a Mac that had it switched on and was still downloading.
+    func availability() async -> LanguageModelAvailability {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
             switch SystemLanguageModel.default.availability {
             case .available:
-                return true
+                return .available
             case .unavailable(let reason):
-                Log.pipeline.info("FoundationModels unavailable: \(String(describing: reason), privacy: .public)")
-                return false
+                let mapped = Self.map(reason)
+                Log.pipeline.info("FoundationModels: \(mapped.summary, privacy: .public)")
+                return mapped
             @unknown default:
-                return false
+                return .unrecognised("a state this build does not recognise")
             }
         }
         #endif
-        return false
+        return .unsupportedSystem
     }
+
+    #if canImport(FoundationModels)
+    /// The one place a system enum becomes ours. `@unknown default` carries the
+    /// system's own description rather than collapsing to a case that would say
+    /// something specific and false — which is the bug this whole change is.
+    @available(macOS 26.0, *)
+    private static func map(
+        _ reason: SystemLanguageModel.Availability.UnavailableReason
+    ) -> LanguageModelAvailability {
+        switch reason {
+        case .deviceNotEligible: return .deviceNotEligible
+        case .appleIntelligenceNotEnabled: return .notEnabled
+        case .modelNotReady: return .downloading
+        @unknown default: return .unrecognised(String(describing: reason))
+        }
+    }
+    #endif
 
     func derive(from utterances: [Utterance], names: [String: String]) async throws -> MeetingMetadata {
         #if canImport(FoundationModels)

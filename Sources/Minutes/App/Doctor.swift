@@ -74,6 +74,21 @@ enum Doctor {
         print("  downloaded:         \(downloaded)")
         print("  model store:        \(ModelStorage.base.path)")
 
+        section("Summaries")
+        // FR-109. The *reason*, so "it says Apple Intelligence is off and it
+        // isn't" is answerable without reading source. It was previously
+        // reported nowhere and inferred wrongly in the UI.
+        let llm = await FoundationModelsBackend().availability()
+        let choice = await MainActor.run { Preferences.shared.metadataBackend }
+        print("  on-device model:    \(llm.summary)")
+        print("  your choice:        \(choice == .auto ? "use the model when available" : "always keyphrase extraction")")
+        let willRun = (choice == .auto && llm.isUsable) ? "Apple's on-device model" : "keyphrase extraction"
+        print("  will actually run:  \(willRun)")
+        if !llm.isUsable, llm.settingsCanHelp {
+            print("  → System Settings › Apple Intelligence & Siri says whether the models")
+            print("    are still downloading or an organisation is restricting them.")
+        }
+
         section("Voices")
         let voices = await SpeakerDirectory.shared.summaries()
         let enrolled = voices.first { $0.isEnrolled }

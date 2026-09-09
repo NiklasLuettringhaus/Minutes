@@ -89,6 +89,18 @@ enum Permissions {
         open("x-apple.systempreferences:com.apple.preference.security?Privacy_AudioCapture")
     }
 
+    /// The Apple Intelligence & Siri pane (FR-109).
+    ///
+    /// `com.apple.Siri-Settings.extension` is the bundle identifier of
+    /// `SiriPreferenceExtension.appex`, read off this machine rather than
+    /// guessed — the pane it opens is the one titled "Apple Intelligence &
+    /// Siri", which is also where macOS itself says whether the models are still
+    /// downloading or an organisation is restricting them. Minutes does not try
+    /// to answer those questions; it takes the user to the place that can.
+    static func openAppleIntelligenceSettings() {
+        open("x-apple.systempreferences:com.apple.Siri-Settings.extension")
+    }
+
     private static func open(_ s: String) {
         if let u = URL(string: s) { NSWorkspace.shared.open(u) }
     }

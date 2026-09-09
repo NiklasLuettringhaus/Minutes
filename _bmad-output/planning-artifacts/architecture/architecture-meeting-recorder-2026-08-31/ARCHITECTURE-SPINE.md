@@ -615,6 +615,22 @@ Verified on the target machine on 2026-08-31.
 
   **And a limit on AD-57 that this AD exists to record.** While half a meeting was missing, the ledger read dropped 0, unaccounted 0, never converted 0, and its identity closed exactly — correctly. It answers what became of every sample the device *delivered* and is structurally silent on whether the device kept delivering. Increment 11 built an instrument that could not have found this fault. Nothing may treat a closed ledger as evidence that a Stream ran for the whole Session; `deviceFrames` against elapsed time is the term that answers that, and `--check-device-switch` is where it is read.
 
+### AD-61 — A Bool never carries a reason; the thing that knows why says why
+
+- **Binds:** FR-7, FR-66, FR-102, FR-106, FR-109, AD-12, AD-36, AD-45, AD-52, AD-54, AD-57
+- **Prevents:** the caller inventing a cause. Twice now a boundary has answered a yes/no question, discarded the reason it already had, and left the next layer to guess — and both times the guess reached the user as a false statement. `RingBuffer.didOverflow` was a `Bool` set on the line where samples are dropped and read by nobody, so it could not tell a Mic Stream losing 353 frames from a System Stream losing 133,773 on the same recording. `FoundationModelsBackend.isAvailable()` returned a `Bool`, logged the system's reason and threw it away, and the Summaries pane told a user Apple Intelligence was switched off while their Mac had it switched on and downloading.
+- **Rule:** Where a component knows *why* something is unavailable, failed, or was refused, that reason crosses the boundary with the answer. A `Bool` is permitted only where there is genuinely one cause. Specifically:
+
+  **Log-and-discard is not carrying it.** A reason present in the unified log and absent from the return value is unavailable to every surface the user can see, and the log rolls over.
+
+  **An unknown reason is quoted, not mapped.** `@unknown default` and its equivalents carry the system's own description forward. Collapsing a reason this build has never seen into the nearest one it has is how a specific, false sentence gets shown — which is worse than an unhelpful true one.
+
+  **A reason implies what may be offered.** Whether a settings button, a retry, or nothing at all is right follows from the reason, so the reason must reach the surface that draws them. A button that cannot change the answer teaches the user the app is lying.
+
+  **The reason type is pure.** It lives in `Core`, imports no framework, and is exhaustively testable — including the cases the development machine cannot produce, which are precisely the ones nobody sees before a user does.
+
+  This is the same discipline AD-52 and AD-54 already apply to absent data, extended from *values* to *causes*: absent is not zero, and unavailable is not one particular reason.
+
 ## Structural Seed
 
 ### Processing pipeline (AD-8)
