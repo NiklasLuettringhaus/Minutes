@@ -110,3 +110,51 @@ final class LanguageModelAvailabilityTests: XCTestCase {
             .reasonForUser.contains("managed Mac"))
     }
 }
+
+/// FR-109. The pane composes its "running now" sentence from three inputs, and
+/// the combination that matters most is the one that used to say least: pinned
+/// to keyphrase extraction while the model quietly became available.
+final class SummariesExplanationTests: XCTestCase {
+
+    /// Mirrors `SummariesPane.activeExplanation`. Kept in step by asserting on
+    /// the same strings the pane composes from, which are the type's.
+    private func explanation(pinnedToHeuristic: Bool,
+                             llm: LanguageModelAvailability?) -> String {
+        if !pinnedToHeuristic, llm?.isUsable == true {
+            return LanguageModelAvailability.available.reasonForUser
+        }
+        if pinnedToHeuristic {
+            let pinned = "You have pinned this option."
+            guard llm?.isUsable == true else { return pinned }
+            return pinned + " Apple Intelligence is now working on this Mac, so the other option is available if you want it."
+        }
+        guard let llm else { return "Checking what is available…" }
+        return llm.reasonForUser + " " + LanguageModelAvailability.fallbackDescription
+    }
+
+    func testAPinnedUserIsToldWhenTheModelBecomesAvailable() {
+        let text = explanation(pinnedToHeuristic: true, llm: .available)
+        XCTAssertTrue(text.contains("now working"),
+                      "the one state where this news matters said nothing about it")
+    }
+
+    func testAPinnedUserIsNotToldTheModelWorksWhenItDoesNot() {
+        for a in [LanguageModelAvailability.notEnabled, .downloading,
+                  .deviceNotEligible, .unsupportedSystem] {
+            let text = explanation(pinnedToHeuristic: true, llm: a)
+            XCTAssertFalse(text.contains("now working"), "\(a) claimed the model works")
+        }
+    }
+
+    func testTheUnavailableExplanationCarriesBothTheReasonAndWhatRunsInstead() {
+        let text = explanation(pinnedToHeuristic: false, llm: .downloading)
+        XCTAssertTrue(text.contains("download"), "the reason is missing")
+        XCTAssertTrue(text.contains("most salient sentences"), "what runs instead is missing")
+    }
+
+    func testNothingIsClaimedBeforeTheCheckReturns() {
+        let text = explanation(pinnedToHeuristic: false, llm: nil)
+        XCTAssertFalse(text.contains("switched off"))
+        XCTAssertTrue(text.contains("Checking"))
+    }
+}

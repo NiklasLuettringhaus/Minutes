@@ -134,7 +134,14 @@ struct SummariesPane: View {
     private var activeExplanation: String {
         if activeIsLLM { return LanguageModelAvailability.available.reasonForUser }
         if prefs.metadataBackend == .heuristic {
-            return "You have pinned this option. Titles and summaries are built by selecting the most salient sentences and phrases from the transcript — no model, and the same transcript always gives the same result."
+            let pinned = "You have pinned this option. Titles and summaries are built by selecting the most salient sentences and phrases from the transcript — no model, and the same transcript always gives the same result."
+            // FR-109. Say that the model has *become* available, because
+            // otherwise the one state where that news matters is the one state
+            // that never mentions it. This pane told a user nothing about Apple
+            // Intelligence while they were pinned to the other option and the
+            // model had finished downloading behind them.
+            guard llm?.isUsable == true else { return pinned }
+            return pinned + " Apple Intelligence is now working on this Mac, so the other option is available if you want it."
         }
         guard let llm else { return "Checking what is available…" }
         // The reason and the description of what runs instead are composed
