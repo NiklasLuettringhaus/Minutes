@@ -30,10 +30,31 @@ final class Preferences: ObservableObject {
         static let dismissedUnclaimed = "dismissedUnclaimedNotes"
     }
 
-    /// Verified present in the live catalogue. Deliberately not the library's
-    /// recommended `openai_whisper-base`, which is too weak for multi-speaker
-    /// meeting audio; also deliberately not the largest (SM-C3).
-    static let defaultModel = "openai_whisper-large-v3-v20240930_turbo_632MB"
+    /// The measured-best engine for meetings, and the one `ModelCatalog` already
+    /// marks `.recommended` — so the default finally agrees with the picker
+    /// instead of contradicting it.
+    ///
+    /// `spikes/investigation-transcription-quality-2026-09-03` measured both
+    /// Parakeet variants at or ahead of Whisper large-v3-turbo *everywhere*, at
+    /// ~8× the speed: a tie on close mics (22.6% vs 22.8% WER) and an **11.4-point**
+    /// lead far-field (29.4% vs 40.8%, proper-noun recall 77% vs 60%) — and the
+    /// meeting room, where echo also lives, is exactly the far-field case. The old
+    /// default here *was* that Whisper turbo: the measured-worse, 8×-slower engine.
+    /// That mismatch is the whole of "FluidVoice's transcription is far superior" —
+    /// FluidVoice is this same Parakeet, which we shipped but did not default to.
+    ///
+    /// v3 over v2-en on purpose. v3 is multilingual (25 European languages, Danish
+    /// among them) and trails v2-en by only 0.4 pts far-field; v2-en's single
+    /// measured edge is English close mics (+2.3 pts), inside a ±8-pt per-session
+    /// swing. A recorder that must not mangle a non-English call defaults to the
+    /// multilingual model; v2-en stays one click away for an English-only user.
+    ///
+    /// Migration is intentional and safe: `init` reads `d.string(forKey:) ?? this`,
+    /// and `model`'s `didSet` never fires for that initial read (Swift does not run
+    /// observers during initialization). So a user who only ever took the default
+    /// never had a value written and moves to v3 on upgrade; a user who *picked* a
+    /// model persisted it through the observer and keeps that exact choice.
+    static let defaultModel = ParakeetModel.v3
 
     @Published var model: String {
         didSet { d.set(model, forKey: K.model) }

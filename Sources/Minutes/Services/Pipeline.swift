@@ -167,8 +167,15 @@ actor Pipeline {
             await publishInFlight()
         }
         await AppStateBridge.setProcessing(nil)
-        // Release models once the queue drains (AD-14).
+        // Release the transcription models once the queue drains (AD-14). Both
+        // engines, not just Whisper: Parakeet is now the default (see
+        // `Preferences.defaultModel`), so on most machines it is the resident one,
+        // and releasing only Whisper would leave the model users actually run —
+        // ~461 MB of CoreML — loaded indefinitely, which is the exact memory
+        // pressure AD-14 exists to prevent. SpeakerKit is left cached as before,
+        // a separate deliberate choice this does not revisit.
         await MLEngine.shared.unloadWhisper()
+        await MLEngine.shared.unloadParakeet()
     }
 
     // MARK: - Run / resume

@@ -115,7 +115,11 @@ final class ModelCatalog: ObservableObject {
         "openai_whisper-base":
             Spec(name: "Quick", role: .fastest, mb: 147, speed: 5),
         "openai_whisper-large-v3_947MB":
-            Spec(name: "Highest quality", role: .other, mb: 947, speed: 2),
+            // Not "Highest quality": nobody measured this model, and a superlative
+            // the harness cannot back is the exact class of claim FR-93 removed
+            // (investigation §2). Name it by what it verifiably is — the
+            // full-precision, non-turbo large-v3.
+            Spec(name: "Large v3, full precision", role: .other, mb: 947, speed: 2),
         "openai_whisper-small.en":
             Spec(name: "English, balanced", role: .english, mb: 483, speed: 4),
         "openai_whisper-base.en":
