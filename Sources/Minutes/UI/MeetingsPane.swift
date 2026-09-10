@@ -408,42 +408,36 @@ struct MeetingDetail: View {
             VStack(alignment: .leading, spacing: Tok.cardGap) {
                 titleBlock
                 if meeting.hasFailed { failureBlock }
-                // FR-87. Before the mic-only notice, because an unreliable
-                // recording is worse than a missing one: its transcript reads
-                // like a real conversation that never happened.
+                // Only the two notices that can make the transcript below
+                // *false* stay here as prominent amber banners, worst first.
+                // Mic-only, unreadable gaps and de-duplicated echo — the three
+                // that describe something true-but-incomplete or already handled
+                // — moved to the quiet "About this recording" block at the foot
+                // (see `recordingNotesBlock`). The user reported this page as a
+                // wall of near-identical amber warnings — "there are many errors
+                // in each meeting recording... we do not have to warn about
+                // everything on that page" — and five equal bars is exactly how
+                // the two that mean the words are wrong got lost among the three
+                // that do not. Splitting the tier answers that while keeping FR-7:
+                // nothing is made silent, only quieter and grouped.
+                //
+                // FR-87. First, because a fabricated transcript reads like a real
+                // conversation that never happened — worse than a missing one.
                 ForEach(meeting.untrustworthyStreams, id: \.stream) { u in
                     StateBanner(kind: .degraded,
                                 text: "The recording of \(u.stream) is not reliable. \(u.why) Minutes wrote no summary or title from it.")
                 }
-                // FR-102. Second, above the mic-only notice, because what is
-                // there may not be true rather than merely absent: the file runs
-                // straight across the join, so a sentence there may be two
-                // halves of different ones. EXPERIENCE.md argues the position.
+                // FR-102. Second: what is there may not be true rather than
+                // merely absent — the file runs straight across the join, so a
+                // sentence there may be two halves of different ones.
+                // EXPERIENCE.md argues the position.
                 ForEach(meeting.lostAudioNotices, id: \.self) { why in
-                    StateBanner(kind: .degraded, text: why)
-                }
-                if !meeting.systemStreamCaptured && meeting.isComplete {
-                    StateBanner(kind: .degraded,
-                                text: "Only your microphone was captured, so remote participants are not in this transcript.")
-                }
-                // FR-96. Before the echo notice and after the mic-only one.
-                // EXPERIENCE.md fixes the order and the rule behind it: worst
-                // misleading first. A gap is speech Minutes had and lost, which
-                // is invisible without being told because a gap looks exactly
-                // like a pause; the echo notice below describes something it
-                // handled.
-                if let why = TranscriptGaps.explanation(meeting.gaps) {
-                    StateBanner(kind: .degraded, text: why)
-                }
-                // FR-92. After the unreliable-recording notice, because this one
-                // describes something Minutes *handled* rather than something it
-                // could not vouch for.
-                if let why = meeting.echo?.explanation {
                     StateBanner(kind: .degraded, text: why)
                 }
                 speakerBlock
                 if let md = meeting.metadata { metadataBlock(md) }
                 transcriptBlock
+                recordingNotesBlock
                 provenanceBlock
             }
             .padding(Tok.paneMargin)
@@ -923,6 +917,52 @@ struct MeetingDetail: View {
                                }
                            }
                        })
+    }
+
+    /// The quieter tier of recording notices, consolidated into one block (FR-7).
+    ///
+    /// **Why it is here and not at the top.** The user reported the detail pane as
+    /// a wall of near-identical amber warnings — *"there are many errors in each
+    /// meeting recording... we do not have to warn about everything on that
+    /// page."* Every notice was the same `StateBanner(.degraded)`, so a recording
+    /// with several showed five or more identical amber bars and the two that mean
+    /// the transcript is *wrong* were lost among the three that do not.
+    ///
+    /// The prominent tier at the top keeps only the notices that can make the
+    /// words below *false* — a fabricated stream (FR-87) and audio lost across a
+    /// join (FR-102). The three consolidated here are true-but-incomplete or
+    /// already-handled — only your microphone was captured (FR-7), gaps the engine
+    /// could not read (FR-96, already marked in place in the transcript), and echo
+    /// the app de-duplicated (FR-92). They read as context, in caption weight and
+    /// `{colors.text-secondary}`, at the foot beside the provenance the same rule
+    /// demoted the output device to (FR-98) — an `info.circle`, never an
+    /// `exclamationmark.triangle`, because nothing here is a warning the reader
+    /// must act on.
+    ///
+    /// FR-7 is preserved: nothing is removed and nothing is hidden behind a click.
+    /// The stack of amber bars became one quiet grouped note, worst-first, and the
+    /// text of every notice is still on the page.
+    @ViewBuilder
+    private var recordingNotesBlock: some View {
+        let notes = meeting.recordingQualityNotes
+        if !notes.isEmpty {
+            Card {
+                VStack(alignment: .leading, spacing: Tok.s3) {
+                    HStack(spacing: Tok.s2) {
+                        Image(systemName: "info.circle").font(.caption)
+                        Text("About this recording").font(.caption).fontWeight(.medium)
+                    }
+                    .foregroundStyle(Tok.textSecondary)
+                    // Each notice on its own line — worst-first, as assembled — so
+                    // one recording with three of them is one card, not three bars.
+                    ForEach(notes, id: \.self) { note in
+                        Text(note)
+                            .font(.caption).foregroundStyle(Tok.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
     }
 
     private var provenanceBlock: some View {

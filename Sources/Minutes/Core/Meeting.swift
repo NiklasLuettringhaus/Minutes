@@ -430,6 +430,48 @@ struct Meeting: Codable, Sendable, Identifiable {
         return out
     }
 
+    /// The quieter tier of recording notices, worst-first (FR-7, FR-96, FR-92).
+    ///
+    /// **The tier below the amber banners.** The user reported the meeting detail
+    /// as a wall of near-identical amber warnings — *"there are many errors in
+    /// each meeting recording... we do not have to warn about everything on that
+    /// page."* Every notice rendered as the same `.degraded` banner, so a
+    /// recording with several of them stacked five or more identical amber bars
+    /// and the two that mean the transcript is *wrong* were lost among the three
+    /// that do not. The split is one question: could the words below be **false**?
+    ///
+    /// `untrustworthyStreams` (FR-87) and `lostAudioNotices` (FR-102) stay
+    /// prominent, because their transcript may be untrue rather than merely
+    /// incomplete. These three are true-but-incomplete or already-corrected, so
+    /// they read as context at the foot beside the provenance the same reasoning
+    /// already demoted (FR-98) — not as warnings the reader must act on. Nothing
+    /// is dropped: FR-7 forbids a silent degradation, and each of these is still
+    /// shown, in order, one glance away.
+    ///
+    /// Order follows EXPERIENCE.md, which ranks all three below the two that stay
+    /// prominent anyway: only-your-microphone (FR-7 — the far end is missing but
+    /// what is there is true), then unreadable gaps (FR-96 — already marked in
+    /// place in the transcript, so this carries only the total), then de-duplicated
+    /// echo (FR-92 — something the app handled). Absent is not zero: a Meeting with
+    /// none of these produces an empty list and no section at all.
+    var recordingQualityNotes: [String] {
+        var out: [String] = []
+        // FR-7. Guarded on completion, because a Session still capturing has not
+        // yet failed to get the System Stream — the fact is only true once the
+        // recording is done. The provenance block also carries "Mic only" as a
+        // terse chip; this is the one place that states the *consequence*.
+        if !systemStreamCaptured && isComplete {
+            out.append("Only your microphone was captured, so remote participants are not in this transcript.")
+        }
+        // FR-96. The *where* is already marked in place in the transcript; this
+        // carries only the total, which is why it no longer needs a banner.
+        if let why = TranscriptGaps.explanation(gaps) { out.append(why) }
+        // FR-92. Last, because it describes a correction rather than a loss: the
+        // far end is counted once, from the call itself.
+        if let why = echo?.explanation { out.append(why) }
+        return out
+    }
+
     /// FR-86. Whether derived content may be built from the whole transcript.
     var mayDeriveMetadata: Bool { untrustworthyStreams.isEmpty }
 
