@@ -29,6 +29,44 @@ struct CapturedStreams: Sendable {
     /// nothing", which is the condition worth telling the user about — including
     /// when it delivered no callbacks at all and so has zero duration.
     var systemTapEstablished: Bool = false
+    /// Why the Mic Stream stopped before the Session did, when it did (FR-106).
+    ///
+    /// The Mic Stream is the one that cannot be absent — FR-7 lets the System
+    /// Stream fail and still produce a Note — so a microphone that ended early
+    /// has to be said out loud rather than left as a short file that looks
+    /// complete.
+    var micEndedEarly: String?
+    /// Whether each stream received everything its device produced (AD-51).
+    var micContinuity: StreamContinuity = .unknown
+    var systemContinuity: StreamContinuity = .unknown
+    /// Seconds to add to a System Stream time to place it on the Mic Stream's
+    /// timeline (FR-97, AD-53).
+    ///
+    /// The difference between the two Streams' first-sample host times, on one
+    /// system-wide clock. `nil` where either device supplied no timestamp — and
+    /// `nil` means unknown, never zero: a Meeting whose offset was never measured
+    /// must not be silently re-ordered by a guess.
+    var streamStartOffset: TimeInterval?
+    /// What the audio was playing through, and therefore whether Echo was even
+    /// possible (FR-98, AD-54). `nil` where nothing could be read.
+    var outputDevice: OutputDevice?
+    /// Whether the output changed kind mid-Session. Recorded because the union
+    /// in `outputDevice.kind` deliberately hides *when* it was possible.
+    var outputDeviceChanged: Bool = false
+    /// What became of every sample each device delivered (FR-102, AD-57).
+    ///
+    /// Per Stream, never per Meeting, for the same reason the rate check is: on
+    /// the recording that forced this, the Mic Stream lost 22 ms and the System
+    /// Stream lost 8.37 s, and one figure for the recording would have been
+    /// wrong in both directions.
+    var micLedger: CaptureLedger = .unknown
+    var systemLedger: CaptureLedger = .unknown
+    /// How close each Stream came to outrunning its writer (FR-103, AD-58).
+    var micPressure: DrainPressure = .unknown
+    var systemPressure: DrainPressure = .unknown
+    /// What each stage of capture start cost, on the callbacks' own clock
+    /// (FR-104, AD-59).
+    var startTiming: CaptureStartTiming = .unknown
 }
 
 protocol Capturing: AnyObject {
@@ -47,11 +85,43 @@ struct TranscribedSegment: Sendable {
     var start: TimeInterval
     var end: TimeInterval
     var text: String
+    /// How sure the engine was, 0...1, or **absent** where it does not say
+    /// (FR-95, AD-52).
+    ///
+    /// Absent is not zero and must never be readable as low confidence. Both
+    /// engines report something and this field discarded it at the adapter
+    /// boundary until increment 10, which is why nothing downstream could weigh
+    /// a transcript's reliability — the one signal that would have caught §4.13's
+    /// fabrication by its symptom rather than by its cause.
+    ///
+    /// **It is not calibrated against anything.** Whisper reports a mean token
+    /// log-probability and Parakeet a per-token score, and the two are not the
+    /// same quantity. Treat it as an ordering within one engine's output, never
+    /// as a probability and never as a number to show a reader.
+    var confidence: Double?
+}
+
+/// What one transcription produced, including what it could not (AD-52).
+///
+/// A bare `[TranscribedSegment]` cannot say "there was speech here and I have
+/// nothing for it", and an interval that produces no segment is silently
+/// indistinguishable from an interval that was silent. That is the failure
+/// FR-96 exists to stop, so the port returns both halves.
+struct Transcription: Sendable {
+    var segments: [TranscribedSegment]
+    /// Intervals the engine returned nothing usable for. Filled by whoever can
+    /// tell a failure from silence, which needs the audio (see `TranscriptGaps`).
+    var gaps: [TranscriptGap] = []
+
+    init(segments: [TranscribedSegment], gaps: [TranscriptGap] = []) {
+        self.segments = segments
+        self.gaps = gaps
+    }
 }
 
 protocol Transcribing: Sendable {
     /// Transcribes one audio file. Entirely on-device (NFR-1).
-    func transcribe(url: URL, model: String) async throws -> [TranscribedSegment]
+    func transcribe(url: URL, model: String) async throws -> Transcription
 }
 
 // MARK: - Diarization
@@ -172,4 +242,27 @@ struct UnclaimedNote: Equatable, Sendable, Identifiable {
 protocol NoteLocating: Sendable {
     func locate(meeting: Meeting, in folder: URL) throws -> NoteLocation
     func unclaimed(meetings: [Meeting], in folder: URL) throws -> [UnclaimedNote]
+}
+
+// MARK: - What one Stream's capture reports (AD-51)
+
+/// Everything a single Stream's capture can say about itself when it stops.
+///
+/// Introduced in increment 10 to replace a five-element tuple that was about to
+/// become a seven-element one. Both capture adapters return this; `CapturedStreams`
+/// is the pair of them plus what only the pair can say.
+struct StreamCaptureResult: Sendable {
+    var duration: TimeInterval = 0
+    var evidence: AudioEvidence = .none
+    /// Whether the samples are at the rate the stream claimed (AD-44, AD-51).
+    var rate: RateFidelity = .unknown
+    /// Whether the app received everything the device produced (AD-51).
+    var continuity: StreamContinuity = .unknown
+    /// Host time, in seconds, of the very first sample this Stream delivered.
+    /// The two Streams' offset is the difference of these (FR-97, AD-53).
+    var originHostSeconds: Double?
+    /// What became of every sample the device delivered (FR-102, AD-57).
+    var ledger: CaptureLedger = .unknown
+    /// How close this Stream came to outrunning its writer (FR-103, AD-58).
+    var pressure: DrainPressure = .unknown
 }

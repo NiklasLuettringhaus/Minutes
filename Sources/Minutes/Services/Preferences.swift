@@ -18,6 +18,7 @@ final class Preferences: ObservableObject {
         static let keepAudio = "keepAudio"
         static let launchAtLogin = "launchAtLogin"
         static let lastPane = "lastPane"
+        static let promptDelivery = "promptDelivery"
         static let didCompleteFirstRun = "didCompleteFirstRun"
         static let lastSystemCaptureOK = "lastSystemCaptureOK"
         static let lastThroughput = "lastThroughputRatio"
@@ -29,10 +30,31 @@ final class Preferences: ObservableObject {
         static let dismissedUnclaimed = "dismissedUnclaimedNotes"
     }
 
-    /// Verified present in the live catalogue. Deliberately not the library's
-    /// recommended `openai_whisper-base`, which is too weak for multi-speaker
-    /// meeting audio; also deliberately not the largest (SM-C3).
-    static let defaultModel = "openai_whisper-large-v3-v20240930_turbo_632MB"
+    /// The measured-best engine for meetings, and the one `ModelCatalog` already
+    /// marks `.recommended` — so the default finally agrees with the picker
+    /// instead of contradicting it.
+    ///
+    /// `spikes/investigation-transcription-quality-2026-09-03` measured both
+    /// Parakeet variants at or ahead of Whisper large-v3-turbo *everywhere*, at
+    /// ~8× the speed: a tie on close mics (22.6% vs 22.8% WER) and an **11.4-point**
+    /// lead far-field (29.4% vs 40.8%, proper-noun recall 77% vs 60%) — and the
+    /// meeting room, where echo also lives, is exactly the far-field case. The old
+    /// default here *was* that Whisper turbo: the measured-worse, 8×-slower engine.
+    /// That mismatch is the whole of "FluidVoice's transcription is far superior" —
+    /// FluidVoice is this same Parakeet, which we shipped but did not default to.
+    ///
+    /// v3 over v2-en on purpose. v3 is multilingual (25 European languages, Danish
+    /// among them) and trails v2-en by only 0.4 pts far-field; v2-en's single
+    /// measured edge is English close mics (+2.3 pts), inside a ±8-pt per-session
+    /// swing. A recorder that must not mangle a non-English call defaults to the
+    /// multilingual model; v2-en stays one click away for an English-only user.
+    ///
+    /// Migration is intentional and safe: `init` reads `d.string(forKey:) ?? this`,
+    /// and `model`'s `didSet` never fires for that initial read (Swift does not run
+    /// observers during initialization). So a user who only ever took the default
+    /// never had a value written and moves to v3 on upgrade; a user who *picked* a
+    /// model persisted it through the observer and keeps that exact choice.
+    static let defaultModel = ParakeetModel.v3
 
     @Published var model: String {
         didSet { d.set(model, forKey: K.model) }
@@ -61,6 +83,64 @@ final class Preferences: ObservableObject {
     }
     @Published var metadataBackend: MetadataBackendChoice {
         didSet { d.set(metadataBackend.rawValue, forKey: K.metadataBackend) }
+    }
+
+    /// How the Detection Prompt reaches the user (FR-12).
+    ///
+    /// **A choice because both surfaces are defensible and they were shipped
+    /// together, which is neither.** The notification came first and failed in
+    /// the first real huddle: macOS shows a notification's actions only when the
+    /// banner is hovered or expanded, and under Banner style it auto-dismisses
+    /// before most people get there, so the one channel carrying the Record
+    /// button was the one that might never show it. The panel was added with
+    /// real buttons — and the notification was kept beside it as a durable
+    /// record, reachable in Notification Centre after the panel's 90 seconds.
+    ///
+    /// Two prompts for one question is its own defect: the user gets a slide-in
+    /// *and* a panel, has to work out which one carries the buttons, and
+    /// answering one does not visibly resolve the other. So the app stops
+    /// deciding for everybody. The default is the panel alone, because it is the
+    /// surface that always shows its buttons.
+    enum PromptDelivery: String, CaseIterable {
+        /// The floating panel only. Always shows its buttons; closes after 90 s.
+        case panel
+        /// The notification only. Survives in Notification Centre; its buttons
+        /// may be hidden until the banner is hovered.
+        case notification
+        /// Both, which is what shipped before this was a choice.
+        case both
+
+        var title: String {
+            switch self {
+            case .panel: return "A floating panel"
+            case .notification: return "A notification"
+            case .both: return "Both"
+            }
+        }
+
+        var detail: String {
+            switch self {
+            case .panel:
+                return "A small panel in the corner with Record, Not now and Never for this app. "
+                    + "It never takes focus from your meeting and closes itself after 90 seconds."
+            case .notification:
+                return "A notification that stays in Notification Centre until you answer it. "
+                    + "macOS may hide its buttons until you hover the banner."
+            case .both:
+                return "The panel to answer, and a notification as a record you can come back to. "
+                    + "Two prompts for one meeting."
+            }
+        }
+
+        /// Whether this choice needs notification permission to work at all.
+        var needsNotifications: Bool { self != .panel }
+
+        var showsPanel: Bool { self != .notification }
+        var showsNotification: Bool { self != .panel }
+    }
+
+    @Published var promptDelivery: PromptDelivery {
+        didSet { d.set(promptDelivery.rawValue, forKey: K.promptDelivery) }
     }
     @Published var showInDock: Bool {
         didSet {
@@ -123,6 +203,13 @@ final class Preferences: ObservableObject {
         showInDock = d.object(forKey: K.showInDock) as? Bool ?? false
         metadataBackend = (d.string(forKey: K.metadataBackend)
             .flatMap(MetadataBackendChoice.init(rawValue:))) ?? .auto
+        // Defaults to the panel rather than to `both`, which is what existing
+        // installs were doing. That is a deliberate change of behaviour on
+        // upgrade: `both` is the configuration the user asked to be rid of, and
+        // silently keeping it for everyone who already had it would make the
+        // setting look broken to exactly the people who want it.
+        promptDelivery = (d.string(forKey: K.promptDelivery)
+            .flatMap(PromptDelivery.init(rawValue:))) ?? .panel
         removeFillerWords = d.object(forKey: K.removeFiller) as? Bool ?? true
         fillerWords = d.stringArray(forKey: K.fillerWords) ?? FillerWords.defaults
         customWatchedApps = d.stringArray(forKey: K.customWatchedApps) ?? []

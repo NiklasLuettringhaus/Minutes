@@ -19,6 +19,7 @@ final class SystemTapCapture {
     private var ioProcID: AudioDeviceIOProcID?
     private var writer: StreamFileWriter?
     private var ring: RingBuffer?
+    private var clock: AudioClockTap?
     private(set) var isRunning = false
     private(set) var format: AVAudioFormat?
 
@@ -26,7 +27,22 @@ final class SystemTapCapture {
     /// capture Swift context (AD-1).
     private var selfRef: Unmanaged<SystemTapCapture>?
 
-    func start(url: URL) throws {
+    /// Host seconds at which the device chain finished being built, on the
+    /// callbacks' own clock (FR-104). Absent until `prepare` has run.
+    private(set) var chainBuiltHostSeconds: Double?
+    /// Host seconds at which `AudioDeviceStart` returned (FR-104).
+    private(set) var startedHostSeconds: Double?
+
+    /// Everything that can be done before the device is running (AD-59).
+    ///
+    /// **This is the expensive half, and moving it is the point.** The chain is
+    /// a process tap, a default-output-device lookup, a private aggregate device
+    /// and an IOProc, and under the previous order all of it was constructed
+    /// *after* the microphone had already started recording — so every
+    /// millisecond of it landed in FR-97's offset. AD-2's construction order is
+    /// unchanged and still absolute; only where the *start* falls inside it has
+    /// moved.
+    func prepare(url: URL) throws {
         try buildDeviceChain()
 
         guard let fmt = format, let asbd = fmt.streamDescription.pointee as AudioStreamBasicDescription? else {
@@ -34,9 +50,13 @@ final class SystemTapCapture {
             throw MinutesError.systemAudioTapFailed(stage: "resolve format", status: -1)
         }
         let channels = max(1, Int(asbd.mChannelsPerFrame))
-        let r = RingBuffer(capacity: Int(asbd.mSampleRate) * channels * 10)
+        let r = RingBuffer(capacity: Int(asbd.mSampleRate) * channels
+                           * StreamRingSizing.seconds)
         ring = r
+        let c = AudioClockTap()
+        clock = c
         let w = StreamFileWriter(url: url, format: fmt, ring: r)
+        w.clock = c
         // FR-84: the user finds out during the meeting, not at the end.
         //
         // This was claimed in the requirement and left unwired in the first pass:
@@ -56,12 +76,57 @@ final class SystemTapCapture {
                 }
             }
         }
-        try w.start()
-        writer = w
+        // From here on every failure tears down explicitly. The earlier guards in
+        // this function already did; these two relied on `deinit`, which cannot
+        // run once `createIOProc` has retained self, and could not run before it
+        // because the writer's drain thread was already going.
+        do {
+            try w.start()
+            writer = w
+            // AD-1: the IOProc is created here and started in `begin()`. Creating
+            // it is a property write on the aggregate device and is not cheap;
+            // starting it is the call that must sit next to the microphone's.
+            try createIOProc()
+        } catch {
+            teardown()
+            throw error
+        }
+        chainBuiltHostSeconds = AudioClockTap.seconds(fromHostTime: mach_absolute_time())
+    }
 
-        try startIO()
+    /// Starts the device. Deliberately the smallest possible amount of work, so
+    /// that this call and `MicCapture.begin()` can be adjacent (AD-59).
+    /// **Tears down on every failure path, and that is AD-2 rather than tidiness.**
+    /// `createIOProc` does `Unmanaged.passRetained(self)`, so a prepared instance
+    /// holds a reference to itself and `deinit` can never fire. Dropping one
+    /// without tearing it down leaks the private aggregate device and the process
+    /// tap for the life of the process — and a leaked aggregate device is visible
+    /// system-wide — as well as leaving the writer's drain thread spinning on a
+    /// file it will never close.
+    func begin() throws {
+        guard let proc = ioProcID, aggregateID != 0 else {
+            discard()
+            throw MinutesError.systemAudioTapFailed(stage: "start device", status: -1)
+        }
+        let st = AudioDeviceStart(aggregateID, proc)
+        startedHostSeconds = AudioClockTap.seconds(fromHostTime: mach_absolute_time())
+        Log.audio.info("AudioDeviceStart -> \(st)")
+        guard st == noErr else {
+            discard()
+            throw MinutesError.systemAudioTapFailed(stage: "start device", status: st)
+        }
         isRunning = true
+        logTapFormatAfterStart()
         observeDeviceChanges()
+    }
+
+    /// Releases a prepared-but-never-begun chain.
+    ///
+    /// Needed because `prepare()` and `begin()` are separate calls (AD-59): a
+    /// caller that prepares this and then fails on the *other* Stream has to be
+    /// able to give it back, and `deinit` cannot do it — see `begin()`.
+    func discard() {
+        teardown()
     }
 
     /// Rebuilds ONLY the CoreAudio objects, against whatever the default output
@@ -157,16 +222,26 @@ final class SystemTapCapture {
 
     }
 
-    // 5 & 6. IOProc with a C function pointer, then start. NOT the block variant (AD-1).
-    private func startIO() throws {
+    // 5. IOProc with a C function pointer. NOT the block variant (AD-1).
+    private func createIOProc() throws {
         selfRef = Unmanaged.passRetained(self)
-        var st = AudioDeviceCreateIOProcID(aggregateID, Self.ioProc,
+        let st = AudioDeviceCreateIOProcID(aggregateID, Self.ioProc,
                                            selfRef!.toOpaque(), &ioProcID)
         Log.audio.info("AudioDeviceCreateIOProcID -> \(st)")
-        guard st == noErr, let proc = ioProcID else {
+        guard st == noErr, ioProcID != nil else {
+            selfRef?.release(); selfRef = nil
             throw MinutesError.systemAudioTapFailed(stage: "create IOProc", status: st)
         }
-        st = AudioDeviceStart(aggregateID, proc)
+    }
+
+    // 6. Start. Used by the device-change rebuild, which has no second Stream to
+    // be adjacent to and must therefore do both halves itself.
+    private func startIO() throws {
+        try createIOProc()
+        guard let proc = ioProcID else {
+            throw MinutesError.systemAudioTapFailed(stage: "create IOProc", status: -1)
+        }
+        let st = AudioDeviceStart(aggregateID, proc)
         Log.audio.info("AudioDeviceStart -> \(st)")
         guard st == noErr else {
             throw MinutesError.systemAudioTapFailed(stage: "start device", status: st)
@@ -224,7 +299,7 @@ final class SystemTapCapture {
     /// that system-audio capture worked, because macOS exposes no API to query
     /// the permission (FR-42) — so it is derived from the samples and never from
     /// elapsed time (AD-36).
-    func stop() -> (duration: TimeInterval, evidence: AudioEvidence, rate: RateFidelity) {
+    func stop() -> StreamCaptureResult {
         // Hold the writer past teardown: teardown calls writer.stop(), which is
         // what flushes the remainder of the ring. Reading the counters before it
         // under-reports the tail.
@@ -234,8 +309,16 @@ final class SystemTapCapture {
         // would divide the same frames by a longer elapsed and invent a
         // disagreement on every recording.
         let r = w?.rateFidelity ?? .unknown
+        let cont = w?.continuity ?? .unknown
+        let origin = w?.originHostSeconds
         teardown()
         let e = w?.evidence ?? .none
+        // After `teardown()`, which flushes the ring through `writer.stop()`, and
+        // therefore after the tail is written rather than resident. `teardown`
+        // resets the ring, so these are read from the writer's own snapshot of
+        // the counters rather than from the ring — see `StreamFileWriter.ledger`.
+        let led = w?.ledger ?? .unknown
+        let press = w?.drainPressure ?? .unknown
         Log.audio.info("system capture stopped duration=\(e.duration) peak=\(e.peak) nonSilent=\(e.nonSilentSeconds) producedAudio=\(e.producedAudio) declaredRate=\(r.declaredRate) observedRate=\(r.observedRate)")
         if let why = e.failureReason {
             Log.audio.error("system stream produced no usable audio: \(why, privacy: .public)")
@@ -243,7 +326,12 @@ final class SystemTapCapture {
         if let why = r.explanation {
             Log.audio.error("system stream rate: \(why, privacy: .public)")
         }
-        return (e.duration, e, r)
+        if let why = cont.explanation {
+            Log.audio.error("system stream continuity: \(why, privacy: .public)")
+        }
+        return StreamCaptureResult(duration: e.duration, evidence: e, rate: r,
+                                   continuity: cont, originHostSeconds: origin,
+                                   ledger: led, pressure: press)
     }
 
     var level: Float { writer?.peak ?? 0 }
@@ -269,6 +357,7 @@ final class SystemTapCapture {
         destroyDeviceChain()
         writer?.stop(); writer = nil
         ring?.reset(); ring = nil
+        clock = nil
         isRunning = false
     }
 
@@ -319,7 +408,7 @@ final class SystemTapCapture {
     /// No allocation, no locks beyond the ring's index guard, no logging
     /// (architecture convention). Context arrives via refCon because a C function
     /// pointer cannot capture Swift state.
-    private static let ioProc: AudioDeviceIOProc = { _, _, inInputData, _, _, _, clientData in
+    private static let ioProc: AudioDeviceIOProc = { _, _, inInputData, inInputTime, _, _, clientData in
         guard let clientData else { return noErr }
         let me = Unmanaged<SystemTapCapture>.fromOpaque(clientData).takeUnretainedValue()
         guard let ring = me.ring else { return noErr }
@@ -328,19 +417,34 @@ final class SystemTapCapture {
             UnsafeMutablePointer(mutating: inInputData))
         // Handle interleaved, non-interleaved and mono by inspecting the list —
         // never by indexing past mBuffers.0 (AD-3).
+        var samples = 0
         if list.count == 1 {
             let b = list[0]
             if let md = b.mData {
-                ring.write(md.assumingMemoryBound(to: Float.self),
-                           count: Int(b.mDataByteSize) / 4)
+                samples = Int(b.mDataByteSize) / 4
+                ring.write(md.assumingMemoryBound(to: Float.self), count: samples)
             }
         } else {
             for b in list {
                 if let md = b.mData {
-                    ring.write(md.assumingMemoryBound(to: Float.self),
-                               count: Int(b.mDataByteSize) / 4)
+                    let n = Int(b.mDataByteSize) / 4
+                    samples += n
+                    ring.write(md.assumingMemoryBound(to: Float.self), count: n)
                 }
             }
+        }
+
+        // AD-51. `inInputTime` was bound to `_` since this file was written. It
+        // is the device's own account of the buffer just delivered — the sample
+        // counter and a host stamp for the same instant — and it is the only
+        // authority on the rate that does not go through a wall clock. The flags
+        // decide: a timestamp the device did not mark valid is absent, not zero.
+        let t = inInputTime.pointee
+        if t.mFlags.contains(.sampleTimeValid), t.mFlags.contains(.hostTimeValid),
+           let clock = me.clock, samples > 0 {
+            let channels = max(1, Int(me.format?.channelCount ?? 1))
+            clock.record(sampleTime: t.mSampleTime, hostTime: t.mHostTime,
+                         frames: samples / channels)
         }
         return noErr
     }

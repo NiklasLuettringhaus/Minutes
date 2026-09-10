@@ -21,6 +21,78 @@ import AVFoundation
 final class StreamFileWriter {
     /// The one place the storage format is decided.
     static let outputSampleRate: Double = 16_000
+
+    /// Output frames offered to `AVAudioConverter` beyond what the current input
+    /// chunk needs — **and the fix for the drift this increment was written
+    /// for** (AD-57, FR-102).
+    ///
+    /// **It was 64, and 64 was the whole defect.** The output buffer is sized
+    /// from the input chunk in hand, so the slack is all the room the converter
+    /// has to hand back anything it is holding beyond that chunk. Sixty-four
+    /// frames is four milliseconds. Under load the converter holds more than
+    /// that, cannot shed it at four milliseconds per call, and the audio does not
+    /// reach the file.
+    ///
+    /// Measured with `--check-drain 20 10` — twenty seconds per shape against ten
+    /// competing `userInteractive` threads on a ten-core machine, three runs each:
+    ///
+    /// | producer shape | slack 64 | slack 4096 |
+    /// |---|---|---|
+    /// | 512 frames / 10.7 ms, stereo 48 kHz | 0.27–0.75% lost | **0%** |
+    /// | 480 frames / 20 ms, stereo 24 kHz | 0.50–0.60% | **0%** |
+    /// | 512 frames / 10.7 ms, mono 48 kHz | 0.80–0.91% | **0%** |
+    /// | 4800 frames / 100 ms, mono 48 kHz | 0% | **0%** |
+    /// | 4800 frames / 100 ms, stereo 48 kHz | 0% | **0%** |
+    ///
+    /// The two shapes that never lost anything are the ones whose callbacks are
+    /// **4,800 frames**, and the microphone's callbacks are 4,800 frames while the
+    /// system tap's are 512. That is the 380× asymmetry the real recording shows,
+    /// reproduced from the callback size alone with no audio device involved.
+    ///
+    /// **4096, and it is a bound rather than a tuned figure.** It is half of one
+    /// output chunk, so a conversion can always return a whole chunk's worth more
+    /// than the input it was just handed — which is strictly more than the
+    /// converter can be holding, because it is only ever handed one chunk at a
+    /// time. It costs 16 KB per conversion buffer and the buffer is transient.
+    /// This is not a widened tolerance: nothing is being allowed through that was
+    /// previously rejected, and the number it moves is a loss to **zero** rather
+    /// than to inside a window.
+    static let outputSlackFrames: AVAudioFrameCount = 4096
+
+    /// The slack actually used, so `--check-drain` can sweep it and show the
+    /// difference the shipping value makes. Production never sets it.
+    static var outputSlackOverride: AVAudioFrameCount?
+
+    /// Whether a conversion keeps pulling until the converter stops filling the
+    /// buffer — **the half of the fix that needs no constant** (AD-57).
+    ///
+    /// `outputSlackFrames` above makes the buffer big enough for the backlog at
+    /// the ratios this app actually meets, and "big enough" is a claim about the
+    /// ratio: at 3:1 one input chunk converts to at most 2,731 output frames, so
+    /// 4,096 covers it. At **2:1 upward** — an 8 kHz device, and this library
+    /// holds five recordings whose System Stream ran at 8000 Hz — one 8,192-frame
+    /// chunk converts to 16,384 output frames and 4,096 does not cover it at all.
+    ///
+    /// So the size is not the mechanism's cure, it is a symptom of not asking the
+    /// converter whether it has more. `.haveData` means the buffer was filled and
+    /// there may be more behind it; `.inputRanDry` means it has run out. Looping
+    /// on the former drains the backlog at any ratio and needs no figure to be
+    /// right.
+    ///
+    /// Sweepable so the two halves can be measured apart rather than shipped as
+    /// one change nobody can attribute. Production never sets it.
+    ///
+    /// **Both overrides are unsynchronised `static var`s, and that is a stated
+    /// compromise rather than an oversight.** They are written from the main
+    /// thread before `Thread.start()` and cleared after the join, so the current
+    /// ordering is safe — but it is safe by convention, they compile only because
+    /// the target pins Swift 5 language mode, and they would be errors under
+    /// Swift 6. `DrainCheck` carries a hand-rolled lock box whose own comment
+    /// condemns exactly this shape. They are here because a measurement seam
+    /// that costs a lock on the drain thread is worse, and they are named
+    /// `Override` so that nothing mistakes them for configuration.
+    static var pullUntilDryOverride: Bool?
+    static let pullUntilDry = true
     private static let outputFormat = AVAudioFormat(
         commonFormat: .pcmFormatFloat32, sampleRate: outputSampleRate,
         channels: 1, interleaved: false)!
@@ -54,6 +126,52 @@ final class StreamFileWriter {
     ///
     /// Measuring between two later points removes the transient entirely.
     private var measureBaseline: (frames: AVAudioFramePosition, at: Date)?
+    /// Output frames the converter actually produced (AD-57).
+    ///
+    /// Splits `CaptureLedger.conversionRemainder` into its two halves, which are
+    /// different faults: frames the converter never produced from input it was
+    /// given, and frames it produced that did not reach the file. The first
+    /// reading of the identity could not tell them apart, and "consumed and not
+    /// written" was doing the work of both.
+    private(set) var convertProducedFrames: AVAudioFramePosition = 0
+    /// Times `AVAudioFile.write` threw.
+    ///
+    /// It was logged and never counted. A recording that lost audio because the
+    /// disk stalled and one that lost it because the ring overflowed are
+    /// different faults, and a log line that has rolled out of the unified log —
+    /// as the log for the 42.4-minute recording had by the time it was looked at
+    /// — is not a record.
+    private(set) var writeFailures = 0
+    /// Output frames lost to those failures.
+    private(set) var writeFailureFrames: AVAudioFramePosition = 0
+
+    /// The ring's counters, frozen at `stop()` (AD-57).
+    ///
+    /// **The ledger must not depend on being read before the ring is reset.**
+    /// The first version read them live, and `SystemTapCapture.stop` calls
+    /// `teardown()` — which calls `ring.reset()` — before it reads the result. So
+    /// the System Stream reported zero drops and a zero high-water mark on every
+    /// capture, which is the *exact* reading the increment is trying to obtain
+    /// and would have looked like good news. Freezing them here makes the
+    /// measurement independent of the order two adapters happen to do their
+    /// teardown in.
+    private var frozen: (dropped: Int, overflows: Int, highWater: Int, resident: Int)?
+
+    /// The longest interval between two successive drains (FR-103, AD-58).
+    ///
+    /// Measured here rather than in the IOProc because this is the thread that
+    /// falls behind, and because AD-1 forbids adding anything to that one. It is
+    /// a subtraction of two values `lastDrainAt` already holds, so nothing new is
+    /// sampled — the same argument AD-45 makes for the rate check being free.
+    private(set) var longestDrainGap: TimeInterval = 0
+    /// The backlog waiting at the end of that longest gap, in input frames.
+    ///
+    /// **It never travels without the gap, and the gap never travels without
+    /// it.** The drain loop sleeps 20 ms whenever the ring is empty, so an idle
+    /// recording produces 20 ms gaps by design; what separates that from
+    /// starvation is whether work had piled up by the time the gap ended.
+    private(set) var backlogAtLongestGap: Double = 0
+
     /// When the most recently counted chunk was seen.
     ///
     /// The rate is `(frames since baseline) / (lastDrainAt - baselineAt)`, so both
@@ -64,12 +182,51 @@ final class StreamFileWriter {
     /// point removes the bias entirely rather than hiding it under a wider
     /// tolerance.
     private var lastDrainAt: Date?
+
+    /// The clock the rate measurement reads.
+    ///
+    /// Injected so a test can drive it deterministically, and because a test
+    /// that sleeps to pace a synthetic producer is measuring the scheduler
+    /// rather than this code. `RateCorrectionTests` did exactly that and was
+    /// **flaky under load**: a true 24 kHz stream measured a few per cent low
+    /// and snapped to 22050 Hz.
+    ///
+    /// It is also the seam FR-94 needs. The device supplies its own sample-time
+    /// and host-time counters in every IOProc callback, and the honest fix is to
+    /// measure the rate against those rather than against any wall clock. This
+    /// is where that will attach.
+    var now: () -> Date = { Date() }
     /// `Date` rather than the audio clock, deliberately: the whole failure was the
     /// audio clock not being what the app believed, so the check must come from
     /// outside it.
+    ///
+    /// *Qualified in increment 10.* The sentence above conflated two clocks that
+    /// live in the same device and are not the same thing. What the app believed
+    /// wrongly was the **format's declared rate** — a static number read from a
+    /// property. `mSampleTime` is a running counter of frames the device actually
+    /// produced, and on the seven affected recordings it advanced at 8000 or 5333
+    /// per host second exactly as the wall clock said. So the audio clock is not
+    /// the thing that lied; it is a second, independent witness that agrees, and
+    /// it agrees without the scheduling jitter this one carries (AD-51).
+
+    /// The device's own account of what it delivered (AD-51, FR-94).
+    ///
+    /// Absent for a device that supplies no valid timestamps, in which case
+    /// everything falls back to `now()` above. Absent is not a downgrade: the
+    /// wall-clock figures are what caught the original defect.
+    var clock: AudioClockTap?
     /// Set once when the rate check first fails, so the failure is reported once
     /// rather than on every drained chunk.
     private(set) var rateFailure: RateFidelity?
+    /// Whether `onRateDisagreement` has already fired.
+    ///
+    /// Separate from `rateFailure` because a *corrected* stream is not a failure
+    /// and must not be recorded as one — but it is still a disagreement, and it
+    /// is still reported exactly once. Without this the correction path fired the
+    /// callback and then left `checkRate` free to fire it again on the next
+    /// drain, which is a duplicate the wall clock's slower settling used to hide
+    /// by settling too late for a second drain to happen.
+    private var didReportDisagreement = false
     /// The rate this writer is actually converting *from*.
     ///
     /// Starts as the declared rate and becomes the observed one if the device
@@ -87,6 +244,13 @@ final class StreamFileWriter {
     /// holding it costs nothing worth counting.
     private var pending: [Float] = []
     private var rateSettled = false
+    /// Output frames the conversions performed so far should have produced,
+    /// accumulated at the rate in force for each one (FR-106).
+    private var expectedOutputFrames: Double = 0
+    /// True once the device this Stream reads has changed its sample rate
+    /// mid-file. It makes the rate verdict unavailable rather than wrong — see
+    /// `rateFidelity`.
+    private var deviceRateChanged = false
     /// Called on the drain thread the first time the observed rate disagrees with
     /// the declared one (AD-44). Never called for a settling or correct stream.
     var onRateDisagreement: (@Sendable (RateFidelity) -> Void)?
@@ -99,6 +263,21 @@ final class StreamFileWriter {
     /// Captured frames belonging to a chunk whose peak cleared the silence floor.
     /// Counted at input rate, which is what `nonSilentSeconds` divides by.
     private(set) var nonSilentInputFrames: AVAudioFramePosition = 0
+
+    /// The drain thread's scheduling class.
+    ///
+    /// **A seam, so that the question can be measured rather than argued.** This
+    /// thread was `.utility` from the day it was written, which is the lowest
+    /// non-background class: on Apple Silicon it is scheduled on the efficiency
+    /// cores and is subject to CPU throttling. If it is late, the ring overflows
+    /// and the user's audio is gone — which is not the profile of background
+    /// work, and 8.37 seconds went missing from one recording somewhere between
+    /// the callback and this thread.
+    ///
+    /// Exposed rather than simply changed because `--check-drain` has to be able
+    /// to sweep it and report the difference. A change that cannot be shown to
+    /// improve a measured number does not ship.
+    var qualityOfService: QualityOfService = .utility
 
     /// When true, silence is written instead of the captured audio.
     ///
@@ -148,9 +327,78 @@ final class StreamFileWriter {
         running = true
         let t = Thread { [weak self] in self?.drainLoop() }
         t.name = "minutes.writer.\(url.lastPathComponent)"
-        t.qualityOfService = .utility
+        t.qualityOfService = qualityOfService
         thread = t
         t.start()
+    }
+
+    /// Points the converter at a new device rate, mid-file (FR-106, AD-60).
+    ///
+    /// **The output file's rate never changes**, and that is what makes this
+    /// possible at all: only what the converter *reads* is different, so the
+    /// file needs no rewriting and the samples already in it are untouched. The
+    /// machinery is the same one AD-44's rate correction has used since it was
+    /// written — `makeConverter` at a new rate, `effectiveRate` updated — and
+    /// the only new part is that the reason is the device changing rather than
+    /// the device lying.
+    ///
+    /// The ownership discipline is `stop()`'s, for `stop()`'s reasons: the
+    /// samples still in the ring were captured at the **old** rate and must be
+    /// converted by the old converter before it is retired, and the flush that
+    /// empties that converter's filter tail cannot run beside a live `drainOnce`
+    /// without silently discarding audio.
+    ///
+    /// Returns false when the drain thread could not be joined, in which case
+    /// nothing was changed and the caller must not keep capturing into this
+    /// writer.
+    @discardableResult
+    func retune(inputRate: Double) -> Bool {
+        guard inputRate > 0 else { return false }
+        guard inputRate != effectiveRate else { return true }
+
+        running = false
+        let deadline = Date().addingTimeInterval(3)
+        while !(thread?.isFinished ?? true), Date() < deadline { usleep(5_000) }
+        guard thread?.isFinished ?? true else {
+            Log.audio.error("the drain thread did not stop within 3 s; not retuning to \(inputRate, privacy: .public) Hz")
+            // Put it back the way it was rather than leave the stream stalled.
+            running = true
+            return false
+        }
+
+        // Everything captured at the old rate, converted at the old rate.
+        while ring.count > 0 {
+            let before = ring.count
+            drainOnce()
+            if ring.count >= before { break }
+        }
+        // A device change before the rate ever settled would leave the opening
+        // held in `pending` and convert it at the wrong rate. Force the decision
+        // on the samples that belong to the old device, then empty the filter
+        // tail so no part of it is attributed to the new one.
+        settleRateIfPossible(final: true)
+        flushConverter()
+
+        guard let c = makeConverter(inputRate: inputRate) else {
+            Log.audio.error("could not build a converter at \(inputRate, privacy: .public) Hz; the stream ends here")
+            return false
+        }
+        Log.audio.info("input rate changed \(self.effectiveRate, privacy: .public) Hz -> \(inputRate, privacy: .public) Hz mid-file; converter retuned, output stays \(Self.outputSampleRate, privacy: .public) Hz")
+        converter = c
+        effectiveRate = inputRate
+        deviceRateChanged = true
+        // The rate check has no single declared rate to check against any more.
+        // `rateFidelity` says so; this stops the correction path from trying to
+        // "fix" a rate that legitimately changed.
+        rateSettled = true
+
+        running = true
+        let t = Thread { [weak self] in self?.drainLoop() }
+        t.name = "minutes.writer.\(url.lastPathComponent)"
+        t.qualityOfService = qualityOfService
+        thread = t
+        t.start()
+        return true
     }
 
     func stop() {
@@ -162,9 +410,19 @@ final class StreamFileWriter {
         while !(thread?.isFinished ?? true), Date() < deadline {
             usleep(5_000)
         }
+        // Whether the drain thread actually stopped decides what may be done
+        // next. Everything below this line assumes sole ownership of the file
+        // and the converter, and `flushConverter` in particular tells the
+        // converter the stream has ended — which, running beside a live
+        // `drainOnce`, would make that thread's conversions return end-of-stream
+        // and discard audio silently.
+        let joined = thread?.isFinished ?? true
+        if !joined {
+            Log.audio.error("the drain thread did not stop within 3 s; skipping the flush rather than racing it")
+        }
         // Now sole owner: flush everything left, not just one chunk. The previous
         // single drainOnce() call truncated the tail of every recording.
-        while ring.count > 0 {
+        while joined, ring.count > 0 {
             let before = ring.count
             drainOnce()
             if ring.count >= before { break }  // no progress; avoid spinning
@@ -173,7 +431,16 @@ final class StreamFileWriter {
         // so the decision is forced here and the held opening is written. Without
         // this a five-second Test Playground recording (FR-47) would produce an
         // empty file.
-        settleRateIfPossible(final: true)
+        if joined {
+            settleRateIfPossible(final: true)
+            flushConverter()
+        }
+        // After the flush, so `resident` is what the flush could not move rather
+        // than what it had not moved yet, and before any caller resets the ring.
+        // **Once.** A second `stop()` taken after the ring was reset would
+        // otherwise replace the real counters with zeros — reinstating exactly
+        // the failure this snapshot exists to prevent.
+        if frozen == nil { frozen = ring.counters }
         file = nil
         thread = nil
     }
@@ -202,6 +469,43 @@ final class StreamFileWriter {
     /// the output rate, so it carries the same error it is meant to detect, and
     /// comparing it against input frames would always agree.
     var rateFidelity: RateFidelity {
+        // A device that changed its rate mid-file has no single declared rate to
+        // be checked against, and the aggregate of two rates over one elapsed
+        // time is a number that describes neither. AD-44 catches a device that
+        // *lies* about its rate; a device that legitimately changes it is a
+        // different fact, and reporting the first for the second would raise
+        // "the far end of the call was recorded at the wrong rate" on a
+        // recording that is correct. Unavailable, not wrong — and AD-45 already
+        // refuses to build anything on an unknown rate (FR-106, AD-60).
+        if deviceRateChanged { return .unknown }
+        // The device's own account first (AD-51). It needs two callbacks rather
+        // than three seconds, carries no scheduling jitter, and its tolerance is
+        // computed from the measurement rather than declared.
+        let audio = clock?.snapshot
+        // **Where the device speaks at all, it is the only authority** (AD-51).
+        // Two ticks is the threshold, not `isDecisive`: between the second
+        // callback and the point the tolerance narrows enough to decide, the
+        // honest answer is `settling`, and falling back to the wall clock for
+        // that window puts its jitter back in exactly where the measurement is
+        // still forming. It cost a test — under full-suite load the wall clock
+        // read a 16 kHz stream as ~48 kHz for one drain, settled `correct`, and
+        // the file came out three times too fast.
+        //
+        // A device that supplies no valid timestamp records no tick, and there
+        // the wall clock is not a fallback but the whole check.
+        if let audio, audio.ticks >= 2 {
+            return RateFidelity(declaredRate: format.sampleRate,
+                                framesObserved: audio.sampleAdvance,
+                                elapsedSeconds: audio.elapsedSeconds,
+                                correctedTo: correctedRate,
+                                source: .audioClock,
+                                callbackFrames: audio.largestTick)
+        }
+        return wallClockFidelity
+    }
+
+    /// The wall-clock measurement, always available and always the fallback.
+    var wallClockFidelity: RateFidelity {
         guard let b = measureBaseline, let last = lastDrainAt else {
             return RateFidelity(declaredRate: format.sampleRate, framesObserved: 0,
                                 elapsedSeconds: 0, correctedTo: correctedRate)
@@ -210,6 +514,106 @@ final class StreamFileWriter {
                             framesObserved: Double(inputFramesConsumed - b.frames),
                             elapsedSeconds: last.timeIntervalSince(b.at),
                             correctedTo: correctedRate)
+    }
+
+    /// How long the opening may be held waiting for the device's own clock to
+    /// become decisive before the wall clock is asked instead.
+    ///
+    /// **Six seconds, and it is a safety bound rather than a measurement.**
+    /// AD-44's rule is that nothing reaches the file until the rate has settled,
+    /// and AD-51 made the device the authority on when that is. Together those
+    /// two have a failure mode neither has alone: a device delivering very large
+    /// buffers takes proportionally longer to narrow its tolerance, and if it
+    /// never narrows it, `pending` grows for the whole meeting and the file stays
+    /// empty until stop. Two hours of held audio is about four gigabytes, and a
+    /// crash loses all of it — which is exactly what FR-9's incremental commit
+    /// exists to prevent.
+    ///
+    /// Twice the wall clock's own settling period, so a device that supplies no
+    /// timestamps at all is unaffected and one that supplies slow ones is
+    /// judged by the check that caught the original defect.
+    static let audioClockPatience: TimeInterval = RateFidelity.settlingSeconds * 2
+
+    /// What the device says about holes in what it handed over (AD-51, FR-94).
+    ///
+    /// Separate from the rate on purpose. A dropped buffer and a wrong rate are
+    /// different defects that the wall clock renders as one blurred number — the
+    /// missing frames lower the count and the elapsed time it is divided by
+    /// keeps running, so the two errors partly cancel and neither is visible.
+    var continuity: StreamContinuity {
+        guard let audio = clock?.snapshot, audio.isUsable else { return .unknown }
+        return StreamContinuity(missingFrames: audio.framesMissing,
+                                expectedFrames: audio.sampleAdvance,
+                                discontinuities: audio.discontinuities,
+                                rebases: audio.rebases)
+    }
+
+    /// Host time, in seconds, of the very first sample this stream delivered.
+    ///
+    /// FR-97's offset between the two Streams is the difference of two of these.
+    /// Absent where the device supplied no timestamps.
+    var originHostSeconds: Double? { clock?.snapshot.originHostSeconds }
+
+    /// What became of every sample the device delivered (AD-57, FR-102).
+    ///
+    /// **Every term is a counter this type or the ring already kept.** Nothing
+    /// new is measured; the change is that the counts now leave the adapter.
+    /// `inputFramesConsumed` in particular has existed since AD-44 and was
+    /// discarded at this boundary, and it is the single term that separates
+    /// "never got out of the ring" from "lost between the ring and the file" —
+    /// which is the difference between naming this defect's mechanism and
+    /// guessing it.
+    var ledger: CaptureLedger {
+        // Every term is bound to an explicit `Double` first. Chaining twelve
+        // inferred conversions into one initialiser call is how three functions
+        // in the heuristic backend came to need rewriting for type-checker
+        // timeouts, and this one hit the same wall.
+        let channels: Double = Double(max(1, format.channelCount))
+        let r = frozen ?? ring.counters
+        let device: Double = clock?.snapshot.framesProduced ?? 0
+        let dropped: Double = Double(r.dropped) / channels
+        let consumed: Double = Double(inputFramesConsumed)
+        let resident: Double = Double(r.resident) / channels
+        let written: Double = Double(framesWritten)
+        let produced: Double = Double(convertProducedFrames)
+        let failedFrames: Double = Double(writeFailureFrames)
+        let held: Double = Double(pending.count) / channels
+        return CaptureLedger(
+            deviceFrames: device,
+            droppedFrames: dropped,
+            overflows: r.overflows,
+            consumedFrames: consumed,
+            residentFrames: resident,
+            writtenFrames: written,
+            producedFrames: produced,
+            writeFailures: writeFailures,
+            writeFailureFrames: failedFrames,
+            heldFrames: held,
+            inputRate: effectiveRate,
+            outputRate: Self.outputSampleRate,
+            // Supplied **only** where the derived form cannot be right, which is
+            // when more than one input rate applied to this file. Everywhere
+            // else the absent form is deliberate: `(consumed - held) * ratio` is
+            // the identity increment 11 measured and closed exactly on real
+            // recordings, and replacing it globally with an accumulator would
+            // put a different arithmetic under that proof for no gain.
+            expectedOutputFrames: deviceRateChanged ? expectedOutputFrames : nil)
+    }
+
+    /// The rate the converter is actually configured to read, for diagnostics
+    /// that need to distinguish a rebuilt converter from a settled one.
+    var converterInputRate: Double { converter?.inputFormat.sampleRate ?? 0 }
+
+    /// How close this Stream came to outrunning this thread (AD-58, FR-103).
+    var drainPressure: DrainPressure {
+        let channels = Double(max(1, format.channelCount))
+        let r = frozen ?? ring.counters
+        return DrainPressure(
+            highWaterFrames: Double(r.highWater) / channels,
+            capacityFrames: Double(ring.capacity) / channels,
+            longestGapSeconds: longestDrainGap,
+            backlogAtLongestGap: backlogAtLongestGap,
+            inputRate: effectiveRate)
     }
 
     /// The input format conversions actually use, which may not be the one the
@@ -232,20 +636,55 @@ final class StreamFileWriter {
         let f = rateFidelity
         guard case .wrong = f.verdict else { return }
         rateFailure = f
-        Log.audio.error("rate disagreement: declared \(f.declaredRate, privacy: .public) Hz, observed \(f.observedRate, privacy: .public) Hz, ratio \(f.ratio, privacy: .public)")
+        Log.audio.error("rate disagreement: declared \(f.declaredRate, privacy: .public) Hz, observed \(f.observedRate, privacy: .public) Hz, ratio \(f.ratio, privacy: .public), clock \(f.source.rawValue, privacy: .public)")
+        report(f)
+    }
+
+    /// One disagreement, one report.
+    private func report(_ f: RateFidelity) {
+        guard !didReportDisagreement else { return }
+        didReportDisagreement = true
         onRateDisagreement?(f)
     }
 
     private func drainLoop() {
         while running {
+            stampHeaderIfDue()
             if ring.count == 0 { usleep(20_000); continue }
             drainOnce()
         }
     }
 
+    /// How often the file's own length claim is brought up to date (FR-107).
+    ///
+    /// A WAV's two size fields are written on close, so a Session that ends
+    /// because the process died leaves every sample on disk under a header
+    /// saying the audio is zero bytes long — and every reader believes it.
+    /// `Pipeline` repairs that after the fact, but a recording should be
+    /// readable by anything, not only by a Minutes that knows to repair it.
+    ///
+    /// Five seconds is the most audio a crash can cost from the *header's*
+    /// point of view, against a write of eight bytes at fixed low offsets. It
+    /// is deliberately not synchronised: the case this defends against is the
+    /// process dying, which leaves the page cache intact.
+    private static let headerStampInterval: TimeInterval = 5
+
+    private var lastHeaderStamp: Date?
+
+    private func stampHeaderIfDue() {
+        let now = Date()
+        if let last = lastHeaderStamp,
+           now.timeIntervalSince(last) < Self.headerStampInterval { return }
+        lastHeaderStamp = now
+        // Failure here is never the recording's problem: the file stays exactly
+        // as it was and `Pipeline` still repairs it afterwards.
+        do { try WavTailRepair.stamp(url, sync: false) }
+        catch { Log.audio.error("could not stamp the header: \(error.localizedDescription, privacy: .public)") }
+    }
+
     private func drainOnce() {
         let channels = Int(format.channelCount)
-        let wanted = 8192 * channels
+        let wanted = Int(StreamRingSizing.readFrames) * channels
         let samples = ring.read(max: wanted)
         guard !samples.isEmpty else { return }
         let frames = samples.count / max(1, channels)
@@ -272,11 +711,22 @@ final class StreamFileWriter {
         inputFramesConsumed += AVAudioFramePosition(frames)
         // The baseline is taken *after* the first chunk, so the startup transient
         // is outside the measurement window rather than dominating it.
-        let now = Date()
+        let instant = now()
         if measureBaseline == nil {
-            measureBaseline = (frames: inputFramesConsumed, at: now)
+            measureBaseline = (frames: inputFramesConsumed, at: instant)
         }
-        lastDrainAt = now
+        // FR-103. The gap and the backlog that ended it, as a pair — see
+        // `longestDrainGap`. `backlog` is what was still in the ring after this
+        // read took its share, plus the share it took: the whole queue the
+        // writer arrived to find.
+        if let previous = lastDrainAt {
+            let gap = instant.timeIntervalSince(previous)
+            if gap > longestDrainGap {
+                longestDrainGap = gap
+                backlogAtLongestGap = Double(frames) + Double(ring.count) / Double(max(1, channels))
+            }
+        }
+        lastDrainAt = instant
 
         // Nothing reaches the file until the rate is settled (AD-44). Held rather
         // than written-then-corrected, so a corrected recording has no compressed
@@ -298,7 +748,16 @@ final class StreamFileWriter {
     /// point of measuring the rate is to be able to use the right one.
     private func settleRateIfPossible(final: Bool) {
         guard !rateSettled else { return }
-        let f = rateFidelity
+        var f = rateFidelity
+        // The device is the authority on the rate (AD-51) and it is not allowed
+        // to be the authority on *whether the recording gets written*. If its
+        // own clock has not narrowed enough to decide within `audioClockPatience`,
+        // the wall clock decides and the held opening reaches the file.
+        if f.source == .audioClock, !f.isDecisive,
+           wallClockFidelity.elapsedSeconds > Self.audioClockPatience {
+            Log.audio.info("rate: the device's clock has not become decisive in \(Int(Self.audioClockPatience), privacy: .public)s; using the wall clock")
+            f = wallClockFidelity
+        }
         let verdict = final ? f.finalVerdict : f.verdict
         switch verdict {
         case .settling:
@@ -309,12 +768,12 @@ final class StreamFileWriter {
             rateSettled = true
         case .wrong(let ratio):
             rateSettled = true
-            guard let snapped = RateFidelity.standardRate(nearest: f.observedRate) else {
+            guard let snapped = f.correctionTarget else {
                 // Not near any rate a real device uses. Keep the declared rate,
                 // let the file come out wrong, and let AD-45 refuse to build
                 // anything on it — guessing here is how a different defect would
                 // get silently resampled into this one.
-                Log.audio.error("rate disagreement x\(ratio, privacy: .public) but observed \(f.observedRate, privacy: .public) Hz is not a standard rate; keeping the declared rate and marking the stream untrustworthy")
+                Log.audio.error("rate disagreement x\(ratio, privacy: .public) but observed \(f.observedRate, privacy: .public) Hz is neither a whole-number factor of the declared rate nor a standard rate; keeping the declared rate and marking the stream untrustworthy")
                 checkRate()
                 break
             }
@@ -323,7 +782,7 @@ final class StreamFileWriter {
                 correctedRate = snapped
                 converter = c
                 Log.audio.error("corrected input rate: declared \(self.format.sampleRate, privacy: .public) Hz, observed \(f.observedRate, privacy: .public) Hz, converting from \(snapped, privacy: .public) Hz")
-                onRateDisagreement?(rateFidelity)
+                report(rateFidelity)
             } else {
                 Log.audio.error("could not build a converter at \(snapped, privacy: .public) Hz; keeping the declared rate")
                 checkRate()
@@ -339,7 +798,7 @@ final class StreamFileWriter {
     /// than one drain and `convert` hands the converter a single buffer.
     private func write(samples: [Float], channels: Int) {
         guard let file, let converter else { return }
-        let maxFrames = 8192
+        let maxFrames = Int(StreamRingSizing.readFrames)
         var offset = 0
         let totalFrames = samples.count / max(1, channels)
         while offset < totalFrames {
@@ -352,56 +811,147 @@ final class StreamFileWriter {
                 dst.update(from: p.baseAddress! + offset * channels, count: n * channels)
             }
             offset += n
-            guard let out = convert(src, using: converter) else { continue }
-            if isMuted, let ch = out.floatChannelData?[0] {
-                ch.update(repeating: 0, count: Int(out.frameLength))
-            }
-            guard out.frameLength > 0 else { continue }
-            do {
-                try file.write(from: out)
-                framesWritten += AVAudioFramePosition(out.frameLength)
-            } catch {
-                Log.audio.error("write failed: \(error.localizedDescription, privacy: .public)")
-            }
+            // Accumulated per chunk rather than derived from one rate at the
+            // end, because the input rate is no longer guaranteed to be one
+            // number for the whole file: moving audio to different hardware
+            // mid-Session changes it (FR-106). `(consumed - held) * ratio` was
+            // exact while there was a single rate and silently wrong across two,
+            // and this term is what the accounting identity is checked against.
+            expectedOutputFrames += Double(n) * (Self.outputSampleRate / effectiveRate)
+            convertAndAppend(src, using: converter, into: file)
         }
     }
 
-    /// One captured chunk to 16 kHz mono.
+    /// Empties the resampler's filter tail into the file (AD-57).
     ///
-    /// The input-block form is required rather than optional: with a sample-rate
-    /// change the output frame count differs from the input's, so the simple
-    /// `convert(to:from:)` overload is not applicable. `inputRanDry` is the normal
-    /// terminating status here — we hand over one buffer and the converter asks for
-    /// more — and whatever it produced by then is real audio that must be written.
-    private func convert(_ src: AVAudioPCMBuffer, using converter: AVAudioConverter) -> AVAudioPCMBuffer? {
-        let ratio = Self.outputSampleRate / effectiveRate
-        let capacity = AVAudioFrameCount(Double(src.frameLength) * ratio) + 64
-        guard capacity > 0,
-              let out = AVAudioPCMBuffer(pcmFormat: Self.outputFormat, frameCapacity: capacity)
-        else { return nil }
-
-        var supplied = false
-        var error: NSError?
-        let status = converter.convert(to: out, error: &error) { _, outStatus in
-            if supplied {
-                outStatus.pointee = .noDataNow
+    /// **Found by the accounting identity, which is the point of having one.**
+    /// Every capture reported a non-zero `conversionRemainder` — 20 to 400
+    /// output frames, under 25 ms, noisy and not proportional to duration. The
+    /// cause is that nothing ever told `AVAudioConverter` the stream had ended,
+    /// so the samples inside its delay line were converted from input this
+    /// process had consumed and were never emitted.
+    ///
+    /// The loss is small. Fixing it is not about the milliseconds: a remainder
+    /// that is *always* non-zero is a remainder a reader learns to ignore, and
+    /// this increment exists because a quantity nobody looked at hid a defect
+    /// three orders of magnitude larger. A term that reads zero when nothing is
+    /// wrong is the only kind worth reporting.
+    private func flushConverter() {
+        guard let file, let converter, rateSettled else { return }
+        // Looped for the same reason `convertAndAppend` is: one call returns at
+        // most one buffer's worth and the converter may be holding more. 64
+        // passes is a bound against a converter that never reports itself dry,
+        // not an expectation — a filter tail is a few hundred frames.
+        for _ in 0..<64 {
+            guard let out = AVAudioPCMBuffer(pcmFormat: Self.outputFormat,
+                                             frameCapacity: 8192) else { return }
+            var error: NSError?
+            let status = converter.convert(to: out, error: &error) { _, outStatus in
+                outStatus.pointee = .endOfStream
                 return nil
             }
-            supplied = true
-            outStatus.pointee = .haveData
-            return src
+            switch status {
+            case .haveData, .inputRanDry, .endOfStream:
+                let produced = out.frameLength
+                append(out, to: file)
+                // The override applies here too, or `--check-drain`'s baseline
+                // row is not the baseline: the tail flush is itself new in this
+                // increment, and a row labelled "what shipped before" that still
+                // gets a looped flush cannot attribute anything.
+                guard Self.pullUntilDryOverride ?? Self.pullUntilDry else { return }
+                // Nothing left to give, or the converter has said it is finished.
+                guard produced > 0, status == .haveData else { return }
+            case .error:
+                Log.audio.error("tail resample failed: \(error?.localizedDescription ?? "unknown", privacy: .public)")
+                return
+            @unknown default:
+                return
+            }
         }
+        Log.audio.error("tail flush did not run dry in 64 passes; the remainder is abandoned")
+    }
 
-        switch status {
-        case .haveData, .inputRanDry:
-            return out
-        case .endOfStream:
-            return out.frameLength > 0 ? out : nil
-        case .error:
-            Log.audio.error("resample failed: \(error?.localizedDescription ?? "unknown", privacy: .public)")
-            return nil
-        @unknown default:
-            return nil
+    /// Hands one chunk to the converter and writes everything it yields.
+    ///
+    /// **Looped, and the loop is the fix.** The output buffer is sized from the
+    /// chunk in hand, so it is the converter's only opportunity to return
+    /// anything it is still holding from earlier chunks. A single call could shed
+    /// only `outputSlackFrames` of that per chunk; under load the converter holds
+    /// more than that and the audio never reaches the file. Measured with
+    /// `--check-drain 20 10`, three runs each: **0.16% to 0.60% lost** on the
+    /// shapes with 480- and 512-frame callbacks, **0.000%** on the shapes with
+    /// 4,800-frame callbacks — which is the microphone's callback size and the
+    /// System Stream's, and therefore the 380× asymmetry the real recording
+    /// shows, reproduced with no audio device involved.
+    ///
+    /// `.haveData` means the buffer came back full and there may be more behind
+    /// it. `.inputRanDry` means the converter has consumed everything it was
+    /// given. Looping on the first is correct at every ratio, which sizing the
+    /// buffer is not.
+    private func convertAndAppend(_ src: AVAudioPCMBuffer,
+                                  using converter: AVAudioConverter,
+                                  into file: AVAudioFile) {
+        var supplied = false
+        // A bound, not an expectation: one chunk cannot need more passes than
+        // its own output size divided by the buffer, and this is far above that.
+        // It exists so a converter that never reports itself dry cannot spin.
+        var passes = 0
+        while passes < 64 {
+            passes += 1
+            guard let out = makeOutputBuffer(forInputFrames: src.frameLength) else { return }
+            var error: NSError?
+            let status = converter.convert(to: out, error: &error) { _, outStatus in
+                if supplied {
+                    outStatus.pointee = .noDataNow
+                    return nil
+                }
+                supplied = true
+                outStatus.pointee = .haveData
+                return src
+            }
+            switch status {
+            case .haveData, .inputRanDry, .endOfStream:
+                append(out, to: file)
+                guard Self.pullUntilDryOverride ?? Self.pullUntilDry else { return }
+                // Anything but `.haveData` means the converter has run out, and a
+                // zero-length buffer means it had nothing left to give.
+                guard status == .haveData, out.frameLength > 0 else { return }
+            case .error:
+                Log.audio.error("resample failed: \(error?.localizedDescription ?? "unknown", privacy: .public)")
+                return
+            @unknown default:
+                return
+            }
+        }
+        Log.audio.error("conversion did not run dry in 64 passes; the residue of this chunk is abandoned")
+    }
+
+    private func makeOutputBuffer(forInputFrames frames: AVAudioFrameCount) -> AVAudioPCMBuffer? {
+        let ratio = Self.outputSampleRate / effectiveRate
+        let slack = Self.outputSlackOverride ?? Self.outputSlackFrames
+        // No `capacity > 0` guard: capacity is at least `slack`, whose smallest
+        // swept value is 64, so the guard was unreachable and read as though the
+        // arithmetic could produce zero.
+        let capacity = AVAudioFrameCount(Double(frames) * ratio) + slack
+        return AVAudioPCMBuffer(pcmFormat: Self.outputFormat, frameCapacity: capacity)
+    }
+
+    /// Writes one converted buffer, honouring the mute and counting both halves
+    /// of what can go wrong with it.
+    private func append(_ out: AVAudioPCMBuffer, to file: AVAudioFile) {
+        if isMuted, let ch = out.floatChannelData?[0] {
+            ch.update(repeating: 0, count: Int(out.frameLength))
+        }
+        guard out.frameLength > 0 else { return }
+        convertProducedFrames += AVAudioFramePosition(out.frameLength)
+        do {
+            try file.write(from: out)
+            framesWritten += AVAudioFramePosition(out.frameLength)
+        } catch {
+            writeFailures += 1
+            writeFailureFrames += AVAudioFramePosition(out.frameLength)
+            Log.audio.error("write failed: \(error.localizedDescription, privacy: .public)")
         }
     }
+
 }

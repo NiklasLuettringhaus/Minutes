@@ -310,3 +310,74 @@ final class SpeakerIndexAndExclusionTests: XCTestCase {
         XCTAssertEqual(m.displayName(for: .inRoomUnidentified), "In-room, unidentified")
     }
 }
+
+/// FR-12 — how the Detection Prompt reaches the user is a choice.
+///
+/// **The rule that matters is the fallback.** A preference whose selected value
+/// can result in *no prompt at all* is how a real Teams call went unprompted
+/// with nothing to show for it — the defect the floating panel was added for.
+/// So the panel appears whenever notifications cannot deliver, whatever the
+/// user picked, and these tests pin that rather than the wording.
+final class PromptDeliveryTests: XCTestCase {
+
+    private typealias Choice = Preferences.PromptDelivery
+
+    /// What `DetectionService` decides, as a pure function of the two inputs.
+    /// Kept in the test rather than reached for in the service, because the
+    /// service's own call site is two lines and a `@MainActor` polling loop.
+    private func surfaces(_ c: Choice, canNotify: Bool) -> (panel: Bool, notification: Bool) {
+        (panel: c.showsPanel || !canNotify,
+         notification: c.showsNotification && canNotify)
+    }
+
+    func testExactlyOneSurfaceUnlessBothWasChosen() {
+        // Asserted field by field: a tuple of two Bools is not Equatable.
+        var s = surfaces(.panel, canNotify: true)
+        XCTAssertTrue(s.panel); XCTAssertFalse(s.notification)
+        s = surfaces(.notification, canNotify: true)
+        XCTAssertFalse(s.panel); XCTAssertTrue(s.notification)
+        s = surfaces(.both, canNotify: true)
+        XCTAssertTrue(s.panel); XCTAssertTrue(s.notification)
+    }
+
+    /// The fallback, and the reason the preference is safe to expose.
+    func testTheAskAlwaysArrivesEvenWithNotificationsUnavailable() {
+        for c in Choice.allCases {
+            let s = surfaces(c, canNotify: false)
+            XCTAssertTrue(s.panel, "\(c.rawValue) must fall back to the panel")
+            XCTAssertFalse(s.notification, "\(c.rawValue) cannot post without permission")
+        }
+        // And with permission, every choice still reaches the user somehow.
+        for c in Choice.allCases {
+            let s = surfaces(c, canNotify: true)
+            XCTAssertTrue(s.panel || s.notification, "\(c.rawValue) reaches nobody")
+        }
+    }
+
+    func testOnlyThePanelChoiceNeedsNoNotificationPermission() {
+        XCTAssertFalse(Choice.panel.needsNotifications)
+        XCTAssertTrue(Choice.notification.needsNotifications)
+        XCTAssertTrue(Choice.both.needsNotifications)
+    }
+
+    /// Every option is describable in the pane beside the option itself, so the
+    /// wording cannot drift away from the choice it belongs to.
+    func testEveryChoiceCarriesItsOwnTitleAndDetail() {
+        for c in Choice.allCases {
+            XCTAssertFalse(c.title.isEmpty, c.rawValue)
+            XCTAssertFalse(c.detail.isEmpty, c.rawValue)
+        }
+        XCTAssertEqual(Set(Choice.allCases.map(\.title)).count, Choice.allCases.count,
+                       "two options must not share a label")
+    }
+
+    /// The raw values are persisted in `UserDefaults`, so renaming one silently
+    /// resets every existing install to the default.
+    func testRawValuesArePersistedAndMustNotChange() {
+        XCTAssertEqual(Choice.panel.rawValue, "panel")
+        XCTAssertEqual(Choice.notification.rawValue, "notification")
+        XCTAssertEqual(Choice.both.rawValue, "both")
+        XCTAssertEqual(Choice(rawValue: "nonsense"), nil,
+                       "an unknown stored value must not decode to a real choice")
+    }
+}

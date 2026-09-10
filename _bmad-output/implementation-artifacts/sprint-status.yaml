@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 08-31-2026 11:23
-last_updated: '2026-09-03'
+last_updated: '09-08-2026 10:05'
 project: Minutes
 project_key: NOKEY
 tracking_system: file-system
@@ -176,3 +176,122 @@ development_status:
   15-6-an-existing-recording-can-be-re-checked-and-repaired: done
   15-7-the-rate-the-tap-reports-is-read-again-when-it-can-change: done
   epic-15-retrospective: optional
+
+  epic-16: in-progress
+  16-1-transcription-accuracy-can-be-measured-from-a-terminal: done
+  16-2-the-app-can-tell-that-the-microphone-was-hearing-the-call: done
+  16-3-what-cannot-be-echo-is-never-excluded: done
+  16-4-the-echo-never-reaches-the-model-or-the-diariser: done   # transcript rule shipped in inc 9; the diarisation clause was withdrawn on measurement and is replaced by 16-15
+  16-5-the-people-in-the-room-are-counted-from-the-room: backlog   # WITHDRAWN: measured worse (5->7, 6->6, 3->5). Superseded by 16-15.
+  16-6-the-record-says-the-recording-was-affected-and-by-how-much: done
+  16-7-the-same-sentence-never-appears-twice: done
+  16-8-the-app-stops-rating-accuracy-it-has-not-measured: done
+  16-9-the-rate-is-checked-against-the-audio-clock: done
+  16-10-an-utterance-carries-how-sure-the-engine-was: done
+  16-11-audio-the-engine-could-not-read-is-a-recorded-gap: done
+  16-12-the-transcript-is-ordered-by-when-things-were-said: done
+  16-13-minutes-knows-whether-the-echo-is-even-possible: done
+  16-14-the-far-end-is-cancelled-while-recording-not-reasoned-about: done   # BUILT, MEASURED, NOT SHIPPED: best 7.3 dB against a 20 dB bar, and 6.49 dB on a recording with no echo in it. AD-55 keeps it out of the capture path. See spikes/measurement-echo-cancellation-2026-09-04.md
+  16-15-the-people-in-the-room-are-found-by-ruling-out-the-call: done
+  16-16-a-pooled-figure-is-something-the-harness-prints: done
+  epic-16-retrospective: done
+
+  epic-17: in-progress
+  17-1-the-samples-that-never-reached-the-file-are-counted: done
+  17-2-a-consumer-that-fell-behind-says-by-how-much: done
+  17-3-the-mechanism-is-named-by-a-measurement-not-by-a-reading: done   # RING OVERFLOW AND RESAMPLER BOTH REFUTED BY MEASUREMENT. The mechanism is in the conversion step and was not one of the two the epic named; why it happens is PRD Q27
+  17-4-what-it-cost-to-start-each-stream-is-stamped-not-inferred: done
+  17-5-both-streams-start-together: done
+  17-6-the-fix-the-measurement-names: done   # Two changes, each measured sufficient alone: 7/10 cells losing audio before, 0/10 after. Raising the drain thread's QoS was measured NOT to fix it
+  17-7-fr-6-s-tolerance-is-settled-either-way: done   # HOLDS on the probe (+14..+18 ms, 5/5 runs). Not yet confirmed on a real meeting on the fixed build — the instrument is in place for the next one
+  epic-17-retrospective: done
+action_items:
+  - id: "16-2"
+    epic: 16
+    action: "Decide whether the echo detector should resample so the eight rate-repaired
+      recordings can be compared at all (PRD Q22)"
+    owner: "whoever next touches EchoDetector.read"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/retrospective.md"
+  - id: "16-3"
+    epic: 16
+    action: "Watch FR-100 keep-side margin of 0.023: two genuine in-room voices sit
+      at 0.373 and 0.389"
+    owner: "follow-up"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/retrospective.md"
+  - id: "16-4"
+    epic: 16
+    action: "If FR-99 is revisited: fix EchoCanceller quadratic history first, and
+      measure at the capture rate rather than at 16 kHz"
+    owner: "follow-up"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/retrospective.md"
+  - id: "16-5"
+    epic: 16
+    action: "Confirm the in-room count of 4 on the mild recording is right — only
+      the direction is measured"
+    owner: "Niklas"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/retrospective.md"
+  - id: "16-1"
+    epic: 16
+    action: "Reprocess the three affected recordings — the user decision, command
+      prepared and not run"
+    owner: "Niklas"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/retrospective.md"
+  - id: "17-1"
+    epic: 17
+    action: "A recording was interrupted at 197 s: build-app.sh installs into
+      /Applications rather than staging, and it was run while a Session was live.
+      Audio intact, stage captured, recoverable via Finish transcription"
+    owner: "Niklas"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/retrospective.md"
+  - id: "17-2"
+    epic: 17
+    action: "Make build-app.sh refuse to install while a recording is live, or
+      split staging from installing"
+    owner: "follow-up"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/retrospective.md"
+  - id: "17-3"
+    epic: 17
+    action: "Four Sessions hold a microphone that delivered nothing — --check-echo
+      reports 'mic.wav holds no audio' four times, and one recorded 0.13 s of mic
+      against 57 s of system with framesObserved at zero. Predates increment 11"
+    owner: "Niklas"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/retrospective.md"
+  - id: "17-4"
+    epic: 17
+    action: "PRD Q27: why giving AVAudioConverter more output room removes the
+      loss under load, when the arithmetic says the buffer always covers the chunk"
+    owner: "follow-up"
+    status: open
+    ref: "_bmad-output/planning-artifacts/spikes/measurement-stream-alignment-2026-09-07.md"
+  - id: "17-5"
+    epic: 17
+    action: "One cell of 21 reported 9.353% lost in the shipping configuration,
+      taken under memory pressure; the ledger split was not captured and it has
+      not recurred"
+    owner: "follow-up"
+    status: open
+    ref: "_bmad-output/planning-artifacts/spikes/measurement-stream-alignment-2026-09-07.md"
+  - id: "17-6"
+    epic: 17
+    action: "rebuildForDeviceChange nils the writer and ring on a failed rebuild,
+      discarding the System Stream and contradicting its own comment. Pre-existing,
+      FR-8, never observed on this hardware"
+    owner: "follow-up"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/code-review-increment-11.md"
+  - id: "17-7"
+    epic: 17
+    action: "EnrolmentCalibrationTests fails on the current library: one in-room
+      pair at 0.2322 against AD-31's 0.35. Test byte-identical to base; the library
+      changed. Bears on the 0.023 margin already flagged as 16-3"
+    owner: "Niklas"
+    status: open
+    ref: "_bmad-output/implementation-artifacts/retrospective.md"

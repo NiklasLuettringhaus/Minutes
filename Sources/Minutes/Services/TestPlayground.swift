@@ -136,9 +136,9 @@ final class TestPlayground: ObservableObject {
         let started = Date()
         let transcriber: Transcribing = ParakeetModel.isParakeet(model) ? ParakeetTranscriber() : WhisperKitTranscriber()
         do {
-            var segments = try await transcriber.transcribe(url: micURL, model: model)
+            var segments = try await transcriber.transcribe(url: micURL, model: model).segments
             if let sys = streams.systemURL {
-                segments += try await transcriber.transcribe(url: sys, model: model)
+                segments += try await transcriber.transcribe(url: sys, model: model).segments
             }
             let elapsed = Date().timeIntervalSince(started)
             let text = segments.sorted { $0.start < $1.start }

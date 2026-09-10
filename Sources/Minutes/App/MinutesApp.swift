@@ -22,6 +22,42 @@ enum Entry {
             // person who hits this next may have to do the same before there is
             // any UI to click.
             RateCheck.run(repair: CommandLine.arguments.contains("--repair"))
+        } else if CommandLine.arguments.contains("--reprocess") {
+            // Re-derives named Meetings from the audio already on disk. Never
+            // "all", refuses without --yes, and rewrites Notes — which is why it
+            // is a decision the user makes and not one the app makes for them.
+            Reprocess.run()
+        } else if CommandLine.arguments.contains("--check-clock") {
+            // FR-94, FR-97. Opens both streams for a few seconds and prints what
+            // the devices themselves say — the rate from their own counters, the
+            // tolerance that measurement earns, holes they counted and we never
+            // received, and the offset between the two streams' first samples.
+            // Creates no Meeting and keeps no audio.
+            ClockCheck.run()
+        } else if CommandLine.arguments.contains("--check-device-switch") {
+            // FR-106. Records both Streams, changes the default input device
+            // half way through, and reports what survived — the measurement the
+            // requirement rests on. Puts the device back on every path.
+            DeviceSwitchCheck.run()
+        } else if CommandLine.arguments.contains("--check-drain") {
+            // Story 17.3. Reproduces the drain-starvation mechanism against the
+            // real ring and writer with a synthetic producer, so no audio device
+            // is opened and it is safe during a recording.
+            DrainCheck.run()
+        } else if CommandLine.arguments.contains("--check-aec") {
+            // FR-99 / AD-55. The measurement that has to come before the
+            // feature: run the canceller over the recordings on disk and print
+            // the ERLE, what it costs where there is no echo, and — with
+            // --transcribe — what it does to the duplicated-word count.
+            AecCheck.run(transcribe: CommandLine.arguments.contains("--transcribe"))
+        } else if CommandLine.arguments.contains("--check-echo") {
+            // FR-89. Runs echo detection over every recording and prints the
+            // verdict, which is also how the recording gate was calibrated.
+            EchoCheck.run(diarize: CommandLine.arguments.contains("--diarize"))
+        } else if CommandLine.arguments.contains("--asr") {
+            // Transcribes one file and prints the segments, so accuracy can be
+            // scored against a reference corpus instead of assumed.
+            AsrEval.run()
         } else if CommandLine.arguments.contains("--uishot") {
             // Renders the panes to PNG with fixture data, so a layout defect is
             // findable from a terminal. Needs no screen-recording permission —

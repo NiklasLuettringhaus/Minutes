@@ -38,7 +38,7 @@ final class StreamFileWriterEvidenceTests: XCTestCase {
         // No sleeps: stop() joins the drain thread and then flushes the whole
         // ring itself, so this is deterministic rather than a race with a timer.
         w.stop()
-        XCTAssertFalse(ring.didOverflow, "the ring overflowed; the fixture is too large")
+        XCTAssertEqual(ring.droppedSamples, 0, "the ring overflowed; the fixture is too large")
         return w.evidence
     }
 

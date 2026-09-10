@@ -186,8 +186,26 @@ struct NoteWriter: NoteWriting {
             out += "The transcript below is what the transcription produced from it, kept because the audio is yours, but it does not reflect what was said. "
             out += "No summary, title or tags were generated from it.\n\n"
         }
+        // FR-102. Second, above the Mic-only notice, because what is there may
+        // not be true: the file runs straight across the join and a sentence may
+        // be two halves of different ones. `EXPERIENCE.md` argues the position.
+        for why in m.lostAudioNotices {
+            out += "> \(why)\n\n"
+        }
         if !m.systemStreamCaptured {
             out += "> Only the microphone was captured for this meeting, so remote participants do not appear in the transcript.\n\n"
+        }
+        // FR-96. Before the echo notice, in the order EXPERIENCE.md fixes:
+        // worst misleading first. A summary built on a transcript with holes in
+        // it is incomplete, and a reader who is not told reads it as complete.
+        if let why = TranscriptGaps.explanation(m.gaps) {
+            out += "> \(why)\n\n"
+        }
+        // FR-92. The Note carries what the app knows, because a reader months
+        // later has only this file — and a transcript with the far end counted
+        // once reads differently from one where it was counted twice.
+        if let why = m.echo?.explanation {
+            out += "> \(why)\n\n"
         }
         if m.multipleInRoom {
             if m.localIdentifiedByEnrolment {
@@ -258,9 +276,25 @@ struct NoteWriter: NoteWriting {
                 : "*Every speaker in this meeting has been excluded.*\n"
         }
         var out = ""
+        var previous: TimeInterval = -1
         for b in blocks {
+            // FR-96. A gap is marked where it happened, for the same reason the
+            // app marks it there: a missing turn is invisible in a transcript,
+            // and the summary sentence at the top says how much was lost without
+            // saying which part of the conversation is not there.
+            for gap in m.gaps where gap.start > previous && gap.start < b.start {
+                out += "*— \(Int(gap.duration.rounded()))s "
+                out += gap.stream == .mic ? "in the room" : "on the call"
+                out += " could not be made out —*\n\n"
+            }
+            previous = b.start
             let who = b.isInferred ? "~\(b.name)" : b.name
             out += "**\(Fmt.timestamp(b.start)) \(who)**\n\n\(b.text)\n\n"
+        }
+        for gap in m.gaps where gap.start > previous {
+            out += "*— \(Int(gap.duration.rounded()))s "
+            out += gap.stream == .mic ? "in the room" : "on the call"
+            out += " could not be made out —*\n\n"
         }
         return out
     }
@@ -317,6 +351,31 @@ struct NoteWriter: NoteWriting {
                 lines.append(String(format: "mic_declared_hz: %.0f", r.declaredRate))
                 lines.append(String(format: "mic_observed_hz: %.0f", r.observedRate))
             }
+        }
+        // FR-102, FR-103, FR-104. Capture facts, in the frontmatter with the
+        // model name rather than in a banner: they describe how the recording
+        // was made and a reader cannot act on any of them (EXPERIENCE.md).
+        //
+        // **Zero is emitted and absent is not.** A capture that accounted for
+        // every sample says so, because that is what makes its absence on some
+        // future recording legible; a Meeting from before increment 11 has no
+        // ledger and emits no field at all.
+        if let led = m.systemLedger, led.isMeasured {
+            lines.append(String(format: "system_audio_lost_seconds: %.3f", led.lostSeconds))
+            lines.append("system_audio_overflows: \(led.overflows)")
+        }
+        if let led = m.micLedger, led.isMeasured {
+            lines.append(String(format: "mic_audio_lost_seconds: %.3f", led.lostSeconds))
+            lines.append("mic_audio_overflows: \(led.overflows)")
+        }
+        if let offset = m.streamStartOffset {
+            lines.append(String(format: "stream_start_offset_ms: %.0f", offset * 1000))
+        }
+        if let d = m.startTiming?.decomposition {
+            lines.append(String(format: "stream_start_serialisation_ms: %.1f", d.serialisation * 1000))
+        }
+        if let p = m.systemPressure, p.isMeasured, let share = p.highWaterProportion {
+            lines.append(String(format: "system_buffer_high_water: %.3f", share))
         }
         lines.append("speakers_separated: \(m.diarizationSucceeded)")
         lines.append("multiple_people_in_room: \(m.multipleInRoom)")

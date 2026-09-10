@@ -109,6 +109,12 @@ final class UnlinkAllowlistTests: XCTestCase {
         "ModelCatalog.swift": "the same, for a model file",
         "ModelStorage.swift": "one-time cleanup of a legacy migration path",
         "LoginItem.swift": "the launch agent plist — app configuration, not user data",
+        "EchoDetector.swift": "the derived Echo-muted copy of the Mic Stream. The recording itself is never touched (AD-49) and this copy is recomputable from it plus the stored intervals.",
+        "EchoCheck.swift": "the same derived copy, in the temporary directory, deleted as soon as --check-echo has re-clustered from it. Trashing it would put a near-100 MB duplicate of a meeting in the user's Trash for no reason.",
+        "AecCheck.swift": "REQUIRED: the cancelled copy it re-transcribes, in the temporary directory. Trashing it would put a duplicate of a meeting in the user\'s Trash every time the measurement ran.",
+        "DrainCheck.swift": "REQUIRED: --check-drain opens no audio device at all — the producer is synthetic — and writes to a temporary directory only so the real StreamFileWriter is exercised rather than a copy of it. Nothing in it is the user's, and it runs several times per invocation while sweeping four configurations.",
+        "ClockCheck.swift": "REQUIRED: --check-clock records a few seconds into a temporary directory purely to read the devices' own timestamps, and it is not a Meeting. Trashing it would file the user's room in their Trash every time they ran a diagnostic.",
+        "DeviceSwitchCheck.swift": "REQUIRED: --check-device-switch records into a temporary directory purely to see what survives an input device change, and it is not a Meeting. Same reason as ClockCheck — and this one runs for twenty seconds by default, so the Trash would fill faster.",
     ]
 
     func testNoNewUnlinkOfAnythingTheUserCanLose() throws {

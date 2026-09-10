@@ -119,3 +119,103 @@ That is why §9.3 applies here rather than §9.2: this is a truthfulness require
 ### 6.6 FR-51 — the data already exists
 
 Speaker Profiles already persist a name, a centroid, a sample count and a last-updated date, and the directory already exposes lookup, remember, forget-one and forget-all. FR-51 is therefore almost entirely a surface: the capability was built and left unreachable behind a single destructive "Forget all". Worth noting as a pattern — the previous increment shipped three features (delete, retry, rename) whose only entry point was a context menu the user never found.
+
+---
+
+## Increment 9: rejected alternatives, with the measurements that rejected them
+
+Kept here rather than in the PRD because each is a mechanism decision, and
+because the next person to have these ideas deserves the numbers rather than a
+flat "no".
+
+### Acoustic echo cancellation — rejected
+
+The obvious fix for §4.14's echo is to subtract the System Stream from the Mic
+Stream. It cannot work on these recordings, and the reason is not filter length.
+
+Upper bound on ERLE for **any** linear filter, from magnitude-squared coherence
+(so it is independent of the filter), delay-compensated:
+
+| analysis window | median bound | p90 |
+|---|---|---|
+| 128 ms | 8.7 dB | 11.3 dB |
+| 512 ms | 9.9 dB | 14.8 dB |
+| 2048 ms | 10.6 dB | 16.8 dB |
+
+A least-squares FIR confirmed it empirically: 7.5 dB median at 512 taps, never
+above 20 dB on any frame. A useful canceller needs 20–40 dB.
+
+The Mic Stream is not a linear function of the System Stream here: the two are
+captured on independent device clocks (so they drift against each other), the
+speaker path is nonlinear, and the room's reverberation tail outlasts any window
+tried. Detection survives all three — correlation only needs the relationship to
+exist, not to be invertible — which is why FR-89 detects and FR-90 excludes.
+
+*A note on how this number was obtained.* The first coherence run reported
+1.6 dB, and on that basis "cancellation is impossible" was nearly written down
+as a fact. That run had not compensated the 39 ms delay, and a 128 ms window
+biases such a figure badly low. The corrected figure is ~10 dB. The conclusion
+held; the number did not. A decisive-looking negative result is exactly the kind
+that needs measuring twice.
+
+### Canary-1B-v2 as the transcription engine — rejected
+
+Reachable through the FluidAudio version already pinned, and the strongest model
+available by reputation. Measured on AMI ES2004a against the current default:
+
+| model | close mics | far-field | ×realtime |
+|---|---|---|---|
+| `parakeet-tdt-0.6b-v3` (current default) | 16.3% | 26.1% | 0.006 |
+| `canary-1b-v2` | 24.8% | 35.3% | 0.132 |
+
+8.5 points worse on close mics, 9.2 worse far-field, 22× the cost. It also
+returns a bare `String` with no timings, so adopting it would have required a
+segmentation stage to supply the timings Diarization and the Note depend on —
+building that first and measuring afterwards is precisely the trap FR-93 exists
+to prevent.
+
+### Changing the default model — deferred, not rejected
+
+Pooled over three sessions, the English-only Parakeet is **2.3 points better**
+than the shipped default on close mics (20.3% vs 22.6% WER) and tied far-field.
+That supports the catalogue's existing note and suggests the default is wrong.
+
+It is not acted on because the per-session swing is larger than the effect:
+
+| session | `parakeet-v3` | `parakeet-v2-en` |
+|---|---|---|
+| ES2004a | **16.3%** | 18.6% |
+| IS1000a | 35.1% | **27.4%** |
+| TS3003a | 15.7% | **14.5%** |
+
+Three sessions cannot move a default that every user gets. The revisit condition
+is explicit: nine or more sessions spanning native and non-native English, since
+the hardest session (IS1000a) is AMI's non-native set and these meetings are not
+held in first-language English either.
+
+### Far-field level normalisation — deferred with a named blocker
+
+Real, measured, and conditional (ES2004a, `parakeet-v3`):
+
+| preprocessing | close mics | far-field |
+|---|---|---|
+| none | 16.3% | 26.1% |
+| `loudnorm` to −16 LUFS | 18.4% (**+2.1**) | **24.0%** (−2.1) |
+| `highpass 80 Hz` + `dynaudnorm` | 17.0% (**+0.6**) | **24.0%** (−2.0) |
+| `dynaudnorm` | 17.5% (**+1.1**) | 24.7% (−1.4) |
+
+It helps far-field by ~2 points and hurts close mics by ~1–2, so everything
+rests on a gate — and the obvious gate does not work. Integrated loudness does
+not separate the conditions: TS3003a's *close* mix is −43.8 LUFS, quieter than
+IS1000a's *far-field* at −34.0, and the user's own library spreads from −18.7 to
+−70.0 LUFS. A loudness-gated normaliser would misfire and cost 2 points when it
+did. The blocker is the gate, and a gate keyed on reverberation rather than
+level is a spike, not a task.
+
+### Chunking long recordings — rejected as unnecessary
+
+FluidVoice chunks at 20 minutes, citing a 24-minute model limit, and Minutes
+does not chunk at all. Measured before copying: the longest real recording is
+**57.3 minutes** and its Transcript's last Utterance lands at 57.3 minutes —
+100% coverage, as do the 50.3 and 33.9 minute recordings. FluidAudio handles it
+internally. A defect was nearly reported here that does not exist.

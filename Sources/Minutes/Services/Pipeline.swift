@@ -43,8 +43,36 @@ actor Pipeline {
     /// rather than left looking live.
     func resumeInterrupted() async {
         let store = MeetingStore.shared
-        for m in await store.loadAll() where !m.isComplete && !m.hasFailed {
+        for m in await store.loadAll() where !m.isComplete {
             if await store.hasAudio(id: m.id) {
+                // FR-107. A Meeting that failed because its header said the
+                // audio was empty is excluded from resume for good — the
+                // failure is recorded, nothing retries it, and the audio is
+                // sitting there intact. So a failed Meeting is reconsidered
+                // **only when a repair actually changed something**: that is a
+                // new fact about the file, not a retry of the same attempt, and
+                // it cannot loop because the second pass finds nothing to fix.
+                if m.hasFailed {
+                    // Two conditions, and they cover different things.
+                    //
+                    // A repair that changed something is a new fact about the
+                    // file, so the previous attempt was made against different
+                    // bytes and deserves another.
+                    //
+                    // Otherwise: audio on disk and **not one Utterance** is a
+                    // Meeting that has nothing to show for itself while its
+                    // recording sits there. That is worth one attempt per
+                    // launch whatever the recorded reason, because the reason
+                    // may no longer be true — the two Meetings that prompted
+                    // FR-108 failed on a rule this build no longer applies, and
+                    // no per-meeting fact had changed to tell us so. It cannot
+                    // run away: this method runs once per launch, and a Meeting
+                    // that succeeds has Utterances and stops qualifying.
+                    let repaired = await repairUnclosedAudio(id: m.id)
+                    let hasNothingToShow = m.utterances.isEmpty
+                    guard repaired || hasNothingToShow else { continue }
+                    Log.pipeline.info("retrying \(m.id, privacy: .public): \(repaired ? "its audio was repaired" : "it has audio and no transcript", privacy: .public)")
+                }
                 Log.pipeline.info("resuming interrupted meeting \(m.id, privacy: .public)")
                 enqueue(meetingID: m.id)
             } else {
@@ -54,6 +82,67 @@ actor Pipeline {
             }
         }
         await AppStateBridge.reloadMeetings()
+    }
+
+    /// A Stream's audio, or nil when there is not enough of it to transcribe.
+    ///
+    /// Reads the header only — never the audio — and uses the transcriber's own
+    /// floor of 300 ms, so the answer here and the answer it would give agree.
+    /// A shorter file is treated as absent rather than handed over to fail.
+    private func usableAudioURL(id: String, stream: StreamKind) async -> URL? {
+        let store = MeetingStore.shared
+        guard let url = await store.audioURL(id: id, stream: stream) else { return nil }
+        do {
+            let a = try WavTailRepair.assess(url)
+            guard a.sampleRate > 0, a.bytesPerFrame > 0 else { return nil }
+            let seconds = Double(a.actualDataBytes) / (a.sampleRate * Double(a.bytesPerFrame))
+            guard seconds >= 0.3 else {
+                Log.pipeline.info("\(stream.rawValue, privacy: .public).wav holds \(String(format: "%.2f", seconds), privacy: .public)s — treating it as absent")
+                return nil
+            }
+            return url
+        } catch {
+            // Unreadable is not the same as empty, and the transcriber's own
+            // error is the better report. Hand it over.
+            return url
+        }
+    }
+
+    /// Repairs both Streams' headers where they under-claim, and reports whether
+    /// anything changed (FR-107).
+    ///
+    /// Both Streams, because they fail together — the process died holding both
+    /// files open — and a Session with a readable microphone and an unreadable
+    /// System Stream would lose the far end of the call for no reason.
+    @discardableResult
+    private func repairUnclosedAudio(id: String) async -> Bool {
+        let store = MeetingStore.shared
+        var repaired = false
+        var recovered = 0.0
+        for stream in StreamKind.allCases {
+            guard let url = await store.audioURL(id: id, stream: stream) else { continue }
+            do {
+                if let a = try WavTailRepair.repair(url) {
+                    repaired = true
+                    recovered = max(recovered, a.recoverableSeconds)
+                }
+            } catch {
+                // A file that is not a readable WAVE is a different fault and
+                // the stage that reads it will report it properly. Never fail
+                // the Meeting from inside a repair.
+                Log.pipeline.error("could not assess \(stream.rawValue, privacy: .public).wav: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        if repaired {
+            // The stored duration was written as 0 by a Session that never got
+            // to write it. Correct it from what the audio actually holds, so the
+            // library stops showing a real meeting as zero seconds long.
+            _ = try? await store.update(id: id) { m in
+                if m.duration < recovered { m.duration = recovered }
+            }
+            Log.pipeline.info("repaired unclosed audio for \(id, privacy: .public): \(String(format: "%.1f", recovered), privacy: .public)s recoverable")
+        }
+        return repaired
     }
 
     private func publishInFlight() async {
@@ -78,8 +167,15 @@ actor Pipeline {
             await publishInFlight()
         }
         await AppStateBridge.setProcessing(nil)
-        // Release models once the queue drains (AD-14).
+        // Release the transcription models once the queue drains (AD-14). Both
+        // engines, not just Whisper: Parakeet is now the default (see
+        // `Preferences.defaultModel`), so on most machines it is the resident one,
+        // and releasing only Whisper would leave the model users actually run —
+        // ~461 MB of CoreML — loaded indefinitely, which is the exact memory
+        // pressure AD-14 exists to prevent. SpeakerKit is left cached as before,
+        // a separate deliberate choice this does not revisit.
         await MLEngine.shared.unloadWhisper()
+        await MLEngine.shared.unloadParakeet()
     }
 
     // MARK: - Run / resume
@@ -91,6 +187,14 @@ actor Pipeline {
             Log.pipeline.error("cannot load meeting \(id, privacy: .public)")
             return
         }
+
+        // FR-107. Before any stage reads the audio: a Session that ended
+        // because the process died left its WAV headers claiming zero bytes,
+        // and every reader believes the header. Repairing here rather than in
+        // the transcribe stage covers resume, --reprocess and a fresh capture
+        // with one call, and costs a header read per Meeting when there is
+        // nothing to do.
+        await repairUnclosedAudio(id: id)
 
         // Clear a prior failure before retrying (FR-39).
         if meeting.failure != nil {
@@ -152,28 +256,171 @@ actor Pipeline {
             return out.isEmpty ? nil : out
         }
 
-        // The Mic Stream is the Local Speaker, structurally and without inference (AD-11).
-        if let mic = await store.audioURL(id: id, stream: .mic) {
-            for s in try await transcriber(for: model).transcribe(url: mic, model: model) {
-                guard let text = clean(s.text) else { continue }
-                utterances.append(Utterance(start: s.start, end: s.end, text: text,
-                                            speaker: .local, origin: .mic))
-            }
+        // FR-108. A Stream file that holds no audio is **absent**, not a
+        // failure. This is FR-7's own rule — a Session where the tap failed
+        // still produces a Note from the microphone alone — applied to the
+        // Stream FR-7 did not consider.
+        //
+        // Two Meetings on the author's machine had a microphone that recorded
+        // nothing and a System Stream holding 57 s and 8 s of real far-end
+        // speech, and both were thrown away entirely: `transcribe` throws on an
+        // empty file, the stage threw with it, and the far end of two calls went
+        // in the bin while sitting on disk. FR-7 was written for the microphone
+        // surviving without the tap; the mirror case had no rule at all.
+        let micURL = await usableAudioURL(id: id, stream: .mic)
+        let systemURL = await usableAudioURL(id: id, stream: .system)
+        guard micURL != nil || systemURL != nil else {
+            throw MinutesError.audioFileWriteFailed(
+                "Neither Stream recorded any audio, so there is nothing to transcribe.")
+        }
+        if micURL == nil {
+            Log.pipeline.error("the microphone recorded nothing; transcribing the far end alone (FR-108)")
+        }
+        // What capture recorded about this Session, read once. Two of these were
+        // separate loads a few lines apart, which is a `meeting.json` parse each
+        // and — worse — two chances to read a record that a concurrent update
+        // had moved underneath them.
+        let captured = try await store.load(id: id)
+        let captureOffset = captured.streamStartOffset
+
+        // FR-89. Measured before anything is transcribed, because the result
+        // decides what the Transcript keeps and what Diarization clusters.
+        //
+        // **The detector runs even where the device says Echo was impossible**
+        // (FR-98). It costs a fraction of a second against a transcription, and
+        // it is the only way a disagreement between the two can exist to be
+        // recorded — a measurement not taken cannot contradict anything. What
+        // the device decides is whether the *exclusion* acts, not whether the
+        // measurement happens.
+        var echo = EchoAnalysis.notApplicable
+        do {
+            echo = try EchoDetector.analyse(micURL: micURL, systemURL: systemURL)
+        } catch {
+            // A failure to measure is `undetermined`, never `clean` (AD-49).
+            echo = .undetermined
+            Log.audio.info("echo: \(error.localizedDescription, privacy: .public) — undetermined")
+        }
+        echo.deviceKind = captured.outputDevice?.kind
+        if echo.deviceContradictsSignal {
+            Log.audio.error("echo: the signal says present and the output device says headphones — nothing excluded, both recorded")
+        }
+
+        // The Mic Stream is the room; the System Stream is the far end. That
+        // split is structural (AD-11) and holds only over Mic Stream audio the
+        // far end did not arrive in (AD-47).
+        var micSegments: [TranscribedSegment] = []
+        if let micURL {
+            micSegments = try await transcriber(for: model).transcribe(url: micURL, model: model).segments
+        }
+        var systemSegments: [TranscribedSegment] = []
+        if let systemURL {
+            systemSegments = try await transcriber(for: model).transcribe(url: systemURL, model: model).segments
+        }
+
+        // FR-90. A Mic Stream segment is dropped only where the audio *and* the
+        // text agree it repeats the far end. Either signal alone is unsafe: the
+        // audio test costs 13% of the user's own words at the recall it needs,
+        // and the text test cannot tell an echo from two people agreeing.
+        //
+        // The System Stream spans are shifted onto the Mic Stream's timeline
+        // first. The two files do not start at the same instant — measured
+        // length differences across the real library run from -364 ms to
+        // +3,278 ms — so comparing raw offsets would misalign the very
+        // recordings this is for.
+        //
+        // **Two different shifts, and increment 10 separated them (FR-97, AD-53).**
+        // The *capture* offset is when each file started, measured from the two
+        // devices' host clocks; it applies to every Session that captured both
+        // Streams and it is what puts the merged Transcript in the order things
+        // were said. The *echo delay* is the acoustic path from the loudspeaker
+        // back to the microphone; it applies only where there is an echo, and
+        // only to the comparison that decides whether a mic Utterance repeats
+        // one on the other Stream. Adding them is right for the echo comparison
+        // and adding only the first is right for the merge.
+        let echoDelay = echo.mayExclude ? (echo.delaySeconds ?? 0) : 0
+        let shift = (captureOffset ?? 0) + echoDelay
+        let outcome = EchoDeduplication.apply(
+            mic: micSegments.map { .init(start: $0.start, end: $0.end, text: $0.text) },
+            system: systemSegments.map {
+                .init(start: $0.start + shift, end: $0.end + shift, text: $0.text)
+            },
+            echoFlagged: { span in
+                echo.mayExclude && echo.isMostlyEcho(from: span.start, to: span.end)
+            })
+        let dropped = Set(outcome.droppedIndices)
+        if !dropped.isEmpty {
+            Log.audio.info("""
+                echo: dropped \(dropped.count, privacy: .public) mic segments \
+                (\(outcome.droppedWords, privacy: .public) words), \
+                \(outcome.residualDuplicateWords, privacy: .public) residual
+                """)
+        }
+
+        for (index, segment) in micSegments.enumerated() where !dropped.contains(index) {
+            guard let text = clean(segment.text) else { continue }
+            utterances.append(Utterance(start: segment.start, end: segment.end, text: text,
+                                        speaker: .local, origin: .mic,
+                                        confidence: segment.confidence))
         }
         // System Stream segments start unassigned; diarization names them next.
-        if let sys = await store.audioURL(id: id, stream: .system) {
-            for s in try await transcriber(for: model).transcribe(url: sys, model: model) {
-                guard let text = clean(s.text) else { continue }
-                utterances.append(Utterance(start: s.start, end: s.end, text: text,
-                                            speaker: SpeakerLabelID.remote(0), origin: .system))
-            }
+        //
+        // FR-97: their times are positions in *their own file*, and the two files
+        // did not start together. `captureOffset` puts them on the Mic Stream's
+        // clock, which is the one AD-4 calls the session clock. Where it was
+        // never measured it is zero, which is the behaviour every Meeting before
+        // increment 10 had — an unknown offset is not applied, and a stored
+        // Meeting is never re-ordered by a guess.
+        for segment in systemSegments {
+            guard let text = clean(segment.text) else { continue }
+            utterances.append(Utterance(
+                start: StreamAlignment.micTime(ofSystemTime: segment.start, offset: captureOffset),
+                end: StreamAlignment.micTime(ofSystemTime: segment.end, offset: captureOffset),
+                text: text, speaker: SpeakerLabelID.remote(0), origin: .system,
+                confidence: segment.confidence))
         }
         guard !utterances.isEmpty else {
             throw MinutesError.transcriptionFailed("No speech was found in the recording.")
         }
+
+        // FR-96. Speech the app had and produced nothing for.
+        //
+        // Measured against the audio rather than asked of the engine, because
+        // everything an engine reports about an interval it produced nothing for
+        // describes *silence*, which is the opposite question. Echo-excluded
+        // audio is subtracted: it is speech Minutes has, once, on the other
+        // Stream, and reporting it as unreadable would present a working feature
+        // as a failure — on the worst real recording, as having lost 45% of the
+        // microphone.
+        var gaps: [TranscriptGap] = []
+        for (stream, url) in [(StreamKind.mic, micURL), (StreamKind.system, systemURL)] {
+            guard let url else { continue }
+            do {
+                let (active, frameSeconds) = try AudioActivity.mask(of: url)
+                let covered = utterances.filter { $0.origin == stream }
+                    .map { $0.start...max($0.start, $0.end) }
+                let excluded = stream == .mic && echo.mayExclude
+                    ? echo.excludedIntervals.map { $0.start...max($0.start, $0.end) }
+                    : []
+                gaps += TranscriptGaps.find(active: active, frameSeconds: frameSeconds,
+                                            covered: covered, excluded: excluded,
+                                            stream: stream)
+            } catch {
+                // A stream that cannot be scanned yields no gaps, which reads as
+                // "not looked for" rather than "none" — the same rule as every
+                // other absent measurement in this increment.
+                Log.audio.info("gaps: could not scan \(stream.rawValue, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        if !gaps.isEmpty {
+            Log.pipeline.info("gaps: \(gaps.count, privacy: .public) interval(s), \(Int(TranscriptGaps.total(gaps)), privacy: .public)s unreadable")
+        }
+
+        let foundGaps = gaps
         _ = try await store.update(id: id) {
             $0.utterances = utterances.sorted { $0.start < $1.start }
             $0.transcriptionModel = model
+            $0.echo = echo
+            $0.gaps = foundGaps
         }
     }
 
@@ -199,25 +446,96 @@ actor Pipeline {
         /// before enrolment existed and what it must keep doing.
         var localMicVoice: Int?
         var localMatchDistance: Float?
+        var farEndCentroids: [Int: [Float]] = [:]
+        var ruledOut: [RuledOutVoice] = []
+
+        // --- System: the far end ---
+        //
+        // **Diarized first, since increment 10.** Its centroids are what the
+        // microphone's clusters are judged against (FR-100), so the order is a
+        // dependency rather than a preference.
+        if let sys = await store.audioURL(id: id, stream: .system) {
+            do {
+                let (spans, c) = try await diarizer.diarizeFull(url: sys)
+                // FR-97 / AD-53. These spans are positions in system.wav; the
+                // Utterances they will be matched against were moved onto the Mic
+                // Stream's clock at transcription. Both sides of the comparison
+                // have to be on the same clock or `assign` matches an Utterance
+                // against whoever was speaking seconds earlier — which on the
+                // worst measured offset is 3.3 seconds of the wrong speaker.
+                let offset = (try? await store.load(id: id).streamStartOffset) ?? 0
+                systemSpans = offset == 0 ? spans : spans.map {
+                    DiarizedSpan(start: $0.start + offset, end: $0.end + offset,
+                                 speakerIndex: $0.speakerIndex)
+                }
+                farEndCentroids = c
+                for (idx, vec) in c { centroids[SpeakerLabelID.remote(idx).raw] = vec }
+                if !spans.isEmpty { anySucceeded = true }
+            } catch {
+                Log.pipeline.error("system diarization failed, degrading to one speaker: \(error.localizedDescription, privacy: .public)")
+            }
+        }
 
         // --- Microphone: the room ---
+        //
+        // **The recording is clustered as it is, and the reason is a measurement
+        // that refuted the design.** AD-47 first had clustering run on Echo-muted
+        // audio, on the argument that clustering tolerates missing frames.
+        // Checked against the real Diarizer on the three affected recordings the
+        // voice count went **5 to 7, 6 to 6, and 3 to 5**: muting punches silence
+        // through the middle of continuous speech, so one voice arrives as
+        // fragments and the clusterer splits it. Removing audio to fix a speaker
+        // count is forbidden (AD-47 as amended).
+        //
+        // What replaces it is FR-100: cluster the microphone unmodified, then
+        // **rule out the voices that demonstrably were not in the room** by
+        // comparing them against the far end's own embeddings. Nothing is muted
+        // and nobody's speech is fragmented.
+        //
+        // Measured across the whole library on 2026-09-04, threshold 0.35
+        // (`spikes/calibration-room-voices-2026-09-04.md`):
+        //
+        //   affected:  5 -> 4,  6 -> 1,  3 -> 1   — the count falls on all three
+        //   clean:     nine recordings, not one voice lost
+        //
+        // and the two populations separate at **0.295 against 0.373**.
         if let mic = await store.audioURL(id: id, stream: .mic) {
             do {
-                let (spans, c) = try await diarizer.diarizeFull(url: mic)
-                let voices = Set(spans.map(\.speakerIndex))
+                let (spans, all) = try await diarizer.diarizeFull(url: mic)
+                micSpans = spans
+
+                let outcome = RoomVoices.classify(
+                    mic: all, system: farEndCentroids,
+                    producer: SpeakerKitVoiceEmbedder.producerID,
+                    threshold: VoiceMatch.sameSpeakerThreshold)
+                ruledOut = outcome.matches
+                    .filter { outcome.excluded.contains($0.micCluster) }
+                    .compactMap { m in m.distance.map { RuledOutVoice(micCluster: m.micCluster, distance: $0) } }
+                if !ruledOut.isEmpty {
+                    Log.pipeline.info("room: ruled out \(ruledOut.count, privacy: .public) of \(all.count, privacy: .public) mic voice(s) as the far end")
+                }
+
+                // Only the voices that survive count as people in the room, and
+                // only they are candidates for being the user.
+                let room = all.filter { !outcome.excluded.contains($0.key) }
+                let voices = Set(spans.map(\.speakerIndex)).subtracting(outcome.excluded)
                 if voices.count > 1 {
                     // Several people in the room. Which of them is the user is not
                     // assumed — it is either measured against an enrolled voice
                     // (FR-63) or left unclaimed, exactly as before.
                     multipleInRoom = true
-                    micSpans = spans
 
                     // FR-63 / AD-30. The lookup happens here because this is the
                     // only stage holding the mic clusters' embeddings, and its
                     // result is handed to `assign` as a value — no stage is added
                     // to AD-8's list, and `assign` gains no dependency on the
                     // speaker store.
-                    let candidates = VoiceMatch.candidates(from: c,
+                    //
+                    // It runs against the **surviving** clusters (FR-100): the
+                    // user's own voice was previously competing with the far end
+                    // for a match, and on the worst real recording lost — six
+                    // in-room labels and the user never identified at all.
+                    let candidates = VoiceMatch.candidates(from: room,
                                                            producer: SpeakerKitVoiceEmbedder.producerID)
                     let resolution = await SpeakerDirectory.shared.identifyLocal(among: candidates)
                     localMicVoice = VoiceMatch.micVoiceIndex(resolution)
@@ -226,33 +544,25 @@ actor Pipeline {
                     // The identified voice is keyed `local` so every consumer —
                     // the note, the detail pane, a future rename — sees the user
                     // where it expects them, and the rest stay in-room.
-                    for (idx, vec) in c {
+                    for (idx, vec) in room {
                         let label = (idx == localMicVoice)
                             ? SpeakerLabelID.local
                             : SpeakerLabelID.inRoom(idx)
                         centroids[label.raw] = vec
                     }
-                } else {
+                } else if let only = room.first {
                     // A single voice on the microphone is the user, and that
-                    // inference is safe.
-                    for (_, vec) in c { centroids[SpeakerLabelID.local.raw] = vec }
+                    // inference is safe. It is *newly* safe on a recording where
+                    // the far end had been padding the room.
+                    centroids[SpeakerLabelID.local.raw] = only.value
                 }
+                // A ruled-out cluster's centroid is deliberately **not** written.
+                // A phantom attendee that gets remembered comes back next week
+                // with a name on it (FR-25).
                 anySucceeded = true
             } catch {
                 // Degrade to the old assumption rather than fail: one voice, the user.
                 Log.pipeline.error("mic diarization failed, treating the mic as a single speaker: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-
-        // --- System: the far end ---
-        if let sys = await store.audioURL(id: id, stream: .system) {
-            do {
-                let (spans, c) = try await diarizer.diarizeFull(url: sys)
-                systemSpans = spans
-                for (idx, vec) in c { centroids[SpeakerLabelID.remote(idx).raw] = vec }
-                if !spans.isEmpty { anySucceeded = true }
-            } catch {
-                Log.pipeline.error("system diarization failed, degrading to one speaker: \(error.localizedDescription, privacy: .public)")
             }
         }
 
@@ -283,16 +593,21 @@ actor Pipeline {
         let mic = micSpans, sysSpans = systemSpans, multi = multipleInRoom
         let ok = anySucceeded
         let localVoice = localMicVoice, localDistance = localMatchDistance
+        let excluded = Set(ruledOut.map(\.micCluster))
+        let ruledOutVoices = ruledOut
         _ = try await store.update(id: id) { m in
             m.diarizationSucceeded = ok
             m.multipleInRoom = multi
             m.localIdentifiedByEnrolment = localVoice != nil
             m.localMatchDistance = localDistance
+            m.ruledOutVoices = ruledOutVoices
             for (k, v) in names { m.speakerNames[k] = v }
             m.inferredSpeakers = inferred
             m.utterances = Self.assign(micSpans: mic, systemSpans: sysSpans,
                                        multipleInRoom: multi,
-                                       localMicVoice: localVoice, to: m.utterances)
+                                       localMicVoice: localVoice,
+                                       farEndMicVoices: excluded,
+                                       to: m.utterances)
         }
     }
 
@@ -308,10 +623,16 @@ actor Pipeline {
     /// absent this function behaves exactly as it did before enrolment existed —
     /// which is why it has a default, so the tests that assert the old behaviour
     /// assert it against unchanged call sites.
+    /// `farEndMicVoices` names the microphone clusters ruled out as the far end
+    /// coming back through the loudspeakers (FR-100). Their Utterances are
+    /// **relabelled, never deleted**: the words stay in the record and stop being
+    /// counted as somebody in the room, which is the defect. Empty by default, so
+    /// every existing call site behaves exactly as it did.
     static func assign(micSpans: [DiarizedSpan],
                        systemSpans: [DiarizedSpan],
                        multipleInRoom: Bool,
                        localMicVoice: Int? = nil,
+                       farEndMicVoices: Set<Int> = [],
                        to utterances: [Utterance]) -> [Utterance] {
         utterances.map { u in
             let spans = u.origin == .mic ? micSpans : systemSpans
@@ -338,12 +659,17 @@ actor Pipeline {
             var c = u
             switch u.origin {
             case .mic:
-                // One voice on the mic stays the user. With several, the enrolled
-                // voice's match is the user and the rest are in-room voices; with
-                // no match, none of them is claimed.
-                if !multipleInRoom {
+                // A cluster the far end demonstrably owns is the call, not a
+                // person in the room — checked before anything else, because
+                // every branch below would otherwise put it in the room.
+                if farEndMicVoices.contains(b.idx) {
+                    c.speaker = .farEndEcho
+                } else if !multipleInRoom {
+                    // One voice on the mic stays the user.
                     c.speaker = .local
                 } else if let localMicVoice, b.idx == localMicVoice {
+                    // With several, the enrolled voice's match is the user and
+                    // the rest are in-room voices; with no match, none is claimed.
                     c.speaker = .local
                 } else {
                     c.speaker = SpeakerLabelID.inRoom(b.idx)

@@ -48,12 +48,46 @@ enum Doctor {
         let matched = await MainActor.run { DetectionService.appsUsingAudioInput() }
         for m in matched { print("  MATCH               \(m.appName) — \(m.bundleID)") }
 
+        section("Audio")
+        if let device = OutputDeviceMonitor.current() {
+            print("  output device:      \(device.name ?? "unnamed") "
+                  + "(\(device.transport)/\(device.dataSource ?? "-"))")
+            switch device.kind.echoPossible {
+            case true?:
+                print("  echo possible:      yes — the call can reach your microphone")
+                print("  → headphones prevent it. Minutes counts the far end once either way.")
+            case false?:
+                print("  echo possible:      no — sound is going into your ears")
+            case nil:
+                print("  echo possible:      unknown — this transport cannot say")
+                print("  → Core Audio reports AirPods and a Bluetooth speaker identically,")
+                print("    so the correlation detector decides on this device.")
+            }
+        } else {
+            print("  output device:      none reported")
+        }
+
         section("Transcription")
         let model = await MainActor.run { Preferences.shared.model }
         print("  active model:       \(model)")
         let downloaded = await MainActor.run { ModelCatalog.isDownloaded(model) }
         print("  downloaded:         \(downloaded)")
         print("  model store:        \(ModelStorage.base.path)")
+
+        section("Summaries")
+        // FR-109. The *reason*, so "it says Apple Intelligence is off and it
+        // isn't" is answerable without reading source. It was previously
+        // reported nowhere and inferred wrongly in the UI.
+        let llm = await FoundationModelsBackend().availability()
+        let choice = await MainActor.run { Preferences.shared.metadataBackend }
+        print("  on-device model:    \(llm.summary)")
+        print("  your choice:        \(choice == .auto ? "use the model when available" : "always keyphrase extraction")")
+        let willRun = (choice == .auto && llm.isUsable) ? "Apple's on-device model" : "keyphrase extraction"
+        print("  will actually run:  \(willRun)")
+        if !llm.isUsable, llm.settingsCanHelp {
+            print("  → System Settings › Apple Intelligence & Siri says whether the models")
+            print("    are still downloading or an organisation is restricting them.")
+        }
 
         section("Voices")
         let voices = await SpeakerDirectory.shared.summaries()

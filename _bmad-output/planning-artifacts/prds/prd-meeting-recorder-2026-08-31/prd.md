@@ -2,7 +2,7 @@
 title: Minutes — local-first meeting recorder for macOS
 status: final
 created: 2026-08-31
-updated: 2026-09-03
+updated: 2026-09-07
 owner: Niklas
 mode: headless (-A); increment 2 applied headless (-H update)
 revisions:
@@ -27,6 +27,32 @@ revisions:
     planning-artifacts/spikes/calibration-speaker-threshold-2026-09-01.md. This is the
     first increment whose central number — the matching threshold — was measured rather
     than chosen.
+  - 2026-09-03 increment 9 — transcription the app can measure. Adds §4.14 (FR-89
+    through FR-100) and amends FR-6, FR-16, FR-17, FR-21, FR-22, FR-23 and the
+    Glossary. The first increment whose scope was set by a measurement harness
+    built before any change: three of twelve dual-stream recordings had the
+    microphone recording the far end, and the model ratings the product had been
+    showing for fourteen models had never been measured at all. Recorded here
+    late — the increment shipped without a frontmatter line, which is the sort of
+    omission this list exists to prevent.
+  - 2026-09-07 increment 11 — the two Streams actually line up. Adds §4.15
+    (FR-102 through FR-105) and amends FR-6, whose ±100 ms tolerance has been
+    wrong by a factor of ten since increment 1. Driven entirely by measurement
+    rather than by a report: increment 10's continuity check made visible that a
+    42.4-minute recording received 8.37 s of System Stream it never wrote, and
+    that the 9.17 s difference between the two files is two faults, not one.
+    Neither fault is a regression — the second-worst case predates increment 10.
+    The tier in §6.3 is ordered so the instrument precedes the fix, because three
+    plausible mechanisms fit the evidence and only one accounting identity
+    separates them.
+  - 2026-09-04 increment 10 — the rest of §4.14, built rather than described.
+    Implements FR-94 through FR-100, adds FR-101, and amends FR-94 and FR-97 with
+    the answers implementation found: the device's own sample and host clocks are
+    available in every callback, which makes the rate check exact, makes the two
+    Streams' start offset a measured fact rather than a search, and gives a
+    capture-time canceller the aligned reference AD-48 requires. Driven by
+    `spikes/research-multisource-transcription-2026-09-04.md` and by re-measuring
+    every figure in §4.14 before and after.
 inputs:
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/brief.md
   - _bmad-output/planning-artifacts/briefs/brief-meeting-recorder-2026-08-31/addendum.md
@@ -99,7 +125,8 @@ Downstream artifacts must use these terms verbatim. No synonyms anywhere.
 - **Meeting** — one recorded conversation and everything derived from it: audio, Transcript, Metadata, and the Note. Has a start time, a duration, and exactly one Note.
 - **Session** — the live act of recording a Meeting, from Capture start to Capture stop. A Session becomes a Meeting once it has been transcribed.
 - **Capture** — acquisition of audio during a Session. Always two Streams.
-- **Stream** — one of exactly two audio sources in a Capture: the **Mic Stream** (local microphone, attributed to the Local Speaker) or the **System Stream** (all other applications' audio output, containing Remote Speakers).
+- **Stream** — one of exactly two audio sources in a Capture: the **Mic Stream** (local microphone, attributed to the Local Speaker) or the **System Stream** (all other applications' audio output, containing Remote Speakers). **Amended in increment 9.** The two are not independent: when the user is on speakers rather than headphones, the Mic Stream contains a delayed copy of the System Stream. The System Stream is therefore *authoritative* for far-end speech, and the Mic Stream's copy of it is Echo (FR-89).
+- **Echo** — the portion of the Mic Stream that is a delayed copy of the System Stream, arriving acoustically from the speakers. It carries no information the System Stream does not already hold, and is excluded before transcription and Diarization (FR-90). Not to be confused with genuine **Double-talk**, where the user speaks *while* the far end is speaking; that is kept (FR-91).
 - **Local Speaker** — the person at the machine. Certain when the Mic Stream held a single voice, and identified when the Enrolled Voice matches exactly one of several in-room voices (FR-63). Default label `Me`.
 - **In-Room Speaker** — a voice in the Mic Stream when it held more than one, i.e. someone physically with the user. Anonymous (`In-room 1`, `In-room 2`, …) until renamed; the app does not guess which one is the Local Speaker.
 - **Remote Speaker** — a participant on the far end, present only in the System Stream. Anonymous (`Speaker 1`, `Speaker 2`, …) until renamed.
@@ -225,6 +252,11 @@ A Session captures the Mic Stream and the System Stream concurrently, as separat
 - Two audio artifacts exist for a Session, each independently decodable.
 - Both carry timestamps on a shared time base; a sound occurring at a known wall-clock moment appears at the same offset (±100 ms) in both.
 - Audio is captured at a sample rate and format suitable for the Transcription Model without a lossy intermediate step.
+- **Amended in increment 9.** The two Streams are separately addressable but not acoustically independent: on speakers, the Mic Stream contains the System Stream delayed by the speaker-to-microphone path. Measured at cross-correlation 0.771 with a 39 ms lag on one real recording. Nothing downstream may assume that a voice in the Mic Stream was in the room.
+- **Amended in increment 11, and this line is the one that was wrong.** The ±100 ms above was asserted in increment 1 and first measured in increment 10, on the same real recording both ways: **+1,006 ms**. It is out by an order of magnitude, and it has been out for eleven increments. Two separate mechanisms produce it and they were being read as one — the two Streams are *started* serially (FR-105), and samples the process received are *not written* (FR-102). The tolerance stated here is therefore not a specification capture has ever met; §4.15 replaces it with a measurement, and FR-105 decides whether the figure quoted here becomes true or becomes honest. `[NOTE FOR PM]` this line is retained rather than deleted so that the claim and its refutation sit together.
+- **Settled in increment 11, and it does not hold. ±100 ms is withdrawn as a claim about capture and replaced by a measurement.** FR-105 did what it promised: on a real Session the tap chain took **693 ms** to build, and the gap between the two device starts is now **0.045 ms** — the whole serialisation term is gone, and the same Session under the previous order would have read about **+484 ms**. What is left is not capture's to control. The microphone delivered its first sample **209 ms** after its engine started; the tap delivered its first sample **0.07 ms** after its device started; so the offset is **−209 ms**, and it fails ±100 ms by a factor of two *in the opposite direction to the defect this increment started from*.
+- **What capture can actually deliver, with the numbers.** The offset equals the difference between the two devices' first-callback latencies, and that is a property of the hardware. Measured through the shipping build: **+14 to +18 ms** over five short probes with a warm input device, and **−209 ms** on a real Session whose input was a Bluetooth headset. So the honest statement is not a tighter tolerance but the absence of one: **capture makes no claim about the offset, it measures it on every Session (FR-97), and the merge applies it.** A number would be a new assertion of the same kind as the one being withdrawn — this one has been wrong for eleven increments, and the measurement is what replaces it.
+- **The sign matters and is handled.** Every offset the project had seen was positive (+21, +53, +60, +1,006 ms); the first Session on the fixed build produced a negative one. `StreamAlignment` adds the signed value, tests its tolerance on `abs`, and words its disclosure both ways, so a System Stream that starts *before* the microphone is placed correctly rather than shifted the wrong way.
 
 #### FR-7: Graceful degradation to Mic-only
 If the System Stream cannot be captured, the Session proceeds with the Mic Stream alone rather than failing. `[ASSUMPTION: degrading rather than refusing to record is inferred; a user who declined a permission still wants their own side of the call captured.]`
@@ -333,15 +365,23 @@ Stopping a Session produces a Transcript, computed entirely on-device.
 - Each Utterance carries a start time, an end time, and text.
 - The app makes no network request during transcription, verifiable by network monitoring.
 - Transcription of a 30-minute Session with the default model completes in under 5 minutes on the target machine.
+- **Amended in increment 9.** Echo exclusion (FR-90) runs before transcription, not after. Transcribing first and de-duplicating afterwards would leave FR-21's speaker count already wrong.
 
 #### FR-17: Select a Transcription Model
 The user can choose among available Transcription Models. Realizes UJ-4.
 
 **Consequences (testable):**
-- The list states, per model, its relative speed, its relative accuracy, and its size on disk.
+- The list states, per model, its relative speed and its size on disk.
 - The currently active model is unambiguous.
 - The available list reflects what the transcription stack actually offers rather than a hardcoded list that can drift.
 - A recommended default is pre-selected so a user can proceed without choosing.
+- **Amended in increment 9: an accuracy claim requires a measurement.** The
+  original wording promised "its relative accuracy" per model, and the product
+  duly showed a five-point accuracy rating for every model — derived from
+  nothing. Speed was always measured (`--benchmark`); accuracy never was. A
+  model's accuracy is now stated only where FR-93's harness has measured it,
+  and is absent, not estimated, everywhere else. An unmeasured rating is worse
+  than no rating: it looks like knowledge.
 
 #### FR-18: Download and cache models with visible progress
 Selecting a model that is not present downloads it, showing progress. Realizes UJ-4.
@@ -387,6 +427,7 @@ All Utterances derived from the Mic Stream are attributed to an in-room voice �
 - No Mic Stream Utterance is ever attributed to a Remote Speaker, and no System Stream Utterance is ever attributed to an in-room voice. This is structural and cannot be wrong.
 - When the Mic Stream contains exactly one voice, it is the Local Speaker. This attribution cannot be wrong either.
 - When the Mic Stream contains more than one voice, each becomes a distinct In-Room Speaker and **none is claimed to be the Local Speaker** — unless an Enrolled Voice identifies one of them (FR-63).
+- **Amended in increment 9.** In-room voices are counted only from Mic Stream audio that is not Echo. Counting them from the raw Mic Stream put the far end in the room: one real recording produced **six** In-Room Speakers and never identified the user at all, because their own voice was one polluted cluster among six. The number of people in the room is not evidence of anything if the microphone was also hearing the call.
 - **Amended (increment 4):** with an Enrolled Voice present and matching exactly one in-room voice, that voice is the Local Speaker. This is an identification, not an assumption, and it is recorded as such on the Meeting. With no Enrolled Voice, or no unambiguous match, the original rule stands untouched.
 - Mic Stream speech the Diarizer cannot place at all, when several voices share the microphone, is labelled as unidentified in-room speech — never as the user. *(Added in increment 4 after the defect: such speech fell through to the Local Speaker default and printed 14 utterances of a neighbouring conversation as the user's own words.)*
 - The Meeting records that the room held several people, and the Note discloses it.
@@ -402,6 +443,7 @@ Utterances are assigned speaker labels by on-device Diarization, run separately 
 - A Stream with a single speaker yields one label, not several.
 - The number of Remote Speakers is determined from the audio; the user is not required to state it in advance.
 - Diarization failure degrades to a single `Speaker` label for the whole System Stream rather than failing the Meeting.
+- **Amended in increment 9.** The Mic Stream is diarized *after* Echo exclusion (FR-90). This is the requirement the defect actually broke: duplicated text is an annoyance, but a phantom attendee is a false statement about who was present.
 
 #### FR-23: Merge Streams into one ordered Transcript
 The Transcript interleaves Mic and System Stream Utterances in chronological order.
@@ -410,6 +452,7 @@ The Transcript interleaves Mic and System Stream Utterances in chronological ord
 - Utterances appear in ascending start-time order regardless of source Stream.
 - Overlapping speech from both Streams is represented as separate Utterances, not merged or dropped — people talk over each other and the record should show it.
 - Every Utterance in the Transcript carries exactly one Speaker Label.
+- **Amended in increment 9.** The clause above is about *genuine* overlap — two people speaking at once. It is not licence for the same speech to appear twice from two Streams. On affected recordings **33.6% and 32.2% of all Transcript words were one utterance recorded on both Streams**, and the merge dutifully preserved both copies. After FR-90 the invariant is testable: no Mic Stream Utterance may substantially repeat a time-overlapping System Stream Utterance.
 
 #### FR-24: Rename a Speaker Label
 The user can rename any Speaker Label on a Meeting. Realizes UJ-3.
@@ -1179,6 +1222,543 @@ A recording already on disk can be assessed and, where the samples are intact, r
 - Repair changes only what is wrong. The samples are not resampled, re-encoded or discarded, and the original declared rate is recorded so the change is reversible.
 - Nothing is repaired without the user asking. `[ASSUMPTION: the seven affected recordings on the author's machine were repaired by hand on 2026-09-03, before this requirement existed. The requirement is what makes that repeatable for a colleague.]`
 
+### 4.14 Transcription the App Can Measure
+
+**Description:** Everything before this section treats transcription quality as
+whatever the chosen model happens to produce. This section makes it something
+the app *measures*, and fixes the largest defect that measurement found.
+
+**Why it exists:** measured, not hypothesised, and the measurement came first.
+A harness (FR-93) was built before any change was made, against the AMI Meeting
+Corpus — three real four-person meetings, 67 minutes, ~7,900 reference words,
+in two microphone conditions that match the two Streams Minutes records. It
+immediately found two things.
+
+The first was in the user's own library, not the corpus. **Of twelve recordings
+holding both Streams, three had the microphone recording the far end** through
+the speakers (cross-correlation 0.771, 0.574, 0.349 against ≤0.025 for the other
+nine). On the worst, **57.6% of freshly transcribed Mic Stream words duplicated
+a System Stream Utterance**, the Diarizer reported **six people in the room**,
+and the user was **never identified at all**. Muting the echo-dominated frames
+and re-transcribing removed **91% of the duplication**.
+
+The second was that the app's own accuracy claims had nothing behind them. The
+model list showed a five-point accuracy rating for fourteen models; not one had
+ever been measured. When they were, the ranking **swung by up to 8 points
+depending on which meeting was used**, and the model most likely to be adopted
+on reputation (Canary-1B-v2) came 8.5 points *behind* the current default at 22×
+the cost. Reputation and estimates both failed; only the harness didn't.
+
+**What this section deliberately does not do:** cancel the echo *after the
+fact, with a linear filter* (measured impossible — see the addendum and AD-48 as
+amended), change the default model (the per-session swing is larger than the
+difference between models), or normalise far-field audio (a real 2-point gain
+with no reliable gate).
+
+**Increment 10 built the rest of it, and implementation answered three of its
+open questions.** FR-89 to FR-93 shipped in increment 9; FR-94 to FR-100 were
+written and left for this one. Building them found that the two things the
+section had been reasoning about indirectly are both *available directly in
+every audio callback*: the device's own sample-time counter, and a host-time
+stamp on the same instant. That single fact makes the rate check exact rather
+than tolerant (FR-94), turns the two Streams' start offset from a correlation
+search into a subtraction (FR-97 as amended), and supplies the aligned reference
+a capture-time canceller needs (FR-99). Both counters were being discarded at
+the callback boundary — bound to `_` — which is the same shape of defect as
+FR-95's discarded confidence.
+
+One requirement is added, FR-101, and it comes from finding a published figure
+that did not survive its own rule: §4.14 quoted 82% proper-noun recall for the
+default model on close mics, which is the **mean of three session percentages**.
+Pooled the way FR-93 requires it is **81%**. Nothing rested on the difference,
+which is exactly why it went unnoticed — the rule existed and no command
+enforced it.
+
+#### FR-89: Detect that the microphone recorded the System Stream
+Minutes determines, per Session, whether and where the Mic Stream contains a delayed copy of the System Stream.
+
+**Consequences (testable):**
+- A verdict is produced for every Session holding both Streams, and recorded on the Meeting.
+- Detection is by correlation between the Mic Stream and the delay-aligned System Stream. The delay is estimated, not assumed, and a delay estimate that is not physically plausible is reported as a failure to detect rather than used.
+- A recording made on headphones is not flagged. Measured: nine of twelve real recordings sit at or below 0.025 cross-correlation and must all come back clean.
+- The verdict distinguishes *how much* was affected, not merely whether: 47% of mic-active frames on the worst recording against 6% on the mildest.
+- Detection never inspects transcript text. Text similarity was used to *validate* the signal test (88–89% agreement) and is not the mechanism; a detector that needed a transcript could not run before transcription.
+
+#### FR-90: Exclude the Echo, with the test each consumer's tolerance allows
+Echo is kept out of Diarization by excluding audio, and out of the Transcript by dropping Utterances that two independent signals agree are duplicates.
+
+**Amended before implementation, by calibration.** This requirement first said "exclude before transcription and before Diarization", with one audio-level test serving both. Calibration measured that test's ceiling at **86% recall for 13% of the user's own words** (`calibration-echo-threshold-2026-09-03.md`), and the assumption that failed was not the statistic but the idea that both consumers need the same test. They do not, and the transcript has a second signal available that Diarization does not.
+
+**Consequences (testable):**
+- **Recording gate.** Nothing is excluded by any rule unless the whole recording clears the correlation gate. Nine clean recordings measured ≤0.025 and three affected ones ≥0.349 — a factor of fourteen with nothing between the populations. Seven of the nine contain literally zero coincidentally duplicated words, so a headphones recording is untouched.
+- **Diarization** clusters in-room voices from audio with Echo frames excluded, so the far end cannot become an attendee (FR-21, FR-22 as amended). The frame test's false positives reach clustering only and can never delete a word from the Transcript.
+- **The Transcript** drops a Mic Stream Utterance only where the audio test *and* the text agree: it is Echo-flagged **and** substantially repeats a time-overlapping System Stream Utterance. This **loses no unique Mic Stream content by construction** — it can only remove an Utterance duplicating one already held on the other Stream.
+- Audio is never edited on disk. Exclusion applies in the processing path and its inputs are recorded so the decision is recomputable (AD-49).
+- Measured effect on the three affected recordings: 16%, 58% and 59% of Mic Stream words removed as duplicates, of which **98% sit in Utterances longer than two words** — coincidental agreement is short, and verbatim multi-word repetition at the same instant is the loudspeaker.
+- A partial overlap, where Echo and a room voice fall inside one Utterance, is **not** fixed by the text rule and remains in the residual. Stated rather than hidden.
+
+#### FR-91: Never exclude what cannot be Echo
+Mic Stream audio recorded while the System Stream is silent is always retained, and speech concurrent with the far end but uncorrelated with it is retained as Double-talk.
+
+**Consequences (testable):**
+- With no System Stream, or a silent one, nothing is ever excluded — 40% of mic activity on the worst recording falls in this category and is not at risk under any threshold.
+- Concurrent-but-uncorrelated speech is retained. The user talking over the far end is the case this requirement exists to protect.
+- The cost of exclusion is measured and stated rather than assumed: the current test loses **10.7% of unique Mic Stream words** on the worst recording. That figure is a release criterion, not a footnote — a change that worsens it is a regression even if it removes more Echo.
+
+#### FR-92: The Meeting says the recording was affected, and by how much
+A Meeting whose Mic Stream contained Echo records that fact, and the user can see it.
+
+**Consequences (testable):**
+- The Meeting record carries the verdict, the estimated delay, and the proportion of Mic Stream audio excluded.
+- The user is told in plain language what it means for the Note — that the far end was also picked up by the microphone and has been counted once, not twice.
+- A recording processed before this existed is not silently presented as clean; an unknown verdict reads as unknown.
+- The advice is actionable: headphones prevent it, which is why the nine clean recordings are clean.
+
+#### FR-98: Whether Echo is possible is read from the output device, not inferred
+Minutes knows whether the far end can reach the microphone acoustically, from what the audio is playing through.
+
+**Consequences (testable):**
+- The output device kind is read at Session start and whenever it changes (the property listener already exists for FR-8), and recorded on the Meeting.
+- On headphones, Echo handling is **off** — not gated by a threshold, and not measured for. Every clean recording in the library was on headphones and every affected one was not, so this is a fact available for free where FR-89 spends a correlation search to guess it.
+- The correlation detector of FR-89 remains, for recordings already on disk and for the case where the device is unknown. A device fact and a signal measurement that disagree are both recorded; neither is silently preferred.
+
+#### FR-99: Echo is cancelled during the Session, with the System Stream as the reference
+Where the output device makes Echo possible, it is removed while recording rather than reasoned about afterwards.
+
+**Consequences (testable):**
+- Cancellation runs inside the Session with the System Stream as the reference signal, so the alignment is known by construction rather than searched for.
+- It includes a non-linear residual stage. A linear filter alone is measured insufficient: 8.7–10.6 dB against the 20–40 dB a canceller needs (addendum).
+- Its benefit is **measured on our own recordings with FR-93's harness before it is relied on**, and the figure is published the way the model figures are. Until then FR-90's post-hoc rule stays in place and is not removed on the strength of an expectation.
+- The Mic Stream on disk is the cancelled one, and the Meeting records that cancellation was applied — a recording processed one way must not be indistinguishable from one processed the other.
+- Apple's voice-processing audio unit is not a route and the reason is recorded rather than rediscovered: its reference is the app's own output bus, and the meeting audio is played by the conferencing app.
+
+#### FR-100: In-room voices are found by excluding the far end's voices, not by removing audio
+Diarization identifies who was in the room by ruling out the people who demonstrably were not.
+
+**Amended into being by a measurement.** FR-90 first excluded Echo audio before clustering. Measured against the real Diarizer on the three affected recordings, the in-room voice count went **5→7, 6→6 and 3→5** — muting fragments continuous speech and the clusterer splits one voice into several. Removing audio to fix a speaker count made the count worse.
+
+**Consequences (testable):**
+- The Mic Stream is diarized unmodified.
+- Speaker embeddings from the **System Stream** identify the far end, and any in-room cluster matching one of them is excluded or relabelled. The threshold and its measured separation already exist for FR-63 — this points the same machinery at the opposite question.
+- The in-room count on an affected recording must **fall**, and a test asserts the direction rather than assuming it. This is the failure mode of the previous attempt.
+- No audio is modified for the benefit of Diarization.
+
+#### FR-97: The two Streams' start offset is measured and applied
+The Transcript is ordered by when things were said, not by each Stream's own file position.
+
+**Found while building FR-89, and it is a separate defect.** FR-6 says both Streams "carry timestamps on a shared time base; a sound occurring at a known wall-clock moment appears at the same offset (±100 ms) in both." Measured across the real library, `mic.wav` and `system.wav` differ in length by **−364 ms to +3,278 ms** — the two captures do not begin at the same instant, and nothing records by how much. AD-4's Prevents clause names this outcome exactly: "the two Streams being timestamped from different clocks, which makes the merged Transcript subtly and unfixably out of order."
+
+**Consequences (testable):**
+- The offset between the two Streams is measured for every Session holding both, and recorded on the Meeting.
+- FR-23's merge applies it, so an Utterance's position in the Transcript reflects when it was said rather than where it sits in its own file.
+- The ±100 ms tolerance FR-6 claims becomes a **test**, not an assertion. It currently fails by up to 3.3 seconds.
+- A Meeting recorded before this existed keeps an unknown offset and is not silently re-ordered by a guess.
+- ~~Capture is the better place to fix this than the merge, and this requirement does not decide which: measuring the offset makes the error visible, and closing it at the source is `[NOTE FOR PM]` for the increment that owns capture.~~ **Answered in increment 10, and it is capture.** Every audio callback on both Streams carries a host-time stamp for the samples it delivers, on one system-wide clock. The offset is therefore the difference between the two Streams' *first* host times — a subtraction of two numbers the app is already handed and was throwing away — not a correlation search, not an estimate, and not something only an affected recording can supply. It is measured for every Session holding both Streams, including the clean ones the echo detector has nothing to align on.
+- The offset is recorded with its **source**. A Session that captured host times has a measured offset; a Meeting from before this existed has none, and none reads as unknown rather than as zero (the same rule as the Echo verdict and the rate check).
+
+#### FR-93: Transcription accuracy is measurable, repeatably, from a terminal
+Minutes ships a way to measure transcription accuracy against a reference corpus, and its results are what accuracy claims cite.
+
+**Consequences (testable):**
+- One command transcribes a given audio file through the shipping code path and emits machine-readable Utterances, so the harness measures the product rather than a copy of it.
+- Word error rate is reported alongside a **content-word** error rate and **proper-noun recall**. Raw WER alone is the wrong target: the most-deleted words at the baseline were `yeah`, `ok` and `right` — a quarter of all errors, and words FR-31 already strips deliberately.
+- A repetition measure is reported, as a model-independent signature of the fabrication failure of §4.13.
+- Results are aggregated by pooling errors over pooled reference words across sessions, never by averaging per-session percentages.
+- Neither corpus audio nor results are written into the repository (§9.1).
+- The harness must be able to contradict the project: it has already retracted one conclusion drawn from a single session and rejected a model that was going to be adopted on reputation.
+
+#### FR-94: Verify the input rate against the audio clock, not the wall clock
+The rate check of FR-84 uses the timestamps the audio device supplies rather than elapsed wall-clock time.
+
+**Consequences (testable):**
+- The frame count is compared against the device's own sample-time counter, taken at the same instant, so the comparison needs no tolerance for scheduling jitter.
+- A discontinuity in the device's sample time — samples the app never received — is detected as such, which the current wall-clock check cannot see at all.
+- The 12% tolerance and 3-second settling window of FR-84 shrink or disappear, and the value that replaces them is derived rather than tuned.
+- The check still refuses to act on a rate that is not one a real device uses (FR-85 unchanged).
+
+**Amended by implementation, increment 10.** Two things this requirement asked
+for turned out to be one measurement and one different measurement, and keeping
+them apart is what makes the tolerance derivable:
+
+- **Rate** is the device's sample time over the device's host time. Both come
+  from the same clock domain in the same callback, so scheduling jitter is not
+  in the quotient at all and the settling window is *two callbacks* rather than
+  three seconds — a property of the clock, not a number chosen against
+  recordings.
+- **Continuity** is the device's sample time against the frames the app actually
+  received. A shortfall is audio the device produced and this app never got,
+  which is the class the wall-clock check cannot see. It is not a rate error and
+  must not be reported as one.
+- The tolerance that survives is computed per measurement rather than declared:
+  one callback of frames over the frames measured, plus an allowance for the two
+  oscillators' drift. It shrinks as the window grows, which a fixed percentage
+  cannot do.
+
+#### FR-95: An Utterance carries the engine's confidence
+Where the Transcription Model reports a confidence, it is carried through to the Meeting record.
+
+**Consequences (testable):**
+- Confidence survives the port boundary rather than being discarded at the adapter.
+- A Meeting whose Transcript is largely low-confidence is distinguishable from one that is not, without re-running transcription.
+- Metadata derivation can consult it (§4.13's gate becomes evidence-based rather than binary).
+- A model that reports no confidence yields absent, not zero. Absent means unknown.
+
+#### FR-96: An interval the engine could not transcribe is a recorded gap
+Audio the Transcription Model returned nothing usable for is recorded as a gap rather than silently omitted.
+
+**Consequences (testable):**
+- The Transcript can state that a span of audio produced no usable text, with its start and end.
+- A gap is distinguishable from silence: one is speech the app failed on, the other is nothing to transcribe.
+- A Note derived from a Transcript with substantial gaps says so, so a summary is not read as complete when it is not.
+
+#### FR-101: The pooled figure is produced by the harness, not by hand
+Every accuracy number the project quotes comes out of one command, aggregated the one way FR-93 permits.
+
+**Why this exists.** FR-93 already forbids averaging per-session percentages, and
+§4.14 then quoted a figure that was one. The harness reported per-session rows;
+the pooled figures in every document were assembled by hand from those rows, and
+in one place the hand did it the forbidden way — 82% proper-noun recall for the
+default model on close mics is the mean of 90%, 78% and 77%. Pooled over pooled
+reference words it is **81%**. A rule with no command behind it is a rule that is
+followed until somebody is in a hurry.
+
+**Consequences (testable):**
+- One command prints the pooled result across sessions: total errors over total reference words, total content errors over total content reference words, and total proper nouns found over total proper nouns present.
+- The command refuses to pool a set with a missing session rather than silently pooling what it has — a figure quoted over two sessions and one over three are not comparable, and the swing between sessions is ±8 points.
+- The per-session rows stay, because the pooled figure hides the swing that makes a single session untrustworthy, and both facts are needed to read either.
+- Where a previously published figure disagrees with the pooled one, the pooled one is correct and the change is recorded rather than quietly applied.
+
+### 4.15 Capture the App Can Account For
+
+§4.13 made a recording the app cannot vouch for into a disclosed fact, and §4.14
+made the *rate* exact by reading the device's own counters instead of a wall
+clock. Both of those close the gap between what the device produced and what the
+app was handed. Neither closes the gap between what the app was handed and what
+reached the file — and that gap is where this increment's defect lives.
+
+**Measured on 2026-09-07, on a 42.4-minute recording.** Both devices ran at 48 kHz
+and within 0.84 s of each other. Both report **zero missing frames and zero
+discontinuities** on the audio clock, so the device handed this process
+everything it counted. And yet:
+
+| | frames the device counted | frames in the file (16 kHz) | unaccounted for |
+|---|---|---|---|
+| Mic Stream | 121,987,200 | 40,662,047 | ~1,953 (122 ms, 0.005%) |
+| System Stream | 121,947,136 | 40,515,272 | **133,944 (8.37 s, 0.33%)** |
+
+The two files then differ in length by **+9.17 s**, and that number decomposes
+exactly: **0.84 s** because the System Stream started later and stopped later,
+and **8.37 s** because a third of a per cent of it was received by this process
+and never written. The two terms add to 9.19 s against a measured 9.17 s. They
+are two different defects and they had been read as one.
+
+The loss is **380× worse on the System Stream than on the Mic Stream**, and it is
+not proportional to duration: a 50.3-minute recording lost nothing measurable and
+a 31.6-minute one lost 6.95 s. Whatever it is conditional on, it is not time.
+
+#### FR-102: Every sample the device delivered is accounted for
+The distance between what the audio device says it handed over and what reached the file is a quantity Minutes computes and records, not a discrepancy somebody finds later by subtracting two file lengths.
+
+**Why this exists.** `RingBuffer.didOverflow` has been set since the ring was
+written, on the line where the producer drops samples because the consumer fell
+behind. **It is read by nobody** — no caller, no record, no log line. It is the
+same shape of defect §4.14 found twice: the quantity that would have named the
+mechanism was being computed and thrown away. And a Bool is the wrong shape for
+it regardless, because a Bool cannot say 353 where the other stream says
+133,944, and that asymmetry is the only real clue the measurement carries.
+
+**Consequences (testable):**
+- A Stream's record carries the counts of one accounting identity: frames the device counted (§4.14's sample-time advance), frames the writer consumed from the ring, frames dropped before the writer could consume them, and frames written to the file. Each is a number; none is a flag.
+- Samples the producer had to drop are **counted**, along with how many separate times it had to drop any. One overflow of eight seconds and eight hundred overflows of ten milliseconds are different faults and a Bool renders them identically.
+- A Stream that dropped nothing records **zero**, and zero is a measurement worth having: it is what makes a non-zero count on the other Stream mean something. Absent means the device supplied no counters, exactly as it does for the rate and the Echo verdict.
+- The identity either closes or its remainder is recorded **as a remainder**. A residual nobody can attribute is information about a mechanism nobody has named yet; folding it into a tolerance is how this defect survived fourteen recordings.
+- The counts are readable from a terminal for a capture that creates no Meeting, so the figure can be taken without spending a real meeting to get it.
+- **No file is padded, trimmed or resampled to make the counts agree.** The lengths on disk are evidence, and rewriting them is what made eight recordings in increment 8 permanently incomparable.
+
+**Amended by implementation, increment 11.** The identity has one more term than
+this requirement asked for, and the extra term is the one that found the defect:
+
+- **"Consumed and not written" is two faults, not one.** Frames the converter was
+  given input for and never produced, and frames it produced that a write threw
+  on, have different causes and different fixes. The first reading collapsed them
+  and the collapsed term was doing the work of both. `AVAudioFile.write` failures
+  were also *logged and never counted*, and the unified log for the recording
+  that forced this increment had already rolled over by the time anyone read it —
+  so "no write failures occurred" could not be said either way.
+- **The writer's terms must not be gated on the device's counters.** They were,
+  which made every one of them read zero in every device-free harness — including
+  the harness built to find this defect. A term that reads zero when it cannot be
+  computed is worse than absent.
+- **The loss is located and not explained.** The identity puts it in the
+  conversion step: dropped 0, write failures 0, unaccounted 0, produced short of
+  expected. Two changes remove it, measured. *Why* they do is Q27, and this
+  requirement does not pretend otherwise.
+
+#### FR-103: A consumer that fell behind says so, and by how much
+Where samples are lost between the callback and the file, the reason is a consumer that did not keep up, and the two numbers that establish it are free to take on the thread that fell behind.
+
+**Consequences (testable):**
+- Each Stream records the **longest interval between successive drains** and the ring's **high-water fill** as a share of capacity.
+- Both are measured on the writer's own thread. Nothing new is measured inside the IOProc, which stays as AD-1 requires.
+- A Stream that never came within a wide margin of its ring's capacity records that, which is what makes a Stream that filled it interpretable. Both rings hold ten seconds; a fault that needs the consumer to be ten seconds late is a different fault from one that needs it to be fifty milliseconds late, and only the high-water mark separates them.
+- These are diagnostics and never gates: no capture is refused, degraded or altered on the strength of them.
+
+#### FR-104: What it costs to start each Stream is stamped, not inferred
+The offset between the two Streams' first samples is decomposed into the part spent setting the second Stream up and the part spent waiting for it to deliver.
+
+**Why this exists.** FR-97 records the offset and the merge applies it, which is
+correct and is a symptom fix. The number itself is not actionable: **+1,006 ms**
+on a real 42.4-minute meeting against **+35 to +54 ms** on a five-second
+`--check-clock` probe across six runs. The short probe understates the real
+session twentyfold, so whatever costs the extra second is not exercised by a cold
+open, and one number cannot say which stage it was spent in.
+
+**Consequences (testable):**
+- Each stage of capture start records the host time it completed on, on the same clock the callbacks stamp: the microphone's open, the process tap's creation, the aggregate device's creation, the IOProc's creation, and the device start.
+- The offset FR-97 records is reported alongside its decomposition — setup serialisation on one side, first-callback latency on the other — so a change can be aimed at the term that is actually large.
+- The decomposition is printable from a terminal without recording a Meeting.
+- A Session that captured no host times records no decomposition, and none reads as unknown rather than as zero.
+
+#### FR-105: Both Streams are started together
+Capture stops paying for the second Stream's setup with the first Stream's recording time.
+
+**Why this exists.** `DualStreamCapture.start` opens the microphone and *then*
+builds the tap chain — tap, default-output UID, private aggregate device, IOProc,
+start — serially, and each Stream begins whenever its own first callback lands.
+Everything downstream that wants to compare the two Streams (the Echo detector,
+the cross-stream voice comparison of FR-100, any future canceller) has to search
+for an offset that capture could simply not have introduced.
+
+**Consequences (testable):**
+- Every part of capture setup that can complete before either device is running does. The two device starts are adjacent, with nothing between them that could have been done earlier.
+- The measured offset on a **new** real recording falls. The existing library was captured by the unfixed path and cannot demonstrate an offset it never recorded, so the evidence for this requirement is a recording made after it.
+- FR-6's ±100 ms claim is either met on that recording or **restated as what capture can deliver, with the measurement beside it**. A tolerance that has been out by ten times since increment 1 is not repaired by being repeated.
+- FR-7 is unaffected: a tap that cannot be built must still neither delay nor prevent the microphone, and a Mic-only Session must start no later than it does today.
+- FR-97's measured offset and its application at the merge **stay**, whatever the offset becomes. A Meeting recorded before this still needs it, and an offset that has genuinely fallen to zero costs nothing to apply.
+
+**Amended by implementation, increment 11.** Two things the requirement assumed
+turned out differently, and both are recorded because both nearly caused a wrong
+change.
+
+- **The serialisation was smaller than the number it was blamed for, and the
+  first stage measurement said otherwise because it was wrong.** It charged
+  `engine.prepare()` to the tap chain and reported 350 ms of chain building that
+  was mostly the microphone's. Separated: the chain is **41–63 ms** cold and the
+  microphone's preparation is 195–423 ms, and neither is now paid out of
+  recording time. A stage measurement that charges one stage for another points a
+  change at the wrong place.
+- **The residual is device first-callback latency, and the microphone's is
+  negative.** Its first sample is stamped 3 to 7 ms *before* `engine.start()`
+  returns, which settles empirically that `AVAudioTime.hostTime` is the timestamp
+  of the buffer's first sample rather than of its delivery — so FR-97's offset
+  carries no one-buffer bias. One cold run read the microphone's first callback at
+  +213 ms and the offset at −208 ms; five subsequent runs read +16 to +30 ms. That
+  outlier is recorded because it was nearly published as a regression on a single
+  measurement.
+
+### 4.16 Surviving a change of audio hardware (increment 12)
+
+Raised by a user's own recordings, not by anything in this repository. One Teams
+call on 8 September became **three** recordings — 8m50s, 35m50s and a third —
+with 21 s and 46 s between them, and each restart needed its own Detection
+Prompt. The first record carried `outputDeviceChanged: true` and named the
+built-in microphone where the next named AirPods. That is the whole evidence
+trail, and it existed only because AD-54 stores the output device on the Meeting.
+
+#### FR-106: A change of audio hardware does not end the Session
+Moving audio to different hardware during a Session — AirPods connecting, a
+headset unplugged, an output menu changed — leaves one Session, one recording and
+one Note. Both Streams continue across it.
+
+**Consequences (testable):**
+- A watched application that releases the input device and takes another does not
+  end the Session, and raises no second Prompt.
+- The Mic Stream keeps recording across the change, including when the new device
+  runs at a different sample rate.
+- A meeting that genuinely ends is still detected, within FR-14's thirty seconds.
+- The output file's sample rate never changes, whatever the devices do.
+- Where the change cannot be absorbed, the Session says so rather than producing
+  a short file that looks complete.
+
+**Three causes, each measured.**
+
+1. **The detector's absence had no hysteresis.** There was a 2.5 s debounce
+   entering a meeting and **none** leaving it, so the moment between releasing one
+   input device and taking the next was read as the call ending. FR-14's own
+   testable consequence allows *thirty seconds* to notice a meeting has ended and
+   the implementation spent none of it. Twelve of those seconds are now spent on
+   a grace period. This is not a widened tolerance: the deadline was always
+   thirty seconds and the code was tighter than the requirement, in the one
+   direction that loses audio.
+2. **A meeting's identity was the process holding the device.** Teams exposes no
+   bare audio process object — only `.modulehost`, `.helper` and
+   `.notificationcenter` (AD-5) — and swaps between them across a hardware
+   change, so a meeting's identity changed while the meeting did not. AD-5 had
+   already made the watched prefix the unit of *matching*; it is now the unit of
+   identity.
+3. **Nothing observed `AVAudioEngineConfigurationChange`** — zero occurrences in
+   the tree — in a class whose System Stream counterpart has had a rebuild path
+   for its own device change since FR-8. The engine stops itself when the input
+   hardware changes, so the microphone silently ended.
+
+**Measured, `--check-device-switch`, MacBook Pro Microphone → USB PnP Audio
+Device, mic frames the device delivered:**
+
+| capture | before | after |
+|---|---|---|
+| 20 s ×3 | 10.0 s, 10.2 s, 20.0 s | 19.6 s, 19.6 s, 19.5 s |
+| 16 s ×5 | 8.0 s ×5 | 15.6 s ×5 |
+
+Seven of eight captures lost the microphone at the instant of the switch, to the
+sample. Eight of eight now survive. **One before-run survived, unexplained** —
+recorded rather than smoothed, because it is also why this went unnoticed and why
+some meetings will be intact.
+
+**What this cost, stated rather than absorbed.**
+
+- **A meeting that ends now takes up to 12 s longer to stop**, so up to twelve
+  seconds of room noise is recorded after it. Inside FR-14's budget, and cheap
+  next to losing half a call.
+- **The rate verdict becomes unavailable, not wrong, on a Session where the
+  device changed rate.** Two rates over one elapsed time describe neither, and
+  AD-44 reporting it would raise "recorded at the wrong rate" on a correct
+  recording. AD-45 already refuses to build on an unknown rate. It is a real loss
+  of cover for those Sessions — see Q28.
+- **A change of channel count is refused, not absorbed.** The ring's interleaving
+  and the writer's arithmetic are built on one channel count.
+
+**What AD-57's ledger could not see, and this is the uncomfortable part.** While
+half the meeting was missing the ledger read dropped 0, unaccounted 0, never
+converted 0, identity closed exactly — and it was *right*. It answers what became
+of every sample the device delivered and is silent by construction on whether the
+device kept delivering. Increment 11 built an instrument that would not have
+found this, and the thing that finds it is `deviceFrames` against elapsed time.
+
+### 4.17 Nothing on disk stays unreadable (increment 12)
+
+Raised by the author asking why a Meeting the app had transcribed was reported
+as *"Invalid audio data provided"*. The answer was that it had not transcribed
+it, and could not: five Meetings sat at `captured` and three of them held 26
+minutes, 5 minutes and 3 minutes of real conversation.
+
+#### FR-107: An interrupted recording stays readable
+Audio captured before a Session was interrupted is readable afterwards, by
+Minutes and by anything else.
+
+**Consequences (testable):**
+- A recording whose process died is readable without any manual step.
+- A Meeting that failed because its audio was unreadable is retried once the
+  audio is readable, rather than excluded permanently.
+- A recording *in progress* can be opened and read by another reader.
+- No sample is altered by any of this.
+
+**Cause.** A WAV records the length of its audio in two size fields and both are
+written when the file is **closed**. A Session that ended because the process
+died — a crash, a force quit, an installer replacing the app mid-Session —
+therefore left every sample on disk under a header saying the audio was **zero
+bytes long**, and every reader believes the header. `AVAudioFile` does not report
+such a file as empty; it refuses to open it, which is where the message the
+author saw comes from.
+
+The second half was worse: `Pipeline.resumeInterrupted` skips anything with a
+failure recorded, so a Meeting that failed *because* its header said the audio
+was empty was excluded for good while the audio sat there intact. The staged,
+resumable design had a hole exactly where it was needed.
+
+**The repair changes eight bytes** — the `data` chunk size and the `RIFF` size,
+computed from the bytes present, rounded down to a whole frame. It only ever
+raises an under-claim: a header claiming *more* than the file holds is a
+truncated file, a different fault, and raising it would feed whatever follows the
+audio to the transcriber as speech. The writer also stamps the length every five
+seconds while recording, so a killed process leaves a file readable by anything
+rather than only by a Minutes that knows to repair it.
+
+**Known bound, not fixed.** Nothing reaches the file until the rate settles
+(AD-44), up to six seconds. A crash inside that window still loses the opening,
+header or no header.
+
+#### FR-108: A Stream that recorded nothing is absent, not a failure
+A Session where one Stream captured no audio still produces a Note from the
+other one.
+
+**Consequences (testable):**
+- A Session with an empty Mic Stream and a System Stream holding speech produces
+  a Note containing the far end.
+- A Session where both Streams are empty fails, and says so.
+- The threshold agrees with the transcriber's own 300 ms floor, so the two cannot
+  disagree about the same file.
+
+**Cause.** FR-7 says a Session whose system tap failed still produces a Note from
+the microphone alone. **The mirror case had no rule at all.** Two Meetings had a
+microphone that recorded nothing — 4,096 bytes, header only — beside a System
+Stream holding 57 s and 8 s of real far-end speech, at peaks near full scale.
+`transcribe` throws on an empty file, the stage threw with it, and the far end of
+two calls was discarded while sitting on disk.
+
+**Measured on the real library, before and after both requirements:**
+
+| | before | after |
+|---|---|---|
+| Meetings at `written` | 35 | **37** |
+| stuck at `captured` | 2 | **0** |
+| recorded failures | 5 | **0** |
+
+Recovered: 26m35s → 325 Utterances, 5m38s → 74, 3m17s → 39, and 65 s of far end
+from the two empty-microphone Sessions → 4 and 7. Everything on disk that holds
+audio now holds a transcript.
+
+**What this did not fix, measured and left alone.** `--check-echo` over the whole
+library reports four Sessions where the microphone picked up the call through the
+speakers, and on those the exclusion drops **0%, 0%, 0% and 1%** of Mic Stream
+words while **55 to 695 words per Session still repeat the far end**. FR-90's
+conservatism is deliberate and documented — either signal alone is unsafe — so
+this is a known remaining defect and not something to tune away. It is what
+FR-99's canceller exists for.
+
+### 4.18 The app says why, not what it guessed (increment 12)
+
+Reported with a screenshot: Apple Intelligence switched **on** in System Settings,
+Minutes still saying it was off, and no way to get from the app to that setting.
+
+#### FR-109: An unavailable capability reports its own reason
+Where Minutes cannot use something, it says why that thing is unavailable — not
+the most likely reason — and offers a route to the place that can change it, only
+where such a place exists.
+
+**Consequences (testable):**
+- Each distinct unavailability reason produces a distinct sentence.
+- Only the "switched off" reason may say Apple Intelligence is switched off.
+- A reason this build does not recognise is quoted, never replaced by one it does.
+- A settings button appears only where a setting could change the answer.
+- The state is re-read when the pane appears, and on demand.
+
+**Cause.** `FoundationModelsBackend.isAvailable()` returned a **`Bool`**. It
+matched on the system's reason, logged it, and discarded it. The Summaries pane,
+given only `false`, printed the one reason it had been written with: *"Apple
+Intelligence is switched off on this Mac."* macOS reports at least three distinct
+reasons — `deviceNotEligible`, `appleIntelligenceNotEnabled`, `modelNotReady` —
+and the user was in the third: switched on, models 0% downloaded. The app was
+right that it had no model to use and wrong about why, which sent them to a
+setting they had already changed.
+
+**This is the same defect as `RingBuffer.didOverflow`**, replaced in increment 11
+for the same reason and recorded there in the same words: a Bool cannot
+distinguish causes, so whoever reads it invents one. Finding it twice in two
+increments makes it a pattern rather than an incident — see AD-61.
+
+**Measured.** A standalone probe against `SystemLanguageModel.default.availability`
+on the author's Mac read `available` a few hours after the screenshot, confirming
+the state had been `modelNotReady` and had resolved itself. The three reason cases
+were confirmed to compile against the installed SDK rather than assumed from
+documentation.
+
+**What it deliberately does not do.** System Settings on that Mac also said *"The
+organization managing this Mac is restricting access to certain Apple
+Intelligence features."* There is no API for that, so Minutes does not guess at
+it — the `unrecognised` case names a managed Mac as a possibility and sends the
+user to the pane that reports it authoritatively. Guessing at MDM state would be
+the same mistake one layer along.
+
 ## 5. Non-Goals (Explicit)
 
 These exist to stop the "let me also add the nearby thing" failure mode at epic, story and code level.
@@ -1260,6 +1840,34 @@ A Tier-0 build that works beats a Tier-2 build that half-works, and the tiers ar
 2. `FR-62` (record a sample, store a fingerprint) — standalone, opt-in, and useful the moment it exists because the fingerprint is what everything else reads.
 3. `FR-63` (identify the user among in-room voices) — the point of the tier. Depends on 1 and 2 and on nothing else.
 4. `FR-64` and `FR-65`'s surface (visible, deletable, disclosed) — the honesty half. Small, and the increment is not shippable without it: a stored fingerprint the user cannot see or delete would breach §9.1.
+
+**Tier 7 — Increment 11, the two Streams actually line up.** The previous
+increment measured the misalignment and corrected for it at the merge, which was
+right and is a symptom fix. This tier is ordered so that **no fix is attempted
+before the mechanism that causes it has been named by a measurement** — because
+three of the mechanisms that fit the evidence are visible from reading the code,
+and reading the code is what increment 10 learned not to trust on its own.
+
+1. `FR-102` (every sample is accounted for) — the instrument, and nothing else in
+   this tier may be built first. Three mechanisms fit the measured 0.33% loss and
+   the accounting identity is what distinguishes them: a ring that dropped
+   samples, a resampler that ate them, or a producer that was never called with
+   them. **Build the instrument, take the reading, then choose.**
+2. `FR-103` (a consumer that fell behind says so) — the second half of the same
+   instrument. The identity says *where* the samples went; this says *why*, and
+   without it a non-zero drop count is a fact with no cause attached.
+3. `FR-104` (what starting each Stream costs is stamped) — independent of 1 and 2,
+   and the same discipline applied to the other fault. +1,006 ms on a real
+   meeting against +54 ms on a five-second probe is not one number to act on; it
+   is a decomposition nobody has taken.
+4. **The fix the measurement names**, for whichever of the two faults it names it
+   for. `FR-105` (both Streams start together) is the one already known to be
+   needed for the start offset; the drift's fix is deliberately not specified
+   here, because specifying it before step 1 has reported is the mistake this
+   ordering exists to prevent.
+5. `FR-6`'s tolerance settled — met on a new recording, or restated as what
+   capture can deliver with the number beside it. Last, because it is the one
+   line that cannot honestly be written until every measurement above is in.
 
 ## 7. Success Metrics
 
@@ -1452,6 +2060,132 @@ Raised by increment 7:
 24. **What should happen to an Unclaimed Note when the user says "dismiss"?** Currently: forgotten from the listing, file untouched, and it returns if the app forgets that it forgot. The alternative — a marker in the file — means writing to a file whose Meeting no longer exists, which is worse. Informs FR-82.
 
 21. **Does §9.1's "the audio is destroyed" survive the implementation of re-recording?** Re-recording replaces a fingerprint, and the obvious lazy implementation keeps the previous sample around "just in case". It must not. This is a code-review item as much as an open question, and it is listed because the failure would be invisible.
+
+
+**Q19 (increment 9): does the English-only model deserve to be the default?**
+Pooled over three AMI sessions it is 2.3 points better on close mics and tied
+far-field, but the per-session swing is ±8 points — larger than the effect.
+*Revisit when* the harness has nine or more sessions spanning native and
+non-native English. Owner: whoever next touches `ModelCatalog`.
+
+**Q20 (increment 9): what distinguishes a far-field recording from a close one?**
+Normalisation is worth ~2 points far-field and costs ~2 close, so the gate is
+the whole question, and integrated loudness does not answer it (the corpus and
+the user's library both overlap heavily). *Revisit when* a reverberation or
+direct-to-reverberant measure has been trialled. Until then FR-93's harness
+measures the two conditions separately rather than pretending one setting fits.
+
+**Q21 (increment 9): why does session variance dominate model choice?**
+The hardest session for every engine measured (27–35% WER against 15–19% on the
+easiest) is AMI's non-native-speaker set. If accent is the driver it bears
+directly on this product, whose meetings are not held in first-language English.
+*Revisit when* a non-native-heavy session set can be scored separately.
+
+**Q22 (increment 10): can a repaired recording be checked for Echo at all?**
+Eight of twenty-one recordings on the author's machine hold a System Stream
+whose header reads 8000 or 5333 Hz against the microphone's 16000, because
+FR-88's repair rewrote the header rather than resampling the samples. The
+detector refuses to compare mismatched indices, which is correct — but it means
+a third of the library cannot be checked for Echo, and an affected recording
+among them would read as a failure to measure rather than as an affected
+recording. *Revisit when* somebody decides whether the detector should resample
+to a common rate for comparison only. Owner: whoever next touches
+`EchoDetector.read`.
+
+**Q23 (increment 10): does a Bluetooth output device mean headphones?**
+FR-98 reads the output device's transport type, which separates built-in
+speakers from the headphone jack cleanly and does not separate AirPods from a
+Bluetooth loudspeaker at all — Core Audio reports both as `bluetooth`. That is
+the case that matters most here: every clean recording in the library was on
+AirPods. So the device fact answers the question it was introduced for on the
+built-in speakers and returns *unknown* on the hardware the user actually
+wears, and FR-89's correlation detector stays in charge there. *Revisit when* a
+signal that separates them is found, or when the unknown case is measured to
+matter.
+
+**Q24 (increment 10): does the far end embed the same through a loudspeaker as
+it does electrically?** FR-100 rules a Mic Stream cluster out by matching it
+against a System Stream centroid at AD-31's 0.35, and that threshold was
+calibrated on voices captured the *same* way. A voice that has been through a
+loudspeaker, a room and a microphone may land far from its own electrical copy,
+in which case nothing matches and the count does not fall. *This is measurable
+now* and is measured in increment 10 rather than assumed — the failure of the
+previous attempt was assuming the direction of the change.
+
+**Q25 (increment 11): what is the 0.33% loss conditional on, if not duration?**
+Across fourteen comparable dual-stream recordings the System Stream's shortfall
+is bimodal: six show under 0.03% and eight show 0.08% to 0.37%, and the two worst
+are 31.6 and 42.4 minutes while a 50.3-minute recording shows nothing. It is not
+duration and it is not a constant per-call cost. Load, callback size, and what
+else held the audio devices all fit. *Revisit when* FR-102 and FR-103 have
+reported on enough new recordings to correlate the drop count against something.
+One recording will not answer it: 0.00% and 0.37% both already exist in the
+library.
+
+**Q26 (increment 11): why does a five-second probe understate a real session
+twentyfold?** `--check-clock` reads +35 to +54 ms of start offset over six runs
+and a real meeting read +1,006 ms, through the same `DualStreamCapture.start`.
+The candidate nobody has measured is that a real meeting has another application
+already holding the microphone and the output device, so creating an aggregate
+device over a busy output forces a reconfiguration that a cold open never pays
+for. *Revisit when* FR-104's decomposition has been taken both ways — cold, and
+with a meeting application live.
+
+**Q27 (increment 11): why does giving `AVAudioConverter` more output room help
+under load?** The loss is located exactly — input consumed, output never
+produced, nothing dropped and nothing failed to write — and two changes remove
+it: asking the converter whether it has more (`.haveData` means the buffer came
+back full), and offering 4,096 output frames of room instead of 64. The second
+is measured to work and **is not explained**. The arithmetic says it should not
+be needed: capacity is `inputFrames × ratio + slack`, so it always covers the
+chunk in hand, and a deterministic fixture at 8 kHz→16 kHz with a 64-frame slack
+writes every frame. The loss only appears under load, and only on shapes with
+480- and 512-frame callbacks. *Revisit when* something can see
+`AVAudioConverter`'s own accounting, which its interface does not expose. An
+earlier draft of the spike note asserted a mechanism here and the arithmetic
+refuted it; the honest state is this question.
+
+**Q28 (increment 12): what covers the rate on a Session where the device changed
+rate?** FR-106 makes AD-44's verdict *unavailable* rather than wrong once the
+input rate changes mid-file, because two rates over one elapsed time describe
+neither. That is honest and it is a real loss: AD-44 exists because a wrong rate
+produces a recording that looks fine and reads fine, and it is exactly a Session
+with a hardware change that now has no cover. The shape of an answer is a rate
+check *per segment* — the writer already knows where each retune happened — but
+the segmentation has to be stored to be checkable afterwards, and nothing stores
+it yet. *Revisit when* a Session with a real rate change exists to measure
+against; the deterministic fixture cannot tell a correct segmentation from a
+lucky one.
+
+**Q29 (increment 12): why did one capture in eight survive the device switch
+without the rebuild?** Seven of eight lost the microphone at the instant of the
+switch, to the sample. One ran the full twenty seconds. The likely reason is that
+`AVAudioEngine` does not always follow the default device while it holds the old
+one open, which would mean the fault is timing-dependent rather than certain —
+consistent with it surviving eleven increments unnoticed. Worth knowing because
+it bounds how much of the author's existing library is affected, and the answer
+is in the Meeting records already on disk: a Session with `outputDeviceChanged`
+true and a Mic Stream shorter than its System Stream is the signature. *Revisit
+when* counting that signature across the library is worth the pass.
+
+**Answered 2026-09-08.** The pass was run: **two** Sessions in a 37-Meeting
+library have a Stream that stopped well before the Session did, and **both**
+carry `outputDeviceChanged: true` — a two-for-two correlation. One is a 173 s
+Session whose microphone delivered **6 s** and whose System Stream delivered
+62 s; the other a 58 s Session whose microphone delivered nothing. Both were
+recorded on the day the fault was found, before the fix was installed. The rest
+of the library is unaffected, so the timing-dependence in Q29 is real and the
+exposure was small. The 173 s Session is also the sharpest possible confirmation
+of AD-60's rule: its Mic Stream ledger closes **exactly** — device 292,800
+frames, consumed 292,800, written 97,600, dropped 0, unaccounted 0 — while 167
+of its 173 seconds are missing. A closed ledger says nothing about whether the
+device kept delivering.
+
+Also found by that pass, and not fixed: `--check-rates` divides frames by the
+*Session's* duration, so a Stream that stopped early reads as a wrong rate. It
+reported that Session as a rate failure of x28.37 when its declared rate is
+correct and its problem is duration. It is the same conflation AD-60 forbids,
+in the diagnostic rather than in the ledger.
 
 ## 14. Assumptions Index
 

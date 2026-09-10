@@ -1,4 +1,5 @@
 import XCTest
+import Foundation
 import AVFoundation
 @testable import Minutes
 
@@ -15,7 +16,14 @@ final class WavRateRepairTests: XCTestCase {
             .appendingPathComponent("rate-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     }
-    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: dir) }
+    /// `dir` is nil when `setUpWithError` skipped, and `URL!` force-unwraps on
+    /// use — so this crashed the whole XCTest process on every plain `swift test`,
+    /// taking every suite alphabetically after this one with it. 173 of 306 tests
+    /// ran. The gate was doing its job and the teardown was not.
+    override func tearDownWithError() throws {
+        guard let dir else { return }
+        try? FileManager.default.removeItem(at: dir)
+    }
 
     /// Writes a 16-bit mono WAV declaring `rate` and holding `frames` samples,
     /// through `AVAudioFile` — the same writer the app uses, so the header layout
@@ -181,24 +189,99 @@ final class StreamFileWriterRateTests: XCTestCase {
                                 channels: 1, interleaved: false)!
         let ring = RingBuffer(capacity: Int(declaredRate) * 4)
         let w = StreamFileWriter(url: dir.appendingPathComponent("s.wav"), format: fmt, ring: ring)
+
+        // AD-51. These used to be paced by `usleep` and measured against
+        // `Date()`, which passed in isolation and failed inside the full suite —
+        // the same wall-clock sensitivity that put `RateCorrectionTests` behind
+        // an environment variable, in the two tests that were hidden behind the
+        // crash the gate caused. The device's own timestamps make it arithmetic:
+        // the sleeps below now only pace the *ring*, and the measurement does
+        // not depend on how well they held.
+        let clock = AudioClockTap()
+        w.clock = clock
         try w.start()
 
-        // Deliver frames at the *actual* rate, spread over real wall time, which
-        // is what makes the observed rate observable at all.
-        let chunks = 8
+        let chunks = 40
         let framesPerChunk = Int(actualRate * seconds) / chunks
         var block = [Float](repeating: 0, count: framesPerChunk)
         for i in 0..<framesPerChunk { block[i] = sinf(Float(i) * 0.05) * 0.4 }
-        for _ in 0..<chunks {
+        for c in 0..<chunks {
+            clock.record(sampleTime: Double(c * framesPerChunk),
+                         hostTime: AudioClockTap.hostTime(
+                            fromSeconds: 5_000 + Double(c) * seconds / Double(chunks)),
+                         frames: framesPerChunk)
             block.withUnsafeBufferPointer { ring.write($0.baseAddress!, count: framesPerChunk) }
-            usleep(useconds_t(seconds / Double(chunks) * 1_000_000))
+            var spun = 0
+            while ring.count > 0, spun < 2000 { usleep(200); spun += 1 }
         }
         // Let the drain thread consume the tail before reading the counters.
         let deadline = Date().addingTimeInterval(2)
         while ring.count > 0, Date() < deadline { usleep(20_000) }
+        usleep(50_000)
         let f = w.rateFidelity
         w.stop()
         return f
+    }
+
+    /// **The device is the authority on the rate and not on whether the recording
+    /// gets written.** A device delivering very large buffers takes proportionally
+    /// longer to narrow its tolerance; if it never narrows it, AD-44's "nothing
+    /// reaches the file until the rate has settled" turns into "nothing reaches
+    /// the file", and two hours of held audio is about four gigabytes that a
+    /// crash loses entirely — which is what FR-9's incremental commit exists to
+    /// prevent.
+    func testAnUndecidableDeviceClockDoesNotHoldTheRecordingForEver() throws {
+        let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000,
+                                channels: 1, interleaved: false)!
+        let ring = RingBuffer(capacity: 16_000 * 20)
+        let url = dir.appendingPathComponent("patience.wav")
+        let w = StreamFileWriter(url: url, format: fmt, ring: ring)
+        let clock = AudioClockTap()
+        w.clock = clock
+        try w.start()
+
+        // One enormous callback per second: two ticks make the clock *usable*
+        // and its tolerance stays around 100%, so it can never decide.
+        var block = [Float](repeating: 0, count: 16_000)
+        for i in 0..<block.count { block[i] = sinf(Float(i) * 0.05) * 0.4 }
+        for c in 0..<9 {
+            clock.record(sampleTime: Double(c * 16_000),
+                         hostTime: AudioClockTap.hostTime(fromSeconds: 9_000 + Double(c)),
+                         frames: 16_000)
+            block.withUnsafeBufferPointer { ring.write($0.baseAddress!, count: block.count) }
+            var spun = 0
+            while ring.count > 0, spun < 4000 { usleep(200); spun += 1 }
+            // The wall clock has to actually pass for the patience bound to fire.
+            usleep(900_000)
+        }
+        XCTAssertFalse(clock.snapshot.isDecisive, "the fixture must be undecidable")
+        w.stop()
+
+        let file = try AVAudioFile(forReading: url)
+        let seconds = Double(file.length) / file.fileFormat.sampleRate
+        XCTAssertGreaterThan(seconds, 5,
+                             "the held opening reached the file, \(seconds)s of it")
+    }
+
+    /// With no timestamps from the device, the wall clock is still there and
+    /// still the thing that caught the original defect. Absent is a fallback,
+    /// not a downgrade (AD-51).
+    func testAWriterWithNoDeviceTimestampsFallsBackToTheWallClock() throws {
+        let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000,
+                                channels: 1, interleaved: false)!
+        let ring = RingBuffer(capacity: 16_000 * 4)
+        let w = StreamFileWriter(url: dir.appendingPathComponent("nodev.wav"),
+                                 format: fmt, ring: ring)
+        try w.start()
+        var block = [Float](repeating: 0.2, count: 4_000)
+        for i in 0..<block.count { block[i] = sinf(Float(i) * 0.05) * 0.4 }
+        block.withUnsafeBufferPointer { ring.write($0.baseAddress!, count: block.count) }
+        let deadline = Date().addingTimeInterval(2)
+        while ring.count > 0, Date() < deadline { usleep(20_000) }
+        let f = w.rateFidelity
+        w.stop()
+        XCTAssertEqual(f.source, .wallClock)
+        XCTAssertEqual(f.appliedTolerance, RateFidelity.tolerance)
     }
 
     /// **The defect, reproduced through the real writer.** A stream told it is
@@ -240,16 +323,26 @@ final class StreamFileWriterRateTests: XCTestCase {
         let w = StreamFileWriter(url: dir.appendingPathComponent("once.wav"), format: fmt, ring: ring)
         let counter = Counter()
         w.onRateDisagreement = { _ in counter.bump() }
+        let clock = AudioClockTap()
+        w.clock = clock
         try w.start()
 
+        // 8000 frames per callback delivered every 0.5 s is 16 kHz against a
+        // declared 48 kHz — the ratio-3 case, stated in timestamps rather than
+        // paced by sleeps.
         var block = [Float](repeating: 0.3, count: 8_000)
         for i in 0..<block.count { block[i] = sinf(Float(i) * 0.05) * 0.4 }
-        for _ in 0..<10 {
+        for c in 0..<40 {
+            clock.record(sampleTime: Double(c * 8_000),
+                         hostTime: AudioClockTap.hostTime(fromSeconds: 7_000 + Double(c) * 0.5),
+                         frames: 8_000)
             block.withUnsafeBufferPointer { ring.write($0.baseAddress!, count: block.count) }
-            usleep(400_000)
+            var spun = 0
+            while ring.count > 0, spun < 2000 { usleep(200); spun += 1 }
         }
         let deadline = Date().addingTimeInterval(2)
         while ring.count > 0, Date() < deadline { usleep(20_000) }
+        usleep(50_000)
         w.stop()
 
         XCTAssertEqual(counter.value, 1, "reported \(counter.value) times")
@@ -269,6 +362,32 @@ final class StreamFileWriterRateTests: XCTestCase {
 /// Detecting a wrong rate leaves the recording ruined and merely honest about it.
 /// These assert the thing that actually matters: with the device delivering at a
 /// rate other than the one it declared, the **file on disk comes out right**.
+///
+/// **These were opt-in behind `MINUTES_RATE_TIMING=1`, and increment 10 took the
+/// gate off.** The reason they were gated is worth keeping, because it is the
+/// argument for Story 16.9 in miniature. The writer measured its rate against
+/// `Date()`, so the measurement was only ever as good as the machine's pacing:
+/// eight runs out of eight passed in isolation, about one in three failed inside
+/// the full suite, and a later isolated run failed too. Four attempts at a
+/// deterministic harness are recorded in `capture` below; the best passed
+/// reliably and took three minutes, and the rest failed *deterministically* for
+/// arithmetic reasons that only hold when one drain equals one chunk —
+/// `drainOnce` reads up to 8192 samples per wake, so the writer's baseline can
+/// land mid-chunk and frames-consumed is not predictable from the chunk index.
+///
+/// None of that was a flaw in what they assert. It was the wall clock, and
+/// AD-51 replaced it: the device supplies its own sample-time and host-time
+/// counters, so `capture` now hands the writer an exact pair per callback and
+/// the measurement has no pacing in it at all. The `now` seam is still here for
+/// the wall-clock fallback, and is no longer load-bearing.
+///
+/// The gate had one honest property worth restating: it did not loosen an
+/// assertion until it could not fail, and it did not leave a suite that cries
+/// wolf one run in three. It cost a hidden crash instead — `tearDownWithError`
+/// force-unwrapped the directory a skipped `setUp` never created, which took the
+/// whole XCTest process down on every plain `swift test` and stopped 133 of the
+/// 306 tests from running at all. A gate is a liability that has to be
+/// maintained; removing the need for it is the fix.
 final class RateCorrectionTests: XCTestCase {
 
     private var dir: URL!
@@ -277,7 +396,10 @@ final class RateCorrectionTests: XCTestCase {
             .appendingPathComponent("corr-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     }
-    override func tearDownWithError() throws { try? FileManager.default.removeItem(at: dir) }
+    override func tearDownWithError() throws {
+        guard let dir else { return }
+        try? FileManager.default.removeItem(at: dir)
+    }
 
     /// Feeds `seconds` of audio at `actualRate` into a writer told `declaredRate`,
     /// and returns the duration of the file that resulted plus what the writer
@@ -290,23 +412,50 @@ final class RateCorrectionTests: XCTestCase {
         let ring = RingBuffer(capacity: Int(max(declaredRate, actualRate)) * 12)
         let url = dir.appendingPathComponent(name)
         let w = StreamFileWriter(url: url, format: fmt, ring: ring)
+
+        // The wall-clock seam is still installed, because the writer still uses
+        // it wherever a device supplies no timestamps. It is no longer what this
+        // test measures.
+        let origin = Date()
+        let elapsed = ElapsedClock()
+        w.now = { origin.addingTimeInterval(elapsed.value) }
+
+        // AD-51: the device's own account, driven by hand. Every tick is an
+        // exact pair — the sample counter at that buffer, and the host clock at
+        // the same instant — so the ratio the writer computes is arithmetic on
+        // two numbers this test chose. There is no pacing in it and no `usleep`
+        // it can be wrong about, which is what took the gate off.
+        let clock = AudioClockTap()
+        w.clock = clock
+
         try w.start()
 
         // A realistic cadence. A real tap delivers roughly every 170 ms at 48 kHz,
-        // and the rate measurement is only as clean as the delivery: a producer
-        // that dumps a second of audio and then sleeps makes the observation
-        // jitter by ~10%, which is enough to push it outside the 5% window the
-        // correction needs to identify a standard rate. That is an artefact of a
-        // synthetic producer, not of the mechanism — so the test produces at the
-        // cadence the real one does.
+        // and it still matters here: `largestTick` is one callback's frames and
+        // it sets how quickly the measurement's own tolerance narrows past
+        // `AudioClock.decisiveTolerance`. A producer that dumps a second at a
+        // time would take far longer to become decisive, which is a real
+        // property of the mechanism rather than an artefact.
         let chunks = max(12, Int(seconds / 0.15))
         let framesPerChunk = Int(actualRate * seconds) / chunks
         var block = [Float](repeating: 0, count: framesPerChunk)
         for i in 0..<framesPerChunk { block[i] = sinf(Float(i) * 0.05) * 0.4 }
-        for _ in 0..<chunks {
+
+        let tick = seconds / Double(chunks)
+        for c in 0..<chunks {
+            // The device reports where its own counter stands *before* handing
+            // the samples over, which is the order a real callback arrives in.
+            clock.record(sampleTime: Double(c * framesPerChunk),
+                         hostTime: AudioClockTap.hostTime(
+                            fromSeconds: 1_000 + Double(c) * tick),
+                         frames: framesPerChunk)
             block.withUnsafeBufferPointer { ring.write($0.baseAddress!, count: framesPerChunk) }
-            usleep(useconds_t(seconds / Double(chunks) * 1_000_000))
+            var spun = 0
+            while ring.count > 0, spun < 2000 { usleep(200); spun += 1 }
+            elapsed.advance(by: tick)
         }
+        // The writer's own settle happens on a drain; give it one more.
+        usleep(50_000)
         let f = w.rateFidelity
         w.stop()
 
@@ -352,8 +501,12 @@ final class RateCorrectionTests: XCTestCase {
     /// the declared rate, so the file is wrong, and AD-45 refuses to build on it.
     func testANonStandardObservedRateIsRefusedRatherThanGuessed() throws {
         let seconds: TimeInterval = 5
-        // 48000 / 3.7 = 12973 Hz — not near any standard rate.
-        let r = try capture(declaredRate: 48_000, actualRate: 12_973,
+        // 48000 / 3.5 = 13714 Hz. Deliberately *mid-way* between whole-number
+        // factors: 3.5 is 12.5% from both 3 and 4, and 13714 Hz is more than
+        // 14% from every standard rate. The first version used 3.7, which sits
+        // inside a hair of the 5% window around 4 — so a 3% measurement wobble
+        // flipped it to "correctable" and the test blamed the code.
+        let r = try capture(declaredRate: 48_000, actualRate: 13_714,
                             seconds: seconds, name: "weird.wav")
         XCTAssertNil(r.fidelity.correctedTo, "guessing here would hide a different defect")
         XCTAssertFalse(r.fidelity.isTrustworthy)
@@ -368,5 +521,25 @@ final class RateCorrectionTests: XCTestCase {
         let r = try capture(declaredRate: 16_000, actualRate: 16_000,
                             seconds: seconds, name: "short.wav")
         XCTAssertGreaterThan(r.fileSeconds, 0.5, "the held opening must reach the file")
+    }
+}
+
+
+/// A clock the test advances by hand.
+///
+/// Locked because the writer reads it from its drain thread while the test
+/// advances it, and a data race here would be a flaky test about flaky tests.
+private final class ElapsedClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seconds: Double = 0
+
+    var value: Double {
+        lock.lock(); defer { lock.unlock() }
+        return seconds
+    }
+
+    func advance(by delta: Double) {
+        lock.lock(); defer { lock.unlock() }
+        seconds += delta
     }
 }

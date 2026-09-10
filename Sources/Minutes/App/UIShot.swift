@@ -138,6 +138,20 @@ enum UIShot {
                 MeetingDetail(meeting: Fixtures.unreliableRate)
             }
         }
+        // The echo state (increment 9), at every width for the same reason: the
+        // sentence has to carry a proportion, what Minutes did about it, and the
+        // remedy, and a truncated remedy is the half the user needs.
+        for (label, w) in widths {
+            shoot("detail-merged-\(label)", w, nil) {
+                MeetingDetail(meeting: Fixtures.merged)
+            }
+            shoot("detail-gaps-\(label)", w, nil) {
+                MeetingDetail(meeting: Fixtures.gappy)
+            }
+            shoot("detail-echo-\(label)", w, nil) {
+                MeetingDetail(meeting: Fixtures.echoing)
+            }
+        }
         shoot("row-unreliable-rate", 320, nil) {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach([Fixtures.unreliableRate, Fixtures.simple], id: \.id) { m in
@@ -232,7 +246,8 @@ enum UIShot {
 
         static var all: [Meeting] {
             [crowded, longNames, simple, failed, interrupted,
-             userRenamed, noteLost, noteAmbiguous, unreliableRate]
+             userRenamed, noteLost, noteAmbiguous, unreliableRate, echoing,
+             merged, gappy]
         }
 
         /// A recording whose far end came out at three times speed (increment 8).
@@ -250,6 +265,72 @@ enum UIShot {
                                      framesObserved: 16_000 * 1565, elapsedSeconds: 1565)
             m.systemRate = RateFidelity(declaredRate: 16_000,
                                         framesObserved: 5_333 * 1565, elapsedSeconds: 1565)
+            return m
+        }()
+
+        /// A call taken on loudspeakers, so the microphone heard the far end too
+        /// (increment 9).
+        ///
+        /// Worth a fixture because this state looked like nothing at all: the
+        /// affected notes read as merely verbose, and the only visible symptom
+        /// was six people in a room that held two.
+        static var echoing: Meeting = {
+            var m = simpleShaped(id: "20260903-141500-echo", title: "3 September, 14:15")
+            m.systemSource = "system audio — Microsoft Teams"
+            m.micDevice = "the built-in microphone"
+            m.noteFilename = "2026-09-03 1415 3-September-1415.md"
+            m.noteFilenameWritten = m.noteFilename
+            let frames = (0..<100).map { i in
+                EchoAnalysis.Frame(micActive: true, systemActive: true,
+                                   correlation: i < 45 ? 0.9 : 0.05)
+            }
+            m.echo = EchoAnalysis.make(frames: frames, delaySeconds: 0.039,
+                                       peakCorrelation: 0.94)
+            return m
+        }()
+
+        /// Two voices the user merged into one person, plus one they did not
+        /// (increment 10, from a user report).
+        ///
+        /// A fixture because the defect was a *layout* of a kind no test could
+        /// see: the card listed two rows with the same name, directly under a
+        /// sentence saying that renaming two speakers to the same name merges
+        /// them. The row now carries a third line explaining the merge, which is
+        /// the case most likely to overflow a narrow column.
+        static var merged: Meeting = {
+            var m = simpleShaped(id: "20260904-140000-mrge", title: "4 September, 14:00")
+            m.micDevice = "MacBook Pro Microphone"
+            m.systemSource = "system audio — Microsoft Teams"
+            m.noteFilename = "2026-09-04 1400 4-September-1400.md"
+            m.noteFilenameWritten = m.noteFilename
+            m.multipleInRoom = true
+            m.utterances = [
+                Utterance(start: 0, end: 4, text: "So where did we land on the pricing tiers?",
+                          speaker: .local, origin: .mic),
+                Utterance(start: 4, end: 9, text: "Two tiers, and the second one is annual only.",
+                          speaker: .inRoom(1), origin: .mic),
+                Utterance(start: 9, end: 11, text: "That was the bit I could not hear.",
+                          speaker: .inRoomUnidentified, origin: .mic),
+            ]
+            m.speakerNames = ["local": "Me", "room-1": "Olivier",
+                              "room-unidentified": "Me"]
+            return m
+        }()
+
+        /// A recording with stretches the engine could not read (increment 10).
+        ///
+        /// The notice sits between the mic-only one and the echo one, so a
+        /// fixture with a gap *and* an echo is the one that proves the order
+        /// holds at every width rather than only in the document that fixes it.
+        static var gappy: Meeting = {
+            var m = echoing
+            m.id = "20260904-141000-gaps"
+            m.metadata?.title = "4 September, 14:10"
+            m.noteFilename = "2026-09-04 1410 4-September-1410.md"
+            m.noteFilenameWritten = m.noteFilename
+            m.gaps = [TranscriptGap(start: 61, end: 94, stream: .mic),
+                      TranscriptGap(start: 220, end: 247, stream: .system),
+                      TranscriptGap(start: 640, end: 668, stream: .mic)]
             return m
         }()
 

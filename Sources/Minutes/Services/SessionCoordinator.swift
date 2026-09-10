@@ -77,7 +77,11 @@ final class SessionCoordinator: ObservableObject {
         // watched app is holding the input right now fixes that without weakening
         // FR-14: the Session is genuinely tied to that meeting either way.
         let associated = app ?? DetectionService.appsUsingAudioInput().first
-        autoStopBundleID = associated?.bundleID
+        // The watched prefix, not the helper process that happened to hold the
+        // device when the Session started. Teams swaps between `.modulehost` and
+        // `.helper` across an audio-hardware change, and a Session pinned to the
+        // one that has gone away can never be matched again.
+        autoStopBundleID = associated?.watchedPrefix
         wasManualStart = (app == nil)
 
         // Provenance for the index at the top of the Note (FR-33). Captured at
@@ -122,6 +126,28 @@ final class SessionCoordinator: ObservableObject {
             // AD-45: a fact about a recording that happened, stored per stream.
             m.micRate = streams.micRate
             m.systemRate = streams.systemRate
+            // AD-51: holes the device counted and the app never received. A
+            // different fact from the rate, kept separately so it cannot be
+            // read as one.
+            m.micContinuity = streams.micContinuity
+            m.systemContinuity = streams.systemContinuity
+            // AD-57: what became of every sample the devices delivered. The term
+            // continuity cannot reach — it answers what the device handed over,
+            // and this answers what reached the file.
+            m.micLedger = streams.micLedger
+            m.systemLedger = streams.systemLedger
+            // AD-58: how close each Stream came to outrunning its writer, so a
+            // drop count has a cause attached and a near-miss is visible at all.
+            m.micPressure = streams.micPressure
+            m.systemPressure = streams.systemPressure
+            // AD-59: the offset below, decomposed into the part capture caused
+            // and the part the devices did.
+            m.startTiming = streams.startTiming
+            // AD-53: measured, not estimated, and absent when it could not be.
+            m.streamStartOffset = streams.streamStartOffset
+            // AD-54: a fact about the capture, read rather than inferred.
+            m.outputDevice = streams.outputDevice
+            m.outputDeviceChanged = streams.outputDeviceChanged
         }
 
         // The only evidence available about system-audio permission (FR-42),
@@ -149,6 +175,15 @@ final class SessionCoordinator: ObservableObject {
             }
         }
 
+        // FR-106. The loudest of the three, so it is reported last and wins: a
+        // microphone that stopped part-way through means part of the meeting is
+        // not in the recording at all, which is worse than a wrong rate and
+        // worse than a silent System Stream.
+        if let why = streams.micEndedEarly {
+            AppState.shared.lastError = .microphoneUnavailable(
+                "The recording continued but your microphone stopped part-way through — \(why).")
+        }
+
         AppState.shared.setSessionState(.transcribing(meetingID: id, title: nil))
         Log.session.info("session stopped \(id, privacy: .public) duration=\(streams.duration) system=\(streams.systemCaptured)")
 
@@ -168,8 +203,11 @@ final class SessionCoordinator: ObservableObject {
     /// FR-14. A Session the *app* started stops itself; a Session the *user*
     /// started asks first, because stopping something someone chose to start is
     /// their call. What must not happen — and did — is neither.
-    func autoStopIfTriggered(by bundleID: String) async {
-        guard isRecording, let trigger = autoStopBundleID, bundleID.hasPrefix(trigger) else { return }
+    /// `watchedPrefix` is the watched app's identity, not a process bundle ID —
+    /// both sides of this comparison are prefixes now, so it is an equality.
+    func autoStopIfTriggered(by watchedPrefix: String) async {
+        guard isRecording, let trigger = autoStopBundleID, watchedPrefix == trigger else { return }
+        let bundleID = watchedPrefix
         let name = AppState.shared.meeting(id: currentMeetingID ?? "")?.triggeringApp
             ?? DetectionService.watched.first { trigger.hasPrefix($0.bundleIDPrefix) }?.displayName
             ?? "The meeting"

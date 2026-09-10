@@ -33,12 +33,22 @@ struct SpeakerLabelID: Hashable, Codable, Sendable, CustomStringConvertible {
     static let inRoomUnidentified = SpeakerLabelID("room-unidentified")
     /// A participant on the other end of the call.
     static func remote(_ index: Int) -> SpeakerLabelID { SpeakerLabelID("remote-\(index)") }
+    /// The far end, arriving through the loudspeakers and back into the
+    /// microphone (FR-100).
+    ///
+    /// **Not an in-room voice, and not a Remote Speaker either.** It is the call,
+    /// counted once on the System Stream and reaching the microphone a second
+    /// time; giving it a label of its own is what stops it being counted as a
+    /// person who was in the room, which was the whole defect. It renders on the
+    /// call's side, never in the room, and it never becomes a Speaker Profile —
+    /// a phantom attendee that is *remembered* comes back next week.
+    static let farEndEcho = SpeakerLabelID("far-end-echo")
 
     /// Certainly the user.
     var isLocal: Bool { self == .local }
     /// In the room — the user, or someone sitting next to them.
     var isInRoom: Bool { self == .local || raw.hasPrefix("room-") }
-    var isRemote: Bool { raw.hasPrefix("remote-") }
+    var isRemote: Bool { raw.hasPrefix("remote-") || self == .farEndEcho }
 
     /// Where this voice was, which is the part that IS structural.
     enum Place { case you, room, remote }
@@ -58,8 +68,39 @@ struct Utterance: Codable, Sendable, Identifiable {
     var speaker: SpeakerLabelID
     /// Which Stream this came from — keeps the structural/inferred distinction in the data (AD-11).
     var origin: StreamKind
+    /// How sure the engine was, or **absent** where it does not say (FR-95, AD-52).
+    ///
+    /// Absent means unknown. It must never be read as low confidence, and no
+    /// surface may render it as a number to a reader: the two engines report
+    /// different quantities on different scales, and neither is calibrated.
+    var confidence: Double?
 
     var duration: TimeInterval { max(0, end - start) }
+
+    /// Hand-written per the spine's Decodable-evolution convention — `Utterance`
+    /// is persisted inside every `Meeting`, and `confidence` is the first field
+    /// added to it since it shipped.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        start = try c.decodeIfPresent(TimeInterval.self, forKey: .start) ?? 0
+        end = try c.decodeIfPresent(TimeInterval.self, forKey: .end) ?? 0
+        text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        speaker = try c.decodeIfPresent(SpeakerLabelID.self, forKey: .speaker) ?? .local
+        origin = try c.decodeIfPresent(StreamKind.self, forKey: .origin) ?? .mic
+        confidence = try c.decodeIfPresent(Double.self, forKey: .confidence)
+    }
+
+    init(id: UUID = UUID(), start: TimeInterval, end: TimeInterval, text: String,
+         speaker: SpeakerLabelID, origin: StreamKind, confidence: Double? = nil) {
+        self.id = id
+        self.start = start
+        self.end = end
+        self.text = text
+        self.speaker = speaker
+        self.origin = origin
+        self.confidence = confidence
+    }
 }
 
 // MARK: - Metadata
@@ -225,6 +266,136 @@ struct Meeting: Codable, Sendable, Identifiable {
     /// checked" rather than as "passed" — see `untrustworthyStreams`.
     var micRate: RateFidelity?
     var systemRate: RateFidelity?
+    /// Whether the app received everything each device produced (AD-51, FR-94).
+    ///
+    /// Absent on every record written before increment 10, and absent reads as
+    /// **never checked** — the same rule as the rate and the Echo verdict.
+    var micContinuity: StreamContinuity?
+    var systemContinuity: StreamContinuity?
+
+    /// What became of every sample each device delivered (AD-57, FR-102).
+    ///
+    /// The term `micContinuity` and `systemContinuity` cannot reach. Those two
+    /// answer "did this process receive everything the device counted", and on
+    /// the recording that forced this increment the answer was **yes on both
+    /// Streams** while the System Stream's file was 8.37 seconds short of 42
+    /// minutes. Nothing between the callback and the file reported to anyone.
+    ///
+    /// Absent on every record written before increment 11, and absent reads as
+    /// **never counted** rather than as nothing lost.
+    var micLedger: CaptureLedger?
+    var systemLedger: CaptureLedger?
+    /// How close each Stream came to outrunning its writer (AD-58, FR-103).
+    ///
+    /// Kept beside the ledger because a drop count with no cause attached is not
+    /// a diagnosis, and because a Stream that dropped nothing while peaking at
+    /// 96% of its ring is a fault waiting for a busier day.
+    var micPressure: DrainPressure?
+    var systemPressure: DrainPressure?
+    /// What each stage of capture start cost (AD-59, FR-104).
+    ///
+    /// `streamStartOffset` below is one number and was not actionable. This is
+    /// the same quantity decomposed into the part capture caused and the part
+    /// the devices did.
+    var startTiming: CaptureStartTiming?
+
+    /// Seconds to add to a System Stream Utterance's time to place it on the Mic
+    /// Stream's timeline (FR-97, AD-53).
+    ///
+    /// Measured at capture from the two devices' host clocks, so it exists for
+    /// every Session that captured both — not only for the ones an echo makes
+    /// alignable. **Absent means unknown**, and an unknown offset is never
+    /// applied: a Meeting recorded before this existed keeps the order it has
+    /// rather than being re-shuffled by a guess.
+    var streamStartOffset: TimeInterval?
+
+    // --- Echo (AD-47). One field, because the question is about the pair of
+    // streams and not about either one alone. ---
+    /// Whether the Mic Stream was carrying a delayed copy of the System Stream,
+    /// and which parts of it were (FR-89, FR-92).
+    ///
+    /// Absent on every record written before increment 9. Absent reads as
+    /// **never checked**, never as clean (AD-49) — the same rule the rate work
+    /// settled on, and for the same reason.
+    var echo: EchoAnalysis?
+
+    /// What the audio was playing through during the Session (FR-98, AD-54).
+    ///
+    /// Absent on every record written before increment 10, and absent means the
+    /// app never looked — never "headphones", and never "speakers".
+    var outputDevice: OutputDevice?
+    /// Whether the output device changed kind while recording.
+    var outputDeviceChanged: Bool = false
+
+    /// Microphone voices ruled out as the far end coming back (FR-100, AD-56).
+    ///
+    /// Recorded rather than only acted on, so the decision is re-derivable after a
+    /// threshold change — the same rule AD-49 sets for Echo exclusion, and for the
+    /// same reason: a number this thin needs to be re-checkable against the
+    /// recordings it was measured on.
+    var ruledOutVoices: [RuledOutVoice] = []
+
+    /// Stretches of audio that produced no usable text (FR-96, AD-52).
+    ///
+    /// Empty means either "none found" or "never looked", and the two are told
+    /// apart by whether the Meeting has reached `.transcribed` — a record from
+    /// before this existed has no gaps because nobody looked for them, and it
+    /// must not read as a recording with none.
+    var gaps: [TranscriptGap] = []
+
+    /// What the engine said about its own certainty, over the whole Transcript
+    /// (FR-95, AD-52).
+    ///
+    /// `nil` where **no** Utterance carries a confidence, which is the honest
+    /// reading for every Meeting recorded before increment 10 and for any engine
+    /// that reports none. Absent is unknown and is never rendered where a low
+    /// figure would go.
+    var transcriptConfidence: TranscriptConfidence? {
+        let scored = utterances.compactMap { u -> (Double, Int)? in
+            guard let c = u.confidence else { return nil }
+            return (c, max(1, u.text.split(separator: " ").count))
+        }
+        guard !scored.isEmpty else { return nil }
+        let words = scored.reduce(0) { $0 + $1.1 }
+        // Weighted by words rather than by Utterance: a two-word interjection and
+        // a ninety-second explanation are not equal evidence about a transcript,
+        // and averaging them as if they were is the same error AD-50 forbids in
+        // the accuracy harness.
+        let weighted = scored.reduce(0.0) { $0 + $1.0 * Double($1.1) }
+        let total = utterances.reduce(0) { $0 + max(1, $1.text.split(separator: " ").count) }
+        return TranscriptConfidence(mean: weighted / Double(words),
+                                    wordsScored: words, wordsTotal: total)
+    }
+
+    /// What this Meeting's **merged** Transcript still holds of the far end
+    /// twice (FR-23 as amended, FR-90).
+    ///
+    /// Asked of the record rather than of the stage that wrote it, so a
+    /// regression between the two is visible. `nil` when the Meeting has only
+    /// one Stream and the question does not arise.
+    var duplicateResidual: EchoDeduplication.Residual? {
+        let mic = utterances.filter { $0.origin == .mic }
+        let system = utterances.filter { $0.origin == .system }
+        guard !mic.isEmpty, !system.isEmpty else { return nil }
+        // Both sides are already on the Mic Stream's clock by the time they are
+        // on the record (FR-97), so no further shift is applied here.
+        return EchoDeduplication.residual(
+            mic: mic.map { .init(start: $0.start, end: $0.end, text: $0.text) },
+            system: system.map { .init(start: $0.start, end: $0.end, text: $0.text) })
+    }
+
+    /// Words per minute over the whole Transcript, as a model-independent
+    /// sanity signal (FR-23 as amended).
+    ///
+    /// **Measured:** the two severely affected recordings read **226 and 270**
+    /// against a library median of **148**, and natural speech is 110 to 160. A
+    /// transcript that holds the same speech twice reads impossibly fast, which
+    /// is a symptom available without any reference to the audio.
+    var wordsPerMinute: Double? {
+        guard duration > 0, !utterances.isEmpty else { return nil }
+        let words = utterances.reduce(0) { $0 + $1.text.split(separator: " ").count }
+        return Double(words) / (duration / 60)
+    }
 
     /// The streams whose transcript cannot be relied on (FR-85).
     ///
@@ -236,6 +407,68 @@ struct Meeting: Codable, Sendable, Identifiable {
         var out: [(String, String)] = []
         if let r = micRate, let why = r.explanation { out.append(("your microphone", why)) }
         if let r = systemRate, let why = r.explanation { out.append(("the far end of the call", why)) }
+        return out
+    }
+
+    /// Audio that was received and never written, per Stream (FR-102, AD-57).
+    ///
+    /// **Second among the degradation notices, above "only your microphone was
+    /// captured", and the ordering is argued in `EXPERIENCE.md`.** A gap has a
+    /// known position and is marked in place; a lost stretch leaves the file
+    /// **continuous across the join**, so the words either side become adjacent
+    /// when they never were and two half-sentences can read as one sentence
+    /// nobody said. Small in extent and misleading in kind, which is the axis
+    /// that table is ordered on.
+    ///
+    /// Absent on every record written before increment 11, and absent is not
+    /// zero: a Meeting with no ledger says nothing rather than saying nothing
+    /// was lost.
+    var lostAudioNotices: [String] {
+        var out: [String] = []
+        if let why = micLedger?.explanation(streamIsSystem: false) { out.append(why) }
+        if let why = systemLedger?.explanation(streamIsSystem: true) { out.append(why) }
+        return out
+    }
+
+    /// The quieter tier of recording notices, worst-first (FR-7, FR-96, FR-92).
+    ///
+    /// **The tier below the amber banners.** The user reported the meeting detail
+    /// as a wall of near-identical amber warnings — *"there are many errors in
+    /// each meeting recording... we do not have to warn about everything on that
+    /// page."* Every notice rendered as the same `.degraded` banner, so a
+    /// recording with several of them stacked five or more identical amber bars
+    /// and the two that mean the transcript is *wrong* were lost among the three
+    /// that do not. The split is one question: could the words below be **false**?
+    ///
+    /// `untrustworthyStreams` (FR-87) and `lostAudioNotices` (FR-102) stay
+    /// prominent, because their transcript may be untrue rather than merely
+    /// incomplete. These three are true-but-incomplete or already-corrected, so
+    /// they read as context at the foot beside the provenance the same reasoning
+    /// already demoted (FR-98) — not as warnings the reader must act on. Nothing
+    /// is dropped: FR-7 forbids a silent degradation, and each of these is still
+    /// shown, in order, one glance away.
+    ///
+    /// Order follows EXPERIENCE.md, which ranks all three below the two that stay
+    /// prominent anyway: only-your-microphone (FR-7 — the far end is missing but
+    /// what is there is true), then unreadable gaps (FR-96 — already marked in
+    /// place in the transcript, so this carries only the total), then de-duplicated
+    /// echo (FR-92 — something the app handled). Absent is not zero: a Meeting with
+    /// none of these produces an empty list and no section at all.
+    var recordingQualityNotes: [String] {
+        var out: [String] = []
+        // FR-7. Guarded on completion, because a Session still capturing has not
+        // yet failed to get the System Stream — the fact is only true once the
+        // recording is done. The provenance block also carries "Mic only" as a
+        // terse chip; this is the one place that states the *consequence*.
+        if !systemStreamCaptured && isComplete {
+            out.append("Only your microphone was captured, so remote participants are not in this transcript.")
+        }
+        // FR-96. The *where* is already marked in place in the transcript; this
+        // carries only the total, which is why it no longer needs a banner.
+        if let why = TranscriptGaps.explanation(gaps) { out.append(why) }
+        // FR-92. Last, because it describes a correction rather than a loss: the
+        // far end is counted once, from the call itself.
+        if let why = echo?.explanation { out.append(why) }
         return out
     }
 
@@ -307,6 +540,19 @@ struct Meeting: Codable, Sendable, Identifiable {
         self.noteDigest = nil
         self.micRate = nil
         self.systemRate = nil
+        self.micContinuity = nil
+        self.systemContinuity = nil
+        self.micLedger = nil
+        self.systemLedger = nil
+        self.micPressure = nil
+        self.systemPressure = nil
+        self.startTiming = nil
+        self.streamStartOffset = nil
+        self.echo = nil
+        self.outputDevice = nil
+        self.outputDeviceChanged = false
+        self.gaps = []
+        self.ruledOutVoices = []
     }
 
     /// Hand-written because the synthesised `Codable` was **not** tolerant of an
@@ -344,11 +590,25 @@ struct Meeting: Codable, Sendable, Identifiable {
         noteDigest = try c.decodeIfPresent(String.self, forKey: .noteDigest)
         micRate = try c.decodeIfPresent(RateFidelity.self, forKey: .micRate)
         systemRate = try c.decodeIfPresent(RateFidelity.self, forKey: .systemRate)
+        micContinuity = try c.decodeIfPresent(StreamContinuity.self, forKey: .micContinuity)
+        systemContinuity = try c.decodeIfPresent(StreamContinuity.self, forKey: .systemContinuity)
+        micLedger = try c.decodeIfPresent(CaptureLedger.self, forKey: .micLedger)
+        systemLedger = try c.decodeIfPresent(CaptureLedger.self, forKey: .systemLedger)
+        micPressure = try c.decodeIfPresent(DrainPressure.self, forKey: .micPressure)
+        systemPressure = try c.decodeIfPresent(DrainPressure.self, forKey: .systemPressure)
+        startTiming = try c.decodeIfPresent(CaptureStartTiming.self, forKey: .startTiming)
+        streamStartOffset = try c.decodeIfPresent(TimeInterval.self, forKey: .streamStartOffset)
+        echo = try c.decodeIfPresent(EchoAnalysis.self, forKey: .echo)
+        outputDevice = try c.decodeIfPresent(OutputDevice.self, forKey: .outputDevice)
+        outputDeviceChanged = try c.decodeIfPresent(Bool.self, forKey: .outputDeviceChanged) ?? false
+        gaps = try c.decodeIfPresent([TranscriptGap].self, forKey: .gaps) ?? []
+        ruledOutVoices = try c.decodeIfPresent([RuledOutVoice].self, forKey: .ruledOutVoices) ?? []
     }
 
     func displayName(for id: SpeakerLabelID) -> String {
         if let n = speakerNames[id.raw] { return n }
         if id == .inRoomUnidentified { return "In-room, unidentified" }
+        if id == .farEndEcho { return "The call, through your microphone" }
         switch id.place {
         case .you:    return "Me"
         case .room:   return "In-room speaker"
@@ -366,6 +626,10 @@ struct Meeting: Codable, Sendable, Identifiable {
     /// How a given Speaker reached the recording. Structural, not guessed: mic
     /// means the room, system means the far end (AD-11).
     func heardThrough(_ id: SpeakerLabelID) -> String {
+        // The far end coming back through the loudspeakers is on the call's side
+        // of the record and was heard through the *microphone*. It is the one
+        // label where place and device disagree, which is exactly what it is for.
+        if id == .farEndEcho { return micDevice ?? "microphone" }
         switch id.place {
         case .you, .room:
             return micDevice ?? "microphone"
@@ -439,6 +703,15 @@ struct Meeting: Codable, Sendable, Identifiable {
         // never confused for one another.
         var roomN = 1, remoteN = 1
         for s in speakers {
+            // The far end coming back through the loudspeakers is the call, not
+            // a participant on it. Without this it took a Speaker number and
+            // rendered as "Speaker 3" beside the real remote speakers — the
+            // phantom attendee back under a different name, on the other side of
+            // the room this time (FR-100).
+            if s == .farEndEcho {
+                if names[s.raw] == nil { names[s.raw] = displayName(for: s) }
+                continue
+            }
             guard names[s.raw] == nil else {
                 // A named colleague still occupies a number — "In-room 1" is taken
                 // by Mikkel, so the next anonymous voice is 2. The Local Speaker
@@ -495,21 +768,32 @@ struct Meeting: Codable, Sendable, Identifiable {
         let source = honouringExclusions
             ? utterances.filter { !isExcluded($0.speaker) }
             : utterances
+        // Every label resolved to the person it belongs to (FR-24). Without this
+        // a merged pair rendered under one name and **two different chips** — the
+        // user's own teal one on some lines and an amber in-room one on others,
+        // for a person they had just told the app was one person. The card was
+        // fixed first and this is the same bug one surface along.
+        var person: [String: SpeakerLabelID] = [:]
+        for p in mergedSpeakers {
+            for label in p.labels { person[label.raw] = p.primary }
+        }
+
         var out: [TranscriptBlock] = []
         out.reserveCapacity(source.count)
         for u in source.sorted(by: { $0.start < $1.start }) {
             let text = u.text.trimmingCharacters(in: .whitespaces)
-            if var last = out.last, groups(last.speaker, with: u.speaker) {
+            let who = person[u.speaker.raw] ?? u.speaker
+            if var last = out.last, groups(last.speaker, with: who) {
                 last.text += " " + text
                 out[out.count - 1] = last
             } else {
                 out.append(TranscriptBlock(id: u.id,
                                            start: u.start,
-                                           speaker: u.speaker,
-                                           name: displayName(for: u.speaker),
-                                           place: u.speaker.place,
-                                           isInferred: isInferred(u.speaker),
-                                           basis: basis(for: u.speaker),
+                                           speaker: who,
+                                           name: displayName(for: who),
+                                           place: who.place,
+                                           isInferred: isInferred(who),
+                                           basis: basis(for: who),
                                            text: text))
             }
         }
@@ -529,7 +813,7 @@ struct Meeting: Codable, Sendable, Identifiable {
     /// paragraph under one label, presenting two people's alternating speech as
     /// one person's. Unreachable in a completed Meeting, because attribution gives
     /// every speaker a distinct name; reachable in one that failed before it.
-    private func groups(_ a: SpeakerLabelID, with b: SpeakerLabelID) -> Bool {
+    func groups(_ a: SpeakerLabelID, with b: SpeakerLabelID) -> Bool {
         if a == b { return true }
         guard let na = speakerNames[a.raw], let nb = speakerNames[b.raw] else { return false }
         return na == nb
@@ -553,10 +837,39 @@ struct Meeting: Codable, Sendable, Identifiable {
     }
 
     /// Distinct speakers in transcript order of first appearance.
+    ///
+    /// Distinct **Speaker Labels**, which is not the same as distinct *people*
+    /// once the user has merged two of them — see `mergedSpeakers`.
     var speakers: [SpeakerLabelID] {
         var seen = Set<String>(); var out: [SpeakerLabelID] = []
         for u in utterances where !seen.contains(u.speaker.raw) {
             seen.insert(u.speaker.raw); out.append(u.speaker)
+        }
+        return out
+    }
+
+    /// One person, as the user sees them (FR-24's merge).
+    ///
+    /// **Renaming two labels to the same name merges them**, which the Speakers
+    /// card has been promising in so many words since increment 4 and which the
+    /// *transcript* has done since then — `groups` runs consecutive Utterances
+    /// from two merged labels into one paragraph. The card itself listed Speaker
+    /// Labels, so a user who merged two voices saw them merge in the transcript
+    /// and stay separate in the list directly above it, under the sentence
+    /// telling them the merge had happened. Reported by the user.
+    ///
+    /// The rule is `groups`, unchanged and shared: one rule, every surface that
+    /// applies it. Nothing is rewritten on the record — AD-19 keeps Utterances
+    /// pointing at stable IDs so a merge stays reversible by renaming one of them
+    /// back, and this is a view of that data rather than an edit to it.
+    var mergedSpeakers: [MergedSpeaker] {
+        var out: [MergedSpeaker] = []
+        for s in speakers {
+            if let i = out.firstIndex(where: { groups($0.labels[0], with: s) }) {
+                out[i].labels.append(s)
+            } else {
+                out.append(MergedSpeaker(labels: [s], name: displayName(for: s)))
+            }
         }
         return out
     }
@@ -571,6 +884,21 @@ struct Meeting: Codable, Sendable, Identifiable {
         let suffix = String((0..<4).map { _ in "abcdefghijklmnopqrstuvwxyz0123456789".randomElement()! })
         return "\(f.string(from: date))-\(suffix)"
     }
+}
+
+/// One person in the Speakers card: one Speaker Label, or several the user has
+/// renamed to the same name (FR-24).
+struct MergedSpeaker: Identifiable, Sendable, Equatable {
+    /// In transcript order of first appearance. Never empty.
+    fileprivate(set) var labels: [SpeakerLabelID]
+    let name: String
+
+    /// The label everything acts on. Renaming or excluding a merged row applies
+    /// to **all** of `labels` — a row the user was told is one person has to
+    /// behave as one person.
+    var primary: SpeakerLabelID { labels[0] }
+    var id: String { primary.raw }
+    var isMerged: Bool { labels.count > 1 }
 }
 
 // MARK: - Formatting helpers

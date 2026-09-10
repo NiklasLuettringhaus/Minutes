@@ -36,21 +36,61 @@ struct DetectionPane: View {
                 VStack(alignment: .leading, spacing: 0) {
                     SectionHeading(text: "How Minutes asks")
                     Card {
-                        HStack(alignment: .top, spacing: Tok.s4) {
-                            Image(systemName: notifier.canDeliver ? "bell.badge" : "macwindow.on.rectangle")
-                                .foregroundStyle(notifier.canDeliver ? Tok.brand : Tok.textSecondary)
-                                .frame(width: 20)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(notifier.canDeliver ? "With a notification" : "With a floating panel")
-                                    .font(.body)
-                                Text(deliveryExplanation)
+                        VStack(alignment: .leading, spacing: Tok.s3) {
+                            // A choice rather than a consequence of a
+                            // permission. This used to *report* which surface
+                            // you would get, derived from whether notifications
+                            // were allowed — so the only way to change it was to
+                            // change a system permission, and the app shipped
+                            // both surfaces at once regardless.
+                            Picker("", selection: Binding(
+                                get: { prefs.promptDelivery },
+                                set: { prefs.promptDelivery = $0 }
+                            )) {
+                                ForEach(Preferences.PromptDelivery.allCases, id: \.self) { c in
+                                    Text(c.title).tag(c)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+
+                            HStack(alignment: .top, spacing: Tok.s4) {
+                                Image(systemName: prefs.promptDelivery == .notification
+                                      ? "bell.badge" : "macwindow.on.rectangle")
+                                    .foregroundStyle(Tok.brand)
+                                    .frame(width: 20)
+                                Text(prefs.promptDelivery.detail)
                                     .font(.caption).foregroundStyle(Tok.textSecondary)
                                     .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
                             }
-                            Spacer(minLength: Tok.s4)
-                            if !notifier.canDeliver {
-                                Button("Open Settings") { Notifier.openSettings() }
-                                    .font(.caption)
+
+                            // The one case where the choice cannot be honoured.
+                            // It says what will actually happen rather than only
+                            // that something is wrong: the panel still appears,
+                            // because an ask that arrives nowhere is the defect
+                            // this whole section exists because of.
+                            if prefs.promptDelivery.needsNotifications, !notifier.canDeliver {
+                                HStack(alignment: .top, spacing: Tok.s4) {
+                                    Image(systemName: "exclamationmark.triangle")
+                                        .foregroundStyle(Tok.textSecondary)
+                                        .frame(width: 20)
+                                    Text(notifier.authorizationStatus == .denied
+                                         ? "Notifications are turned off for Minutes, so the ask will appear as a floating panel until you allow them."
+                                         : "Notifications have not been allowed yet, so the ask will appear as a floating panel until you allow them.")
+                                        .font(.caption).foregroundStyle(Tok.textSecondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                    Spacer(minLength: Tok.s4)
+                                    if notifier.authorizationStatus == .denied {
+                                        Button("Open Settings") { Notifier.openSettings() }
+                                            .font(.caption)
+                                    } else {
+                                        Button("Allow") {
+                                            Task { await Notifier.shared.requestAuthorization() }
+                                        }
+                                        .font(.caption)
+                                    }
+                                }
                             }
                         }
                     }
@@ -213,16 +253,11 @@ struct DetectionPane: View {
         return icon
     }
 
-    private var deliveryExplanation: String {
-        switch notifier.authorizationStatus {
-        case .authorized, .provisional, .ephemeral:
-            return "A notification with Record, Not now, and Never for this app."
-        case .denied:
-            return "Notifications are turned off for Minutes, so the ask appears as a small panel in the corner instead. It never takes focus from your meeting."
-        default:
-            return "Notifications have not been allowed yet, so the ask appears as a small panel in the corner. It never takes focus from your meeting."
-        }
-    }
+    // `deliveryExplanation` was here. It described which surface the user would
+    // get as a function of notification permission, which stopped being the
+    // right shape once the surface became a choice —
+    // `Preferences.PromptDelivery.detail` carries the wording now, beside the
+    // option it describes.
 
     private func refreshLive() {
         live = DetectionService.allAppsUsingAudioInput().sorted()
